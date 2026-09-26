@@ -578,6 +578,7 @@
   "ui.epPreviewCount": "{seasons} Staffeln · {episodes} Ep.",
   "ui.exportError": "Export fehlgeschlagen",
   "ui.defaultsSyncFailed": "Nur lokal gespeichert — der Server hat die Synchronisierung abgelehnt: Katalogposter auf Stremio behalten die Instanz-Standards.",
+  "ui.noProfileLocalOnly": "Du bist ohne Profil unterwegs, daher bleiben diese Einstellungen nur in diesem Browser. Erstelle ein Profil, um sie zu speichern und in Stremio zu nutzen.",
   "ui.bulkNeedTv": "Mindestens eine Serie auswählen",
   "ui.customLoadingTitles": "Titel werden geladen…",
   "ui.customNoTitles": "Keine Titel für diese Liste gefunden.",

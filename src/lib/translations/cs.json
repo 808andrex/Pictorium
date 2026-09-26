@@ -301,6 +301,7 @@
   "ui.styleDefault": "Výchozí styl odznaku",
   "ui.saveDefaults": "Uložit jako výchozí",
   "ui.defaultsSyncFailed": "Uloženo pouze lokálně — server synchronizaci odmítl, takže plakáty katalogů na Stremio dál používají výchozí instance.",
+  "ui.noProfileLocalOnly": "Procházíte bez profilu, takže tato nastavení zůstanou jen v tomto prohlížeči. Vytvořte si profil, abyste je uložili a mohli používat ve Stremiu.",
   "ui.bar": "Pruh",
   "ui.styleGenreBadge": "Styl odznaku",
   "ui.saved": "Uloženo!",

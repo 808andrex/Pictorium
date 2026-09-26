@@ -301,6 +301,7 @@
   "ui.styleDefault": "Estilo padrão do selo",
   "ui.saveDefaults": "Salvar como padrão",
   "ui.defaultsSyncFailed": "Salvo apenas localmente — o servidor rejeitou a sincronização, então os pôsteres dos catálogos no Stremio mantêm os padrões da instância.",
+  "ui.noProfileLocalOnly": "Você está navegando sem perfil, então estas configurações ficam neste navegador. Crie um perfil para salvá-las e usá-las no Stremio.",
   "ui.bar": "Barra",
   "ui.styleGenreBadge": "Estilo do selo",
   "ui.saved": "Salvo!",

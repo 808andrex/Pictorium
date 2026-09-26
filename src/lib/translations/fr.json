@@ -580,6 +580,7 @@
   "ui.epPreviewCount": "{seasons} saisons · {episodes} ép.",
   "ui.exportError": "Échec de l'exportation",
   "ui.defaultsSyncFailed": "Enregistré localement uniquement — le serveur a refusé la synchronisation : les posters des catalogues sur Stremio gardent les défauts d'instance.",
+  "ui.noProfileLocalOnly": "Vous naviguez sans profil : ces réglages restent dans ce navigateur. Créez un profil pour les enregistrer et les utiliser dans Stremio.",
   "ui.tvdbKey": "Clé API TheTVDB",
   "ui.tvdbKeyPlaceholder": "Saisissez la clé API TheTVDB...",
   "ui.episodeMetadataSource": "Source des métadonnées d'épisodes",

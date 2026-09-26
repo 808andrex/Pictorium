@@ -580,6 +580,7 @@
   "ui.epPreviewCount": "{seasons} temporadas · {episodes} ep.",
   "ui.exportError": "Error al exportar",
   "ui.defaultsSyncFailed": "Guardado solo localmente — el servidor rechazó la sincronización: los pósters de los catálogos en Stremio mantienen los valores de instancia.",
+  "ui.noProfileLocalOnly": "Estás navegando sin perfil, así que estos ajustes se quedan en este navegador. Crea un perfil para guardarlos y usarlos en Stremio.",
   "ui.tvdbKey": "Clave API de TheTVDB",
   "ui.tvdbKeyPlaceholder": "Introduce la clave API de TheTVDB...",
   "ui.episodeMetadataSource": "Fuente de metadatos de episodios",
