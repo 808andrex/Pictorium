@@ -666,6 +666,8 @@
   "ui.pinSaveError": "保存中にエラーが発生しました",
   "ui.minimal": "ミニマル",
   "ui.tintStrength": "ティント強度",
+  "ui.gradientPresetNatural": "Natural",
+  "ui.gradientPresetColor": "Color",
   "ui.userKeysTitle": "Your API keys",
   "ui.userKeysDesc": "Server-side keys for your space (encrypted at rest). They power catalogs, posters and the editor — no pasting keys into Stremio.",
   "ui.userKeysTokenLabel": "Personal key",

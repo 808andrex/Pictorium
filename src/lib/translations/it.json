@@ -666,6 +666,8 @@
   "ui.pinSaveError": "Errore durante il salvataggio",
   "ui.minimal": "Minimale",
   "ui.tintStrength": "Intensità tinta",
+  "ui.gradientPresetNatural": "Naturale",
+  "ui.gradientPresetColor": "Colore",
   "ui.userKeysTitle": "Le tue chiavi API",
   "ui.userKeysDesc": "Chiavi server-side per il tuo spazio (cifrate a riposo). Fanno funzionare cataloghi, poster ed editor senza incollare chiavi in Stremio. I voti IMDb e TMDB funzionano senza chiavi; la chiave MDBList è opzionale (Rotten Tomatoes, Letterboxd, Metacritic, Trakt).",
   "ui.userKeysTokenLabel": "Chiave personale",
