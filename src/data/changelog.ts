@@ -30,6 +30,19 @@ export interface ChangelogRelease {
  *  (which bumps on every commit and would leave the dot permanently on). */
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    version: "1.23.2",
+    date: "2026-09-26",
+    title: "Release 1.23.2",
+    items: [
+      { type: "feature", text: "Automatic home changelog with unread tracking" },
+      { type: "fix", text: "Drop unsupported Trakt and collection types from Stremio manifest" },
+      { type: "fix", text: "Mapping upsert answers JSON on unexpected storage errors" },
+      { type: "fix", text: "presets mode drops derivable hints and bounds rank/animerank/rsrc" },
+      { type: "feature", text: "PICTORIUM_PUBLIC_STATS=0 keeps /api/status counts admin-only" },
+      { type: "feature", text: "PICTORIUM_CLIENT_IP_HEADER pins the trusted client-IP header" },
+    ],
+  },
+  {
     version: "1.23",
     date: "2026-09-25",
     title: "Security hardening for public instances",
