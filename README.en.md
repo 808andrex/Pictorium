@@ -132,6 +132,8 @@ When `PICTORIUM_MULTI_USER=1` is enabled, multiple users can share a single serv
   * **Recovery Key (Secret)**: Single-use code shown upon account creation to recover access or rotate credentials.
 * **Anti-Brute-Force Protection**: Automatic rate limiting on incorrect password attempts to prevent attacks.
 
+> 📢 To report vulnerabilities privately (never via public issues), see [SECURITY.md](SECURITY.md).
+
 ---
 
 ## 🚀 Quick Deploy
@@ -289,6 +291,18 @@ npm install --ignore-scripts && npm run build && npm start
 | `PICTORIUM_CACHE_MAX_MB` | `150` | Maximum RAM allocated for in-memory image cache. |
 | `PICTORIUM_SELF_WARMUP` | `1` | Automatically pre-warm core catalogs on server start. |
 </details>
+
+---
+
+## ⚠️ Known Limitations
+
+Deliberate architectural choices, not bugs:
+
+* **In-process poster JPEG cache** (RAM/disk, 32 MB default via `PICTORIUM_IMG_CACHE_MB`): never in Redis/KV, which holds only lightweight metadata and catalogs. Pushing JPEG binaries into KV would bloat RAM and saturate internal bandwidth.
+* **JustWatch pagination**: the upstream GraphQL only pages via `$first` — the server overfetches (max 60) + slices locally. Deep `skip` may cost more than one upstream fetch.
+* **Chromium-only visual E2E suite**: deterministic snapshots on a single browser; Firefox/WebKit intentionally out of scope.
+* **HSTS at the reverse proxy**: the container does not force `Strict-Transport-Security` with preload (it would break LAN/Docker over HTTP). TLS+HSTS belong to Caddy / Cloudflare / Nginx — on VPS see the Caddy deploy above.
+* **Limited warmup**: only 8 core catalogs are pre-warmed at boot (`WARMUP_CATALOG_IDS`). Warming everything would trigger TMDB 429s and push boot past liveness probes.
 
 ---
 
