@@ -6,6 +6,7 @@ import { X, Copy, ExternalLink, Sparkles, Check, Link2 } from "lucide-react"
 import { useT } from "@/lib/contexts/TranslationContext"
 import { copyText } from "@/lib/clipboard"
 import { Modal } from "@/components/ui/Modal"
+import { currentPathUuid } from "@/lib/user-token"
 
 interface Props {
   isOpen: boolean
@@ -26,8 +27,10 @@ export function ProxyModal({ isOpen, onClose }: Props) {
   if (!isOpen) return null
 
   const domain = typeof window !== "undefined" ? window.location.origin : ""
+  const userUuid = currentPathUuid()
+  const userSuffix = userUuid ? `&u=${encodeURIComponent(userUuid)}` : ""
   const proxyUrl = targetUrl.trim()
-    ? `${domain}/api/proxy/manifest.json?url=${encodeURIComponent(targetUrl.trim())}`
+    ? `${domain}/api/proxy/manifest.json?url=${encodeURIComponent(targetUrl.trim())}${userSuffix}`
     : ""
 
   const handleCopy = async () => {

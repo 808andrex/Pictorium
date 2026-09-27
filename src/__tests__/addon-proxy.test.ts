@@ -28,6 +28,18 @@ describe("Addon Proxy Helpers", () => {
     expect(rewritten.poster).toContain("https://my-pictorium.koyeb.app/api/poster/movie/tt1375666")
   })
 
+  it("appends user token to poster URL when userUuid is provided", () => {
+    const userUuid = "12345678-1234-1234-1234-123456789abc"
+    const metas: StremioItemMeta[] = [
+      { id: "tt0111161", type: "movie", name: "The Shawshank Redemption" },
+    ]
+    const rewritten = rewriteMetasPosters(metas, "https://pictorium.app", userUuid)
+    expect(rewritten[0].poster).toContain(`&u=${userUuid}`)
+
+    const single = rewriteSingleMetaPoster(metas[0], "https://pictorium.app", userUuid)
+    expect(single.poster).toContain(`&u=${userUuid}`)
+  })
+
   it("resolveImdbToTmdb returns null for non-imdb IDs", async () => {
     const res = await resolveImdbToTmdb("12345", "movie")
     expect(res).toBeNull()

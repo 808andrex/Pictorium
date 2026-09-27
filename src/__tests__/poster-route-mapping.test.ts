@@ -1704,6 +1704,45 @@ describe("GET /api/poster/[type]/[id] error and edge cases", () => {
     expect(body.cache.hit).toBe(false)
     expect(body.meta.mappingId).toBeNull()
   })
+
+  it("derives fallback language from region when lang query param is absent", async () => {
+    const posterBuf = await imageBuffer("#101010", 500, 750)
+    mockedGetById.mockResolvedValue(null)
+    mockedGetDetails.mockResolvedValue({
+      id: 43,
+      title: "Test Movie US",
+      genres: [{ id: 18, name: "Drama" }],
+      vote_average: 7.5,
+      vote_count: 100,
+      original_language: "en",
+      release_date: "2024-01-15",
+      production_companies: [],
+    })
+    mockedGetImages.mockResolvedValue({
+      id: 43,
+      posters: [
+        { file_path: "/clean2.jpg", iso_639_1: null, vote_average: 8.0, vote_count: 100, width: 500, height: 750, aspect_ratio: 0.667 },
+      ],
+      logos: [
+        { file_path: "/logo2.png", iso_639_1: "en", vote_average: 0, vote_count: 0, width: 220, height: 80, aspect_ratio: 2.75 },
+      ],
+      backdrops: [],
+    })
+    mockedGetExternalIds.mockResolvedValue({ imdb_id: "tt7654321" })
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      new Response(new Uint8Array(posterBuf), {
+        status: 200,
+        headers: { "content-type": "image/png", "content-length": String(posterBuf.length) },
+      }),
+    )
+
+    const req = new NextRequest("http://localhost:3000/api/poster/movie/43?debug=1&region=US")
+    const res = await GET(req, { params: Promise.resolve({ type: "movie", id: "43" }) })
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.logoSelection.requestedLang).toBe("en")
+  })
 })
 
 describe("GET /api/poster/[type]/[id] con alias IMDb manuale", () => {

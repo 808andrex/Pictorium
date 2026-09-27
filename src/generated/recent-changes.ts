@@ -11,5 +11,8 @@ export interface RecentChange {
 }
 
 export const RECENT_CHANGES: RecentChange[] = [
+  { type: "fix", text: "Stremio catalogs sometimes stuck empty until restart", sha: "137eb4f", date: "2026-09-27" },
+  { type: "feature", text: "link the ElfHosted menu's private-instance row", sha: "f77d816", date: "2026-09-27" },
+  { type: "fix", text: "no doomed defaults sync from the multi-user root editor", sha: "31ba18f", date: "2026-09-27" },
   { type: "feature", text: "PICTORIUM_KV_CACHE=0 keeps the response cache in memory only", sha: "d194776", date: "2026-09-27" },
 ]
