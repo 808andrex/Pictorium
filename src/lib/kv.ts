@@ -3,6 +3,37 @@ import { createLogger } from "@/lib/logger"
 
 const log = createLogger("kv")
 
+// Tetto per i comandi KV (R3): senza, un TCP stallato tiene l'await appeso per
+// sempre e avvelena gli inflight dei caller (cataloghi vuoti fino al restart).
+const KV_COMMAND_TIMEOUT_MS = (() => {
+  const raw = envWithFallback("KV_COMMAND_TIMEOUT_MS")
+  const n = raw ? parseInt(raw, 10) : 2000
+  return Number.isFinite(n) && n >= 500 && n <= 10000 ? n : 2000
+})()
+
+/** Un comando KV ha superato il tetto: i caller fanno fail-open, mai hang. */
+export class KvTimeoutError extends Error {
+  constructor(readonly ms: number) {
+    super(`KV read timed out after ${ms}ms`)
+    this.name = "KvTimeoutError"
+  }
+}
+
+/**
+ * Gara con tetto perentorio per le letture KV (Redis o Upstash REST): allo
+ * scadere rigetta con KvTimeoutError così gli inflight dei caller si chiudono
+ * sempre (finally) e la chiave non resta avvelenata. Il timer è sempre pulito.
+ */
+export function withKvTimeout<T>(promise: Promise<T>, ms = KV_COMMAND_TIMEOUT_MS): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new KvTimeoutError(ms)), ms)
+  })
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer !== undefined) clearTimeout(timer)
+  })
+}
+
 /**
  * Storage Key-Value unificato (Step 1: solo definizione + selezione backend).
  *
@@ -179,6 +210,8 @@ async function ensureRedis(): Promise<RedisLike> {
     lazyConnect: true,
     enableReadyCheck: false,
     maxRetriesPerRequest: 1,
+    connectTimeout: KV_COMMAND_TIMEOUT_MS,
+    commandTimeout: KV_COMMAND_TIMEOUT_MS,
   }) as unknown as RedisLike
   return redisClient
 }

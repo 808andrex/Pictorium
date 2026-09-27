@@ -1,6 +1,6 @@
 import crypto from "node:crypto"
 import { envWithFallback } from "@/lib/env-compat"
-import { getKv, getStorageMode } from "@/lib/kv"
+import { getKv, getStorageMode, withKvTimeout } from "@/lib/kv"
 
 interface CacheEntry<T> {
   data: T
@@ -92,7 +92,8 @@ function kvWriteThrough(key: string, json: string, ttlMs?: number, tags: string[
 
 async function kvReadThrough<T>(key: string): Promise<T | null> {
   try {
-    const raw: unknown = await getKv().get(`${KV_L2_PREFIX}${key}`)
+    // Tetto perentorio: una L2 stallata è un miss, mai un hang della route.
+    const raw: unknown = await withKvTimeout(getKv().get(`${KV_L2_PREFIX}${key}`), 1500)
     // C1: il client KV può restituire la stringa così com'è o già parsata
     // (deserializzazione automatica Upstash / decode `kv.ts` su Redis):
     // accetta entrambi, scarta il resto.

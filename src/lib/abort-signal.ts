@@ -34,3 +34,36 @@ export function combineAbortSignals(
   }
   return ctrl.signal
 }
+
+/**
+ * Gara tra una promise condivisa (es. inflight dedup) e il signal del
+ * chiamante: il waiter esce al proprio abort invece di restare ostaggio della
+ * promise altrui. Senza signal ritorna la promise invariata. Il listener è
+ * sempre rimosso all'esito (niente leak sui signal a timeout lungo).
+ */
+export function raceWithAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined | null): Promise<T> {
+  if (!signal) return promise
+  if (signal.aborted) {
+    return Promise.reject(
+      signal.reason instanceof Error ? signal.reason : new DOMException("Aborted", "AbortError"),
+    )
+  }
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      reject(
+        signal.reason instanceof Error ? signal.reason : new DOMException("Aborted", "AbortError"),
+      )
+    }
+    signal.addEventListener("abort", onAbort, { once: true })
+    promise.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort)
+        resolve(value)
+      },
+      (err) => {
+        signal.removeEventListener("abort", onAbort)
+        reject(err)
+      },
+    )
+  })
+}

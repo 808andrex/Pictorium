@@ -3,7 +3,7 @@ import { createHash } from "node:crypto"
 import { createLogger } from "@/lib/logger"
 import { envWithFallback } from "@/lib/env-compat"
 import { isMultiUserEnabled } from "@/lib/user-auth"
-import { combineAbortSignals } from "./abort-signal"
+import { combineAbortSignals, raceWithAbort } from "./abort-signal"
 import { timedFetch } from "./outbound-stats"
 
 const log = createLogger("tmdb")
@@ -463,6 +463,14 @@ export function getTMDBStats() {
   }
 }
 
+/**
+ * Profondità dell'inflight dedup TMDB: early warning per /api/status. Se sale
+ * e non scende, un upstream è appeso e i waiter si accumulano.
+ */
+export function getTmdbInflightSize(): number {
+  return inflight.size
+}
+
 async function tmdbFetch(path: string, apiKey?: string, signal?: AbortSignal, timeoutMs = 30000): Promise<unknown> {
   tmdbStats.totalCalls++
   // mock-key solo fuori produzione (v1.23.0): con TMDB_BASE_URL impostato
@@ -492,7 +500,9 @@ async function tmdbFetch(path: string, apiKey?: string, signal?: AbortSignal, ti
 
   // Deduplicate concurrent requests for the same URL
   const existing = inflight.get(cacheKey)
-  if (existing) return existing
+  // Il waiter gareggia col proprio signal invece di ereditare il deadline del
+  // primo: senza, una fetch da 30s appende anche chi aveva 2.5s di tetto.
+  if (existing) return raceWithAbort(existing, signal)
 
   // Actual fetch URL includes the api_key (kept separate from cacheKey)
   const fetchUrl = new URL(neutralUrl.toString())

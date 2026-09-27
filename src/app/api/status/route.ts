@@ -3,6 +3,8 @@ import { rateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit"
 import { isMultiUserEnabled, getMaxUsers } from "@/lib/user-auth"
 import { countActiveUsers, listUsers, type UserInfo } from "@/lib/user-activity"
 import { getKeyMissingStats } from "@/lib/catalog-handler"
+import { getTmdbInflightSize } from "@/lib/tmdb"
+import { getStoreInflightSize } from "@/lib/store"
 import { isUserKeysEncryptionAvailable } from "@/lib/user-keys"
 import { envWithFallback } from "@/lib/env-compat"
 import { requireAdminToken } from "@/lib/auth"
@@ -86,6 +88,9 @@ export async function GET(req: NextRequest) {
     usersBytes,
     keysEncryption: isUserKeysEncryptionAvailable(),
     keyMissing: getKeyMissingStats(),
+    // Profondità inflight (TMDB dedup + store KV): se salgono e non scendono,
+    // un upstream/KV è appeso e i cataloghi stanno per svuotarsi.
+    inflight: { tmdb: getTmdbInflightSize(), store: getStoreInflightSize() },
     hostedBy: resolveHostedBy(req),
     timestamp: new Date().toISOString(),
   }, { headers: NO_STORE })

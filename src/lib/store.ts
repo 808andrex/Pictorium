@@ -5,7 +5,7 @@ import { DATA_DIR } from "@/lib/data-dir"
 import { createLogger } from "@/lib/logger"
 import { envWithFallback } from "@/lib/env-compat"
 import { getMaxMappingsPerUser } from "@/lib/user-auth"
-import { getKv, getStorageMode as getKvStorageMode } from "@/lib/kv"
+import { getKv, getStorageMode as getKvStorageMode, KvTimeoutError, withKvTimeout } from "@/lib/kv"
 
 export type { Mapping }
 
@@ -58,7 +58,15 @@ async function kvReadAllCached(): Promise<Record<string, Mapping>> {
   if (kvCache && now - kvCacheAt < KV_READ_TTL_MS) return kvCache
   if (kvCacheInflight) return kvCacheInflight
   kvCacheInflight = (async () => {
-    const raw = await getKv().hgetall<Record<string, Mapping>>("mappings")
+    let raw: Record<string, Mapping> | null
+    try {
+      raw = await withKvTimeout(getKv().hgetall<Record<string, Mapping>>("mappings"))
+    } catch (e) {
+      // KV stallato: fail-open sulla mappa stantia (o vuota), mai hang. La
+      // promise si chiude sempre così il finally libera l'inflight.
+      if (e instanceof KvTimeoutError) return kvCache ?? {}
+      throw e
+    }
     const map = raw ?? {}
     kvCache = map
     kvCacheAt = Date.now()
@@ -143,13 +151,32 @@ async function kvReadAllCachedFor(userId: string): Promise<Record<string, Mappin
   if (c.map && now - c.at < KV_READ_TTL_MS) return c.map
   if (c.inflight) return c.inflight
   c.inflight = (async () => {
-    const raw = await getKv().hgetall<Record<string, Mapping>>(userKvKey(userId))
+    let raw: Record<string, Mapping> | null
+    try {
+      raw = await withKvTimeout(getKv().hgetall<Record<string, Mapping>>(userKvKey(userId)))
+    } catch (e) {
+      // KV stallato: fail-open sulla mappa stantia (o vuota), mai hang. La
+      // promise si chiude sempre così il finally libera l'inflight del
+      // namespace invece di avvelenarlo fino al restart.
+      if (e instanceof KvTimeoutError) return c.map ?? {}
+      throw e
+    }
     const map = raw ?? {}
     c.map = map
     c.at = Date.now()
     return map
   })().finally(() => { c.inflight = null })
   return c.inflight
+}
+
+/**
+ * Profondità degli inflight KV (globale + namespace utente): early warning per
+ * /api/status. Se sale e non scende, una lettura KV è appesa.
+ */
+export function getStoreInflightSize(): number {
+  let n = kvCacheInflight ? 1 : 0
+  for (const c of kvUserCaches.values()) if (c.inflight) n++
+  return n
 }
 
 async function kvUpsertFor(userId: string, mapping: Mapping) {
