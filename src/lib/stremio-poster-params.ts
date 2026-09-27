@@ -126,6 +126,46 @@ const DEFAULT_STREMIO_POSTER_PARAMS = {
   networkLogoOffsetY: 0,
 } as const
 
+/**
+ * Firma del tuning omesso negli URL compatti (`compactTuning`): i 18 numerici
+ * ad alta cardinalità non viaggiano nell'URL ma guidano il render server-side
+ * (mapping > defaults). Senza firma, un cambio default lascerebbe URL identici
+ * e browser/edge/Stremio servirebbero i byte vecchi all'infinito. FNV-1a 32bit
+ * (8 hex): cache-buster, non sicurezza — niente import, funziona anche client.
+ * Copre ESATTAMENTE i campi omessi in compact, con gli stessi fallback
+ * dell'emissione esplicita qui sotto.
+ */
+function tuningSignature(input: StremioPosterParamsInput): string {
+  const D = DEFAULT_STREMIO_POSTER_PARAMS
+  const parts = [
+    input.gradientHeight ?? D.gradientHeight,
+    input.blurIntensity ?? D.blurIntensity,
+    input.tintStrength ?? D.tintStrength,
+    input.blurFade ?? D.blurFade,
+    input.blurDarkness ?? D.blurDarkness,
+    input.topShade ?? D.topShade,
+    input.topBadgeScale ?? D.topBadgeScale,
+    input.topBadgeOffsetX ?? D.topBadgeOffsetX,
+    input.topBadgeOffsetY ?? D.topBadgeOffsetY,
+    input.genreBadgeScale ?? D.genreBadgeScale,
+    input.genreBadgeOffsetX ?? D.genreBadgeOffsetX,
+    input.genreBadgeOffsetY ?? D.genreBadgeOffsetY,
+    input.qualityBadgeScale ?? D.qualityBadgeScale,
+    input.qualityBadgeOffsetX ?? D.qualityBadgeOffsetX,
+    input.qualityBadgeOffsetY ?? D.qualityBadgeOffsetY,
+    input.networkLogoScale ?? D.networkLogoScale,
+    input.networkLogoOffsetX ?? D.networkLogoOffsetX,
+    input.networkLogoOffsetY ?? D.networkLogoOffsetY,
+  ]
+  let h = 0x811c9dc5
+  const s = parts.join(",")
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i)
+    h = Math.imul(h, 0x01000193)
+  }
+  return (h >>> 0).toString(16).padStart(8, "0")
+}
+
 export function buildStremioPosterSearchParams(input: StremioPosterParamsInput): URLSearchParams {
   const params = new URLSearchParams()
   const globalBadges = input.globalBadges ?? DEFAULT_STREMIO_POSTER_PARAMS.globalBadges
@@ -180,6 +220,10 @@ export function buildStremioPosterSearchParams(input: StremioPosterParamsInput):
     const ts = input.topShade ?? DEFAULT_STREMIO_POSTER_PARAMS.topShade
     if (ts !== DEFAULT_STREMIO_POSTER_PARAMS.topShade) params.set("ts", String(ts))
   }
+  // dv: firma del tuning quando è omesso (compact) — senza, un cambio default
+  // lascerebbe URL identici e cache stantie ovunque (browser/edge/Stremio).
+  // Con tuning esplicito (template, ?config=) i valori invalidano da soli.
+  if (input.compactTuning) params.set("dv", tuningSignature(input))
   params.set("bs", input.badgeStyle || DEFAULT_STREMIO_POSTER_PARAMS.badgeStyle)
   params.set("rs", input.rankingBadgeStyle || DEFAULT_STREMIO_POSTER_PARAMS.rankingBadgeStyle)
   if (!input.compactTuning) {

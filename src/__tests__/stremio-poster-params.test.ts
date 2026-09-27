@@ -82,6 +82,21 @@ describe("buildStremioPosterSearchParams", () => {
     expect(buildStremioPosterSearchParams({ topShade: 70 }).get("ts")).toBe("70")
   })
 
+  it("emits dv only when compact, and it tracks the omitted tuning", () => {
+    const compact = buildStremioPosterSearchParams({ compactTuning: true })
+    const dv = compact.get("dv")
+    expect(dv).toMatch(/^[0-9a-f]{8}$/)
+    // Stabile a parità di input.
+    expect(buildStremioPosterSearchParams({ compactTuning: true }).get("dv")).toBe(dv)
+    // Qualsiasi campo del tuning omesso cambia la firma (invalida le cache).
+    expect(buildStremioPosterSearchParams({ compactTuning: true, blurFade: 10 }).get("dv")).not.toBe(dv)
+    expect(buildStremioPosterSearchParams({ compactTuning: true, topShade: 0 }).get("dv")).not.toBe(dv)
+    expect(buildStremioPosterSearchParams({ compactTuning: true, gradientHeight: 40 }).get("dv")).not.toBe(dv)
+    // Non-compact (template, ?config=): tuning esplicito, niente firma.
+    expect(buildStremioPosterSearchParams({}).has("dv")).toBe(false)
+    expect(buildStremioPosterSearchParams({ config: "tok", blurFade: 10 }).has("dv")).toBe(false)
+  })
+
   it("serializes ribbonSide left and right explicitly", () => {
     const leftParams = buildStremioPosterSearchParams({ ribbonSide: "left" })
     expect(leftParams.get("side")).toBe("left")
