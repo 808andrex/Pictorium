@@ -106,7 +106,7 @@ describe("gradient presets (slider shortcuts, no new server param)", () => {
     // Factory storiche (30/50) -> ricalibrazione per tipo.
     expect(defaultHeightForPoster(30, nonClean)).toBe(20)
     expect(defaultFadeForPoster(50, nonClean)).toBe(80)
-    // Default Colore -> assoluti, mai ricalibrati (fade 80 NON scatta la
+    // Default Colore -> assoluti, mai ricalibrati (fade 60 NON scatta la
     // ricalibrazione: il confronto è sulle factory storiche, non su Naturale).
     expect(defaultHeightForPoster(GRADIENT_PRESET_COLOR.gradientHeight, nonClean)).toBe(
       GRADIENT_PRESET_COLOR.gradientHeight,

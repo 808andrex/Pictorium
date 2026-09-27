@@ -26,9 +26,9 @@ type PosterKind = { iso_639_1?: string | null } | null | undefined
  * (height 5-100, intensity 1-100, gli altri 0-100) — da calibrare a occhio.
  */
 export const GRADIENT_PRESET_COLOR: GradientPresetValues = {
-  gradientHeight: 50,
+  gradientHeight: 40,
   blurIntensity: 20,
-  blurFade: 80,
+  blurFade: 60,
   blurDarkness: 0,
   tintStrength: 100,
   blurEnabled: true,
@@ -53,8 +53,8 @@ export const NATURAL_GRADIENT_DEFAULTS: GradientPresetValues = {
  * Factory storiche (pre-preset) di altezza/fade: distinguono "default mai
  * toccato" (ancora soggetto ad auto-calibrazione per tipo poster) da un
  * default personalizzato (assoluto). NON allinearle a NATURAL_GRADIENT_DEFAULTS:
- * con fade Naturale a 80, il confronto deve restare sul 50 storico o il preset
- * Colore (fade 80) verrebbe ricalibrato per tipo all'apertura titolo.
+ * con fade Naturale a 80, il confronto deve restare sul 50 storico o un
+ * default a fade 80 verrebbe ricalibrato per tipo all'apertura titolo.
  */
 const LEGACY_GRADIENT_HEIGHT = 30
 const LEGACY_BLUR_FADE = 50

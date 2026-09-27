@@ -11,6 +11,7 @@ export interface RecentChange {
 }
 
 export const RECENT_CHANGES: RecentChange[] = [
+  { type: "feature", text: "Curated award lists, date-based badges, gradient presets and sash reorder", sha: "bfab286", date: "2026-09-27" },
   { type: "feature", text: "Stronger blur in the Colore gradient preset", sha: "b9ff090", date: "2026-09-27" },
   { type: "fix", text: "Fallback to region language in poster route and proxy modal", sha: "0e81f22", date: "2026-09-27" },
   { type: "fix", text: "Stremio catalogs sometimes stuck empty until restart", sha: "137eb4f", date: "2026-09-27" },

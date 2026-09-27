@@ -2,7 +2,7 @@ import sharp from "sharp"
 import { STD_W, STD_H } from "./image-utils"
 
 /**
- * Build the bottom-blur RGBA overlay (dual-stage progressive blur + quadratic scrim + accent tint).
+ * Build the bottom-blur RGBA overlay (dual-stage progressive blur + linear scrim + accent tint).
  *
  * ## Performance Contract
  *
@@ -18,7 +18,7 @@ import { STD_W, STD_H } from "./image-utils"
  * 2. Doppio passaggio gaussiano concorrente (low-sigma all'inizio zona, high-sigma al fondo).
  * 3. Interpolazione progressiva nel loop raw RGBA:
  *    - Curva opacità: smoothstep S(u) = u² · (3 - 2u)
- *    - Curva scurimento: shade(u) = 1 - darkAlpha · u² (quadratica, fondo compatto)
+ *    - Curva scurimento: shade(u) = 1 - darkAlpha · u (lineare, discesa uniforme)
  *    - Blend sigma: smoothstep S(t) da sigmaLow a sigmaHigh (diffusione progressiva)
  *    - Tinta accento: lerp cromatico controllato (default 20%) verso accentColor
  */
@@ -117,8 +117,8 @@ export async function applyBlur(params: BlurParams): Promise<BlurOverlay | null>
     const smoothU = u * u * (3 - 2 * u)
     const alpha = Math.round(smoothU * 255)
 
-    // Curva quadratica per lo scurimento (preserva i mezzitoni in alto, fondo nero denso)
-    const shade = 1 - darkAlpha * (u * u)
+    // Scurimento lineare (discesa uniforme, risposta proporzionale allo slider)
+    const shade = 1 - darkAlpha * u
 
     // Interpolazione raggio progressivo con curva smoothstep in t (non lineare secca)
     const wHigh = t * t * (3 - 2 * t)
