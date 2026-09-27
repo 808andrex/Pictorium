@@ -23,7 +23,7 @@ type PosterKind = { iso_639_1?: string | null } | null | undefined
  */
 export const GRADIENT_PRESET_COLOR: GradientPresetValues = {
   gradientHeight: 50,
-  blurIntensity: 1,
+  blurIntensity: 20,
   blurFade: 80,
   blurDarkness: 0,
   tintStrength: 100,
