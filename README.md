@@ -33,8 +33,8 @@ pinned: false
 </p>
 
 > [!TIP]
-> 🚀 **Prova l'[istanza pubblica VPS](https://pictorium.duckdns.org)**: crea il tuo spazio personale con la tua chiave TMDB gratuita.  
-> 🧝 **Istanza privata gestita su [ElfHosted](https://store.elfhosted.com/product/pictorium/)**: avvia la tua istanza 1-click su Kubernetes senza configurare server.  
+> 🚀 **Istanze pubbliche gratuite**: crea il tuo spazio personale con la tua chiave TMDB su **[pictorium.duckdns.org](https://pictorium.duckdns.org)** (VPS comunitaria) oppure su **[pictorium.elfhosted.com](https://pictorium.elfhosted.com/)** (ElfHosted).  
+> 🧝 **Istanza privata gestita**: puoi avviare un'istanza dedicata 1-click su **[ElfHosted](https://store.elfhosted.com/product/pictorium/)**.  
 > 💬 Entra nella community su [Discord](https://discord.gg/sYfWyXYVUp) per supporto, novità e segnalazioni.  
 > ☕ Supporta il progetto su [Ko-fi](https://ko-fi.com/eful97) per mantenere attiva la VPS comunitaria.
 

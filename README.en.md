@@ -33,8 +33,8 @@ pinned: false
 </p>
 
 > [!TIP]
-> 🚀 **Try the [public VPS instance](https://pictorium.duckdns.org)**: create your personal space with your free TMDB key.  
-> 🧝 **Hosted private instance on [ElfHosted](https://store.elfhosted.com/product/pictorium/)**: 1-click managed deployment on Kubernetes without configuring servers.  
+> 🚀 **Free public instances**: create your personal space with your TMDB key on **[pictorium.duckdns.org](https://pictorium.duckdns.org)** (community VPS) or on **[pictorium.elfhosted.com](https://pictorium.elfhosted.com/)** (ElfHosted).  
+> 🧝 **Hosted private instance**: deploy your own dedicated instance 1-click on **[ElfHosted](https://store.elfhosted.com/product/pictorium/)**.  
 > 💬 **Join the community on [Discord](https://discord.gg/sYfWyXYVUp)** for support, updates, bug reports, and feature requests.  
 > ☕ Support the project on [Ko-fi](https://ko-fi.com/eful97) to help keep the public VPS running.
 
