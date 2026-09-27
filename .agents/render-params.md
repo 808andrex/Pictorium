@@ -138,13 +138,17 @@ Opt-in portrait-only (`sep=1`, default OFF): sostituisce la media ★ nel badge 
 | Fade | `0% trasp → svgFadeEnd% trasp → svgSolidPct% opaco → 100% opaco` |
 | Posizione badge genere | `badgeY = ph - h - round(20 * ph / 570)` |
 
-> **Preset sfumatura (Naturale/Colore, solo client):** scorciatoie in
+> **Preset sfumatura (Naturale/Colore + 3 custom, solo client):** scorciatoie in
 > `TransformControls.tsx` (per-titolo) e `SettingsPanel.tsx` (default globali)
 > che scrivono i 5 slider esistenti (`gradHeight`/`blur`/`bf`/`bd`/`tint`) —
-> nessun nuovo parametro URL, nessuna chiave cache. Logica in
+> nessun nuovo parametro URL, nessuna chiave cache. Riga condivisa
+> `GradientPresetRow.tsx` (2 built-in + fino a 3 personali = 5 totali). Logica in
 > `src/lib/gradient-presets.ts` (`GRADIENT_PRESET_COLOR`,
 > `NATURAL_GRADIENT_DEFAULTS`, `adjustGradientForPosterChange`,
-> `defaultHeightForPoster`/`defaultFadeForPoster`). Il cambio artwork ricalibra
+> `defaultHeightForPoster`/`defaultFadeForPoster`, store custom con
+> `sanitizeCustomPresets`/`addCustomGradientPreset`/`deleteCustomGradientPreset`
+> in localStorage per namespace). I custom fotografano gli slider correnti e non
+> viaggiano mai al server. Il cambio artwork ricalibra
 > altezza/fade solo da stato pristine (preset e tweak manuali sopravvivono);
 > i default personalizzati restano assoluti (niente auto-calibrazione per tipo
 > poster clean vs non-clean).
@@ -162,7 +166,7 @@ Opt-in portrait-only (`sep=1`, default OFF): sostituisce la media ★ nel badge 
 | `rsrc` | `ratingSources` per-titolo (preview); per-titolo salvato o default globale (Stremio) | fonti voto medio ★: `query > mapping.ratingSources > config token > server defaults (RATING_SOURCES) > imdb+tmdb` — parser unico `resolveRatingSources` (whitelist `SUPPORTED_RATING_SOURCES`) |
 | `sep` | `separateRatings` per-titolo (preview, sempre esplicito `sep=0/1`); solo-ON in pattern/Stremio | colonna separati: `query > mapping.separateRatings > config token > server defaults (PICTORIUM_SEPARATE_RATINGS) > false`, AND con portrait + `badgeRating` + ≥1 valore (altrimenti fallback media) |
 | `gradHeight` | `gradientHeight` | `qGradHeight` — alimenta l'altezza del gradiente/sfocatura (blurHeight): query > mapping > config token > server defaults > default di formato (30 portrait, 20 landscape; mapping non-clean senza valore congelato: 20). Post-selezione solo Stremio unmapped: se il poster finale ha testo incorporato, i default globali non vincono sul profilo non-clean (20/80, come il client) |
-| `bf` | `blurFade` (slider editor 0..100 + double-click reset al default per tipo poster, 70 in landscape) | punto di attacco transizione 0..100 (default 50 portrait, 70 landscape, 80 su mapping non-clean senza valore congelato): query > mapping > config token > server defaults > default di formato/tipo. Emessa sempre esplicita in preview e Stremio |
+| `bf` | `blurFade` (slider editor 0..100 + double-click reset 80, 70 in landscape) | punto di attacco transizione 0..100 (default 80 portrait, 70 landscape): query > mapping > config token > server defaults > 80 (70 landscape). Emessa sempre esplicita in preview e Stremio |
 | `tint` | `tintStrength` (slider editor 0..100 + default globale, double-click reset 20) | `qTint` — intensità tinta di scena 0..100 (default 20): query > mapping (`tintStrength`) > config token > server defaults (`PICTORIUM_TINT_STRENGTH`) > 20. Emessa sempre esplicita in preview e Stremio. Nessun profilo landscape dedicato (vale per entrambi i canvas) |
 | `tl` | `topLight ? "1" : "0"` (sempre, anche per genre badges) | `qTopLight` — override se presente |
 | `bl` | `bottomEdgeColor` via `useRootColors` (solo a calcolo completato, come `tl`) | `qBottomLight` — override se presente, altrimenti calcolo server sulla striscia inferiore corretto per la banda blur (`computeBottomLight`) |
@@ -233,6 +237,7 @@ Opt-in portrait-only (`sep=1`, default OFF): sostituisce la media ★ nel badge 
 - `src/lib/anime-ratings.ts` — voti anime diretti (AniZip mapping tmdb→imdb con fallback + AniList GraphQL + Kitsu REST; solo se `anilist`/`kitsu` in `rsrc`). `anilist`/`kitsu`/`simkl` NON arrivano da MDBList: il parse resta per compatibilità
 - `src/lib/badge-priority.ts` — logica priorità badge (condivisa)
 - `src/lib/badge-labels.ts` — label pure client-safe (match studio/network, label premi/nomination, QID regex; foglia senza import server, in RENDER_FILES)
+- `src/lib/award-ids.ts` — liste ID premi curate (Oscar/Globe/Emmy/Cannes/Venezia, namespace film/serie separati, update annuale; in RENDER_FILES)
 - `src/lib/logo-layout.ts` — geometria condivisa logo preview/server
 - `src/lib/gradient-presets.ts` — preset sfumatura Naturale/Colore (solo client) + regola pristine al cambio artwork
 - `src/app/api/poster/[type]/[id]/route.ts` — composizione poster finale (preview + Stremio usano la stessa route)

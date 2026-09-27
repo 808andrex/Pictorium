@@ -11,6 +11,8 @@ export interface RecentChange {
 }
 
 export const RECENT_CHANGES: RecentChange[] = [
+  { type: "feature", text: "Stronger blur in the Colore gradient preset", sha: "b9ff090", date: "2026-09-27" },
+  { type: "fix", text: "Fallback to region language in poster route and proxy modal", sha: "0e81f22", date: "2026-09-27" },
   { type: "fix", text: "Stremio catalogs sometimes stuck empty until restart", sha: "137eb4f", date: "2026-09-27" },
   { type: "feature", text: "link the ElfHosted menu's private-instance row", sha: "f77d816", date: "2026-09-27" },
   { type: "fix", text: "no doomed defaults sync from the multi-user root editor", sha: "31ba18f", date: "2026-09-27" },

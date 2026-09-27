@@ -227,7 +227,7 @@ describe("buildStremioPosterUrl", () => {  it("adds a mapping version parameter 
     expect(resolveConfig(plain, null).tintStrength).toBe(20)
   })
 
-  it("defaults blurFade to 70 in landscape, 60 in portrait (resolved server-side, compact URLs v1.23.0)", () => {
+  it("defaults blurFade to 70 in landscape, 80 in portrait (resolved server-side, compact URLs v1.23.0)", () => {
     const base = {
       origin: "http://localhost:3000",
       type: "movie" as const,
@@ -237,7 +237,7 @@ describe("buildStremioPosterUrl", () => {  it("adds a mapping version parameter 
     }
     const portrait = buildStremioPosterUrl(base)
     expect(portrait.searchParams.has("bf")).toBe(false)
-    expect(resolveConfig(portrait, null).blurFade).toBe(50)
+    expect(resolveConfig(portrait, null).blurFade).toBe(80)
     const landscape = buildStremioPosterUrl({ ...base, forceShape: "landscape" })
     expect(landscape.searchParams.has("bf")).toBe(false)
     expect(resolveConfig(landscape, null).blurFade).toBe(70)

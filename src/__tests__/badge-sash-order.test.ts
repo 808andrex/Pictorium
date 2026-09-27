@@ -5,6 +5,7 @@ import {
   isDefaultSashOrder,
   DEFAULT_SASH_ORDER,
   computeBadge,
+  moveSashItem,
   type BadgeParams,
 } from "@/lib/badge-priority"
 import { buildStremioPosterSearchParams } from "@/lib/stremio-poster-params"
@@ -51,8 +52,15 @@ describe("parseSashOrder", () => {
 })
 
 describe("normalizeSashOrder / isDefaultSashOrder", () => {
-  it("filtra e canonicalizza in ordine default", () => {
-    expect(normalizeSashOrder(["extra", "rank", "bogus", "rank"])).toEqual(["rank", "extra"])
+  it("filtra senza riordinare: l'ordine salvato è la scala di priorità", () => {
+    expect(normalizeSashOrder(["extra", "rank", "bogus", "rank"])).toEqual(["extra", "rank"])
+    expect(normalizeSashOrder(["award", "rank", "new", "upcoming", "extra"])).toEqual([
+      "award",
+      "rank",
+      "new",
+      "upcoming",
+      "extra",
+    ])
     expect(normalizeSashOrder([])).toEqual([])
     expect(normalizeSashOrder(null)).toBeNull()
     expect(normalizeSashOrder("rank")).toBeNull()
@@ -100,5 +108,28 @@ describe("stremio params: sash emesso solo quando non-default", () => {
     expect(buildStremioPosterSearchParams({ sashOrder: [...DEFAULT_SASH_ORDER] }).get("sash")).toBeNull()
     expect(buildStremioPosterSearchParams({ sashOrder: ["rank", "award"] }).get("sash")).toBe("rank,award")
     expect(buildStremioPosterSearchParams({ sashOrder: [] }).get("sash")).toBe("")
+  })
+})
+
+describe("moveSashItem (frecce + drag & drop)", () => {
+  const order = ["upcoming", "rank", "new", "award", "extra"] as const
+
+  it("sposta avanti e indietro", () => {
+    expect(moveSashItem([...order], "award", 1)).toEqual(["upcoming", "award", "rank", "new", "extra"])
+    expect(moveSashItem([...order], "award", 4)).toEqual(["upcoming", "rank", "new", "extra", "award"])
+    expect(moveSashItem([...order], "rank", 0)).toEqual(["rank", "upcoming", "new", "award", "extra"])
+  })
+
+  it("no-op se fermo, assente o fuori scala (clamp)", () => {
+    expect(moveSashItem([...order], "rank", 1)).toEqual([...order])
+    expect(moveSashItem(["rank"], "rank", 5)).toEqual(["rank"])
+    expect(moveSashItem([...order], "rank", 99)).toEqual(["upcoming", "new", "award", "extra", "rank"])
+    expect(moveSashItem([...order], "new", -99)).toEqual(["new", "upcoming", "rank", "award", "extra"])
+  })
+
+  it("non muta l'input", () => {
+    const input = [...order]
+    moveSashItem(input, "award", 0)
+    expect(input).toEqual([...order])
   })
 })

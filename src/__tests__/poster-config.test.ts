@@ -56,8 +56,8 @@ describe("resolvePosterRenderConfig", () => {
     expect(r.rankingBadgeStyle).toBe("default")
     expect(r.blurEnabled).toBe(true)
     expect(r.blurHeight).toBe(30)
-    expect(r.blurIntensity).toBe(20)
-    expect(r.blurFade).toBe(50)
+    expect(r.blurIntensity).toBe(50)
+    expect(r.blurFade).toBe(80)
     expect(r.blurDarkness).toBe(30)
     expect(r.tintStrength).toBe(20)
     expect(r.badgesEnabled).toBe(true)
@@ -160,12 +160,12 @@ describe("resolvePosterRenderConfig", () => {
     expect(r.blurFade).toBe(80)
   })
 
-  it("clean mappings keep the global fallbacks (30/50)", () => {
+  it("clean mappings keep the global fallbacks (30/80)", () => {
     const r = resolvePosterRenderConfig(baseInput({
       mapping: mapping({ language: null }),
     }))
     expect(r.blurHeight).toBe(30)
-    expect(r.blurFade).toBe(50)
+    expect(r.blurFade).toBe(80)
   })
 
   it("frozen mapping values beat the poster-type defaults", () => {
@@ -703,8 +703,8 @@ describe("resolvePosterRenderConfig", () => {
     })).blurHeight).toBe(45)
   })
 
-  it("blurFade defaults to 70 in landscape, 50 in portrait", () => {
-    expect(resolvePosterRenderConfig(baseInput()).blurFade).toBe(50)
+  it("blurFade defaults to 70 in landscape, 80 in portrait", () => {
+    expect(resolvePosterRenderConfig(baseInput()).blurFade).toBe(80)
     expect(resolvePosterRenderConfig(baseInput({
       searchParams: new URLSearchParams({ shape: "landscape" }),
     })).blurFade).toBe(70)

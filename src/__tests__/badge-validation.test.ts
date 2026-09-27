@@ -360,6 +360,44 @@ describe("computeTopBadge (nuovi badge)", () => {
     const c = computeTopBadge({ ...baseInput, awards: ["Emmy"] }, t, "it")
     expect(c.badge?.label).toBe("Emmy")
   })
+
+  it("Just Added per film con digitale recente (dato pre-release)", () => {
+    const movieBase = { ...baseInput, mediaType: "movie" as const, releaseDate: daysAgo(400), tvStatus: null as string | null }
+    const c = computeTopBadge({ ...movieBase, digitalReleaseDate: daysAgo(3) }, t, "it")
+    expect(c.justAdded).toBe("Appena aggiunto")
+    expect(c.badge).toEqual({ type: "extra", label: "Appena aggiunto" })
+  })
+
+  it("Just Added: futuro, vecchio, assente o serie → null", () => {
+    const movieBase = { ...baseInput, mediaType: "movie" as const, releaseDate: daysAgo(400), tvStatus: null as string | null }
+    expect(computeTopBadge({ ...movieBase, digitalReleaseDate: inDays(3) }, t, "it").justAdded).toBeNull()
+    expect(computeTopBadge({ ...movieBase, digitalReleaseDate: daysAgo(30) }, t, "it").justAdded).toBeNull()
+    expect(computeTopBadge({ ...movieBase }, t, "it").justAdded).toBeNull()
+    expect(computeTopBadge({ ...baseInput, digitalReleaseDate: daysAgo(3) }, t, "it").justAdded).toBeNull()
+  })
+
+  it("Nuovo film vince su Just Added", () => {
+    const c = computeTopBadge({
+      ...baseInput, mediaType: "movie" as const, releaseDate: daysAgo(3),
+      tvStatus: null as string | null, digitalReleaseDate: daysAgo(3),
+    }, t, "it")
+    expect(c.badge?.label).toBe("Nuovo film")
+  })
+
+  it("Serie conclusa con ultima puntata recente (sopprime Nuova stagione)", () => {
+    const c = computeTopBadge({ ...baseInput, tvStatus: "Ended", lastAirDate: daysAgo(3), seasonCount: 5 }, t, "it")
+    expect(c.seriesEnded).toBe("Serie conclusa")
+    expect(c.newSeason).toBeNull()
+    expect(c.badge).toEqual({ type: "extra", label: "Serie conclusa" })
+  })
+
+  it("Serie conclusa: vecchia → null; miniserie vince; mai sui film", () => {
+    expect(computeTopBadge({ ...baseInput, tvStatus: "Ended", lastAirDate: daysAgo(30) }, t, "it").seriesEnded).toBeNull()
+    // Miniserie (formato permanente) vince sulla conclusione recente.
+    expect(computeTopBadge({ ...baseInput, tvStatus: "Ended", tvType: "Miniseries", lastAirDate: daysAgo(3) }, t, "it").badge?.label).toBe("Miniserie")
+    // Mai sui film.
+    expect(computeTopBadge({ ...baseInput, mediaType: "movie" as const, tvStatus: "Ended", lastAirDate: daysAgo(3) }, t, "it").seriesEnded).toBeNull()
+  })
 })
 
 describe("resolveSavedBadgeExtra (freeze mapping)", () => {
@@ -373,6 +411,11 @@ describe("resolveSavedBadgeExtra (freeze mapping)", () => {
     expect(resolveSavedBadgeExtra({ badge: { type: "extra", label: "In uscita 18.12.26" }, upcomingRelease: "In uscita 18.12.26", newSeason: null }, t)).toBeUndefined()
     expect(resolveSavedBadgeExtra({ badge: { type: "extra", label: "Nuova S2" }, upcomingRelease: null, newSeason: "Nuova S2" }, t)).toBeUndefined()
     expect(resolveSavedBadgeExtra({ badge: { type: "extra", label: "Ritorna" }, upcomingRelease: null, newSeason: null }, t)).toBeUndefined()
+  })
+
+  it("non congela mai Just Added e Serie conclusa (transitori)", () => {
+    expect(resolveSavedBadgeExtra({ badge: { type: "extra", label: "Appena aggiunto" }, upcomingRelease: null, newSeason: null, justAdded: "Appena aggiunto" }, t)).toBeUndefined()
+    expect(resolveSavedBadgeExtra({ badge: { type: "extra", label: "Serie conclusa" }, upcomingRelease: null, newSeason: null, seriesEnded: "Serie conclusa" }, t)).toBeUndefined()
   })
 
   it("ignora i badge rank (vanno in badgeRank, non in badgeExtra)", () => {
@@ -392,5 +435,31 @@ describe("getAllBadgeOptions (nuovi badge)", () => {
     })
     expect(options).toContain("__badge.newSeason")
     expect(options).toContain("K-Drama")
+  })
+
+  it("includes justAdded literal and seriesEnded literal", () => {
+    const options = getAllBadgeOptions({
+      upcomingRelease: null, isNewMovie: false, isNewSeries: false,
+      newSeason: null, justAdded: "Appena aggiunto", animeRank: null, trendRank: null,
+      award: null, nomination: null, studio: null, director: null,
+      subGenre: null, imdbTop250: false, seriesEnded: "Serie conclusa", extra: null,
+      mediaType: "tv", voteAverage: 8, tvType: null, tvStatus: "Ended",
+    })
+    expect(options).toContain("Appena aggiunto")
+    expect(options).toContain("Serie conclusa")
+  })
+
+  it("includes every win as manual option (ID + Wikidata)", () => {
+    const options = getAllBadgeOptions({
+      upcomingRelease: null, isNewMovie: false, isNewSeries: false,
+      newSeason: null, animeRank: null, trendRank: null,
+      award: "Emmy", awardWins: ["Emmy", "Golden Globe", "BAFTA"], nomination: null,
+      studio: null, director: null,
+      subGenre: null, extra: null,
+      mediaType: "tv", voteAverage: 8, tvType: null, tvStatus: null,
+    })
+    expect(options).toContain("Emmy")
+    expect(options).toContain("Golden Globe")
+    expect(options).toContain("BAFTA")
   })
 })

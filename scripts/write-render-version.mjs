@@ -16,6 +16,7 @@ const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const RENDER_FILES = [
   "src/app/api/poster/[type]/[id]/route.ts",
   "src/lib/accent-color.ts",
+  "src/lib/award-ids.ts",
   "src/lib/awards.ts",
   "src/lib/badge-labels.ts",
   "src/lib/badge-priority.ts",

@@ -1611,6 +1611,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
     if (isDebug) {
       const badgeInput = {
         mediaType: mediaType as "movie" | "tv",
+        tmdbId,
+        digitalReleaseDate: preDigital ?? null,
         releaseDate: releaseDate ?? null,
         firstAirDate: firstAirDate ?? null,
         lastAirDate: lastAirDate ?? null,
@@ -1769,7 +1771,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
       networkLogoOffsetX, networkLogoOffsetY,
       mediaType: mediaType as "movie" | "tv",
       finalRank, animeRankResult, rankingResult,
-      mapping, tmdbNetworks, productionCompanies, tmdbStudios,
+      mapping, tmdbId, digitalReleaseDate: preDigital ?? null, tmdbNetworks, productionCompanies, tmdbStudios,
       tmdbNetworksDetailed, productionCompaniesDetailed,
       tvType, tvStatus, releaseDate, firstAirDate,
       lastAirDate, seasonCount, originCountries,

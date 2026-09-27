@@ -52,14 +52,36 @@ export function parseSashOrder(raw: string | null | undefined): SashBucket[] | n
   return out.length > 0 ? out : null
 }
 
-/** Normalizza una lista salvata (defaults.json): validi + dedup, in ordine canonico. Vuota = tutto spento (stato valido). */
+/** Normalizza una lista salvata (defaults.json): validi + dedup, ORDINE SALVATO
+ *  preservato (è la scala di priorità dell'utente). Vuota = tutto spento
+ *  (stato valido). */
 export function normalizeSashOrder(raw: unknown): SashBucket[] | null {
   if (!Array.isArray(raw)) return null
-  const set = new Set<SashBucket>()
+  const out: SashBucket[] = []
   for (const v of raw) {
-    if (typeof v === "string" && isSashBucket(v.toLowerCase())) set.add(v.toLowerCase() as SashBucket)
+    const b = typeof v === "string" ? v.toLowerCase() : ""
+    if (isSashBucket(b) && !out.includes(b)) out.push(b)
   }
-  return DEFAULT_SASH_ORDER.filter((b) => set.has(b))
+  return out
+}
+
+/**
+ * Sposta un bucket nella scala (drag & drop o frecce): indici clampati,
+ * no-op se fermo o assente. Pura, testabile — il componente applica solo
+ * il risultato a `defaultSashOrder`.
+ */
+export function moveSashItem(
+  order: readonly SashBucket[],
+  bucket: SashBucket,
+  toIndex: number,
+): SashBucket[] {
+  const from = order.indexOf(bucket)
+  if (from < 0) return [...order]
+  const to = Math.min(Math.max(toIndex, 0), order.length - 1)
+  if (to === from) return [...order]
+  const next = [...order]
+  next.splice(to, 0, ...next.splice(from, 1))
+  return next
 }
 
 /** true se la lista equivale al default (niente emissione `sash`, niente invalidazione cache). */
@@ -73,6 +95,8 @@ export interface BadgeParams {
   upcomingRelease: string | null
   isNewMovie: boolean
   isNewSeries: boolean
+  /** Film con uscita digitale recente (da getJustAddedLabel) o null. */
+  justAdded?: string | null
   /** Label "Nuova stagione [S2]" già localizzata (da getNewSeasonLabel) o null. */
   newSeason?: string | null
   animeRank: number | null
@@ -88,6 +112,8 @@ export interface BadgeParams {
   subGenre?: string | null
   /** Serie TV prodotta in Corea del Sud (origin country KR). */
   isKDrama?: boolean
+  /** Serie finita da poco (status Ended + ultima puntata recente). */
+  seriesEnded?: string | null
   imdbTop250?: boolean
   extra: string | null
 }
@@ -106,6 +132,7 @@ function resolveBucket(bucket: SashBucket, params: BadgeParams, t: T): BadgeResu
     case "new":
       if (params.isNewMovie) return { type: "extra", label: t("badge.newMovie") }
       if (params.isNewSeries) return { type: "extra", label: t("badge.newSeries") }
+      if (params.justAdded) return { type: "extra", label: params.justAdded }
       if (params.newSeason) return { type: "extra", label: params.newSeason }
       return null
     case "award":
@@ -120,6 +147,7 @@ function resolveBucket(bucket: SashBucket, params: BadgeParams, t: T): BadgeResu
       if (params.studio) return { type: "extra", label: params.studio }
       if (params.miniseries) return { type: "extra", label: params.miniseries }
       if (params.returning) return { type: "extra", label: params.returning }
+      if (params.seriesEnded) return { type: "extra", label: params.seriesEnded }
       if (params.extra) return { type: "extra", label: params.extra }
       return null
   }
@@ -156,15 +184,19 @@ export function getAllBadgeOptions(params: {
   isNewMovie: boolean
   isNewSeries: boolean
   newSeason?: string | null
+  justAdded?: string | null
   animeRank: number | null
   trendRank: number | null
   award: string | null
   nomination: string | null
+  /** Tutte le vittorie trovate (liste ID): il menu le offre come scelte manuali. */
+  awardWins?: string[]
   studio: string | null
   director: string | null
   subGenre?: string | null
   isKDrama?: boolean
   imdbTop250?: boolean
+  seriesEnded?: string | null
   extra: string | null
   mediaType: "movie" | "tv"
   voteAverage: number
@@ -176,9 +208,11 @@ export function getAllBadgeOptions(params: {
   if (params.isNewMovie) options.add(keyed("badge.newMovie"))
   if (params.isNewSeries) options.add(keyed("badge.newSeries"))
   if (params.newSeason) options.add(keyed("badge.newSeason"))
+  if (params.justAdded) options.add(params.justAdded)
   if (params.trendRank) options.add(keyed(params.mediaType === "movie" ? "badge.movie" : "badge.series"))
   if (params.animeRank && params.animeRank <= ANIME_RANK_MAX) options.add(keyed("badge.anime"))
   if (params.award) options.add(params.award)
+  if (params.awardWins) for (const w of params.awardWins) if (w) options.add(w)
   if (params.mediaType === "movie" && params.imdbTop250) options.add(keyed("badge.absoluteCinema"))
   if (params.nomination) options.add(params.nomination)
   if (params.subGenre) options.add(params.subGenre)
@@ -190,6 +224,7 @@ export function getAllBadgeOptions(params: {
     const sLower = (params.tvStatus || "").toLowerCase()
     if (tLower === "miniseries" || tLower === "miniserie") options.add(keyed("badge.miniseries"))
     if (sLower === "returning series" || sLower === "in corso") options.add(keyed("badge.returning"))
+    if (params.seriesEnded) options.add(params.seriesEnded)
   }
   options.delete("")
   return [...options]

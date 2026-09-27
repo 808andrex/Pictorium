@@ -20,7 +20,7 @@ import {
   type BadgeStyle,
   type RankingBadgeStyle,
 } from "./badge-styles"
-import { NON_CLEAN_GRADIENT_HEIGHT, NON_CLEAN_BLUR_FADE } from "./gradient-defaults"
+import { NON_CLEAN_GRADIENT_HEIGHT } from "./gradient-defaults"
 
 export function clamp(v: number, min: number, max: number): number {
   return Math.min(Math.max(v, min), max)
@@ -204,13 +204,15 @@ export function resolvePosterRenderConfig(input: PosterRenderConfigInput): Poste
     ? clamp(rawBlur, 1, 100)
     : (m?.blurIntensity != null && Number.isFinite(m.blurIntensity)
         ? clamp(m.blurIntensity, 1, 100)
-        : (configOverride !== null ? clamp(configOverride.blurIntensity, 1, 100) : (sd.blurIntensity != null && Number.isFinite(sd.blurIntensity) ? clamp(sd.blurIntensity, 1, 100) : 20)))
+        : (configOverride !== null ? clamp(configOverride.blurIntensity, 1, 100) : (sd.blurIntensity != null && Number.isFinite(sd.blurIntensity) ? clamp(sd.blurIntensity, 1, 100) : 50)))
+  // Fade di default: 70 in landscape, 80 nel portrait (look Naturale; il
+  // profilo non-clean era già 80, il clean sale da 50 — sync col client).
   const rawBf = q.get("bf") ? Number(q.get("bf")) : NaN
   const blurFade = Number.isFinite(rawBf)
     ? clamp(rawBf, 0, 100)
     : (m?.blurFade != null && Number.isFinite(m.blurFade)
         ? clamp(m.blurFade, 0, 100)
-        : (configOverride !== null ? clamp(configOverride.blurFade, 0, 100) : (sd.blurFade != null && Number.isFinite(sd.blurFade) ? clamp(sd.blurFade, 0, 100) : (posterShape === "landscape" ? 70 : (mappingNonClean ? NON_CLEAN_BLUR_FADE : 50)))))
+        : (configOverride !== null ? clamp(configOverride.blurFade, 0, 100) : (sd.blurFade != null && Number.isFinite(sd.blurFade) ? clamp(sd.blurFade, 0, 100) : (posterShape === "landscape" ? 70 : 80))))
   const rawBd = q.get("bd") ? Number(q.get("bd")) : NaN
   const blurDarkness = Number.isFinite(rawBd)
     ? clamp(rawBd, 0, 100)

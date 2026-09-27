@@ -8,9 +8,10 @@ import { usePosterEditor } from "@/lib/contexts/PosterEditorContext"
 import { Toggle } from "@/components/Toggle"
 import { BadgeStyleSelector } from "@/components/ui"
 import { getAwardBadgeLabel, getNominationBadgeLabel } from "@/lib/badge-labels"
+import { getNewSeasonLabel, getSeriesEndedLabel, isKDramaOrigin } from "@/lib/poster-badge"
+import { withIdAwards, withIdNoms } from "@/lib/award-ids"
 import { getSubGenreLabel } from "@/lib/subgenres"
 import { getUpcomingReleaseLabel } from "@/lib/release-badge"
-import { getNewSeasonLabel, isKDramaOrigin } from "@/lib/poster-badge"
 import { isPrefixedKey, badgeKey } from "@/lib/i18n"
 import { getAllBadgeOptions } from "@/lib/badge-priority"
 import { isManualAccent } from "@/lib/accent-color"
@@ -250,10 +251,22 @@ export function BadgeControls() {
               {(() => {
                 if (!selected) return null
                 const twoWeeks = 14 * 24 * 60 * 60 * 1000
-                const isNewMovie = selected.media_type === "movie" && metaInfo.release_date ? (now - new Date(metaInfo.release_date).getTime()) < twoWeeks : false
-                const isNewSeries = selected.media_type === "tv" && metaInfo.first_air_date ? (now - new Date(metaInfo.first_air_date).getTime()) < twoWeeks : false
-                const award = metaInfo.awards?.length ? getAwardBadgeLabel(metaInfo.awards, t) : null
-                const nomination = !award && metaInfo.nominations?.length ? getNominationBadgeLabel(metaInfo.nominations, t) : null
+                // Stesse guard del server (computeTopBadge): le date future non
+                // sono mai "novità" (bug date-future: now - futuro < twoWeeks).
+                const relTime = metaInfo.release_date ? new Date(metaInfo.release_date).getTime() : NaN
+                const isNewMovie = selected.media_type === "movie" && Number.isFinite(relTime) ? relTime <= now && (now - relTime) < twoWeeks : false
+                const firstTime = metaInfo.first_air_date ? new Date(metaInfo.first_air_date).getTime() : NaN
+                const isNewSeries = selected.media_type === "tv" && Number.isFinite(firstTime) ? firstTime <= now && (now - firstTime) < twoWeeks : false
+                const seriesEnded = selected.media_type === "tv" ? getSeriesEndedLabel({
+                  tvStatus: metaInfo.status,
+                  lastAirDate: metaInfo.last_air_date,
+                  t,
+                }) : null
+                const idMedia = selected.media_type === "tv" ? "tv" as const : "movie" as const
+                const mergedAwards = withIdAwards(selected.id, idMedia, metaInfo.awards ?? [])
+                const mergedNoms = withIdNoms(selected.id, idMedia, metaInfo.nominations ?? [])
+                const award = mergedAwards.length ? getAwardBadgeLabel(mergedAwards, t) : null
+                const nomination = !award && mergedNoms.length ? getNominationBadgeLabel(mergedNoms, t) : null
                 const animeRankData = mdblistAnimeList?.find((a) => a.id === selected.id)
                 const animeRank = animeRankData ? animeRankData.rank : null
                 const studio = metaInfo.studios?.length ? metaInfo.studios[0] : null
@@ -268,7 +281,8 @@ export function BadgeControls() {
                   t,
                 })
                 const subGenre = getSubGenreLabel(metaInfo.keywords || [], lang)
-                const newSeason = selected.media_type === "tv" ? getNewSeasonLabel({
+                // Come nel motore: serie appena finita ≠ nuova stagione.
+                const newSeason = selected.media_type === "tv" && !seriesEnded ? getNewSeasonLabel({
                   lastAirDate: metaInfo.last_air_date,
                   firstAirDate: metaInfo.first_air_date,
                   seasonCount: metaInfo.number_of_seasons,
@@ -280,8 +294,12 @@ export function BadgeControls() {
                 ].map((c) => c.origin_country).filter((c): c is string => !!c))
                 const options = getAllBadgeOptions({
                   upcomingRelease, isNewMovie, isNewSeries, newSeason, animeRank, trendRank: trendRank,
-                  award, nomination, studio,
+                  // justAdded: data digitale solo server-side (pre-release) —
+                  // il dropdown non può calcolarlo, l'auto-badge resta server.
+                  justAdded: null,
+                  award, awardWins: mergedAwards, nomination, studio,
                   director: metaInfo.director || null, subGenre, isKDrama, extra,
+                  seriesEnded,
                   mediaType: selected.media_type === "tv" ? "tv" : "movie",
                   voteAverage: metaInfo.voteAverage, tvType, tvStatus,
                   imdbTop250: !!imdbTop250,

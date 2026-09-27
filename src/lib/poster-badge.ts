@@ -5,6 +5,7 @@
  */
 import { computeBadge, computeAbsoluteCinema, type BadgeResult, type SashBucket } from "./badge-priority"
 import { getAwardBadgeLabel, getNominationBadgeLabel } from "./badge-labels"
+import { withIdAwards, withIdNoms } from "./award-ids"
 import { getUpcomingReleaseLabel } from "./release-badge"
 import { getSubGenreLabel } from "./subgenres"
 
@@ -12,6 +13,10 @@ export type BadgeT = (key: string, params?: Record<string, string | number>) => 
 
 export interface BadgeInput {
   mediaType: "movie" | "tv"
+  /** TMDB ID per il lookup premi certi (liste ID): assente = solo Wikidata. */
+  tmdbId?: number | null
+  /** Data uscita digitale (solo se già calcolata dal pre-release): Just Added. */
+  digitalReleaseDate?: string | null
   releaseDate: string | null
   firstAirDate: string | null
   /** Ultima messa in onda (serie TV) — per il badge "Nuova stagione". */
@@ -41,6 +46,8 @@ export interface ComputedTopBadge {
   readonly isNewMovie: boolean
   readonly isNewSeries: boolean
   readonly newSeason: string | null
+  readonly justAdded: string | null
+  readonly seriesEnded: string | null
   readonly extraFallback: string | null
   readonly awardBadge: string | null
   readonly studioBadge: string | null
@@ -90,6 +97,48 @@ export function getNewSeasonLabel(input: {
 }
 
 /**
+ * Badge "Just Added": film con uscita digitale recente (<14gg, mai futura).
+ * Solo film: la data digitale arriva dal rilevamento pre-release (route),
+ * assente = niente bollino (mai una chiamata forzata, mai un'invenzione).
+ */
+export function getJustAddedLabel(input: {
+  digitalReleaseDate?: string | null
+  mediaType: "movie" | "tv"
+  t: BadgeT
+}): string | null {
+  if (input.mediaType !== "movie") return null
+  const time = input.digitalReleaseDate ? new Date(input.digitalReleaseDate).getTime() : NaN
+  if (!Number.isFinite(time)) return null
+  const now = Date.now()
+  const TWO_WEEKS_MS = 14 * 24 * 60 * 60 * 1000
+  if (!(time <= now && (now - time) < TWO_WEEKS_MS)) return null
+  return input.t("badge.justAddedMovie")
+}
+
+/** Stati "serie finita" (TMDB li localizza: inglese + italiano). */
+const ENDED_STATUSES = ["ended", "terminata", "terminato", "finita", "finito", "conclusa", "concluso"]
+
+/**
+ * Badge "Serie conclusa": status finita + ultima puntata recente (<14gg,
+ * mai futura). Solo transitorio verificato: "Cancellata" resta fuori di
+ * proposito (altro significato). In coda a `extra`, MAI in `upcoming`.
+ */
+export function getSeriesEndedLabel(input: {
+  tvStatus?: string | null | undefined
+  lastAirDate?: string | null
+  t: BadgeT
+}): string | null {
+  const s = (input.tvStatus || "").trim().toLowerCase()
+  if (!ENDED_STATUSES.includes(s)) return null
+  const lastTime = input.lastAirDate ? new Date(input.lastAirDate).getTime() : NaN
+  if (!Number.isFinite(lastTime)) return null
+  const now = Date.now()
+  const TWO_WEEKS_MS = 14 * 24 * 60 * 60 * 1000
+  if (!(lastTime <= now && (now - lastTime) < TWO_WEEKS_MS)) return null
+  return input.t("badge.seriesEnded")
+}
+
+/**
  * True se almeno un origin country di network/production è KR (K-Drama).
  * Confronto case-insensitive su codici ISO-3166 già normalizzati da TMDB.
  */
@@ -119,9 +168,13 @@ export function computeTopBadge(input: BadgeInput, t: BadgeT, locale?: string, o
     ? firstAirTime <= now && (now - firstAirTime) < TWO_WEEKS_MS
     : false
 
-  const awardBadge = input.awards.length ? getAwardBadgeLabel(input.awards, t) : null
-  const nomination = !awardBadge && input.nominations.length
-    ? getNominationBadgeLabel(input.nominations, t)
+  // Premi certi da liste ID prima delle label generiche Wikidata (stesse
+  // stringhe canoniche = stesso sync dropdown/cache, vedi award-ids.ts).
+  const mergedAwards = withIdAwards(input.tmdbId, input.mediaType, input.awards)
+  const mergedNoms = withIdNoms(input.tmdbId, input.mediaType, input.nominations)
+  const awardBadge = mergedAwards.length ? getAwardBadgeLabel(mergedAwards, t) : null
+  const nomination = !awardBadge && mergedNoms.length
+    ? getNominationBadgeLabel(mergedNoms, t)
     : null
   const studioBadge = input.studios.length ? input.studios[0] : null
   const isNetStudio = isNetworkStudio(studioBadge)
@@ -141,7 +194,17 @@ export function computeTopBadge(input: BadgeInput, t: BadgeT, locale?: string, o
 
   const subGenreBadge = getSubGenreLabel(input.keywords || [], locale)
 
-  const newSeason = input.mediaType === "tv"
+  const justAdded = getJustAddedLabel({
+    digitalReleaseDate: input.digitalReleaseDate,
+    mediaType: input.mediaType,
+    t,
+  })
+  const seriesEnded = input.mediaType === "tv"
+    ? getSeriesEndedLabel({ tvStatus: input.tvStatus, lastAirDate: input.lastAirDate, t })
+    : null
+  // Una serie appena finita NON è "nuova stagione": il finale sopprime la
+  // label (stessa regola nel dropdown, mai forkare la formula).
+  const newSeason = input.mediaType === "tv" && !seriesEnded
     ? getNewSeasonLabel({
         lastAirDate: input.lastAirDate,
         firstAirDate: input.firstAirDate,
@@ -168,6 +231,7 @@ export function computeTopBadge(input: BadgeInput, t: BadgeT, locale?: string, o
     upcomingRelease,
     isNewMovie,
     isNewSeries,
+    justAdded,
     newSeason,
     animeRank: input.animeRank,
     trendRank: input.trendRank,
@@ -177,6 +241,7 @@ export function computeTopBadge(input: BadgeInput, t: BadgeT, locale?: string, o
     director: input.director,
     miniseries,
     returning,
+    seriesEnded,
     subGenre: subGenreBadge,
     isKDrama,
     imdbTop250: !!input.imdbTop250,
@@ -189,6 +254,8 @@ export function computeTopBadge(input: BadgeInput, t: BadgeT, locale?: string, o
     isNewMovie,
     isNewSeries,
     newSeason,
+    justAdded,
+    seriesEnded,
     extraFallback,
     awardBadge,
     studioBadge,
@@ -199,17 +266,19 @@ export function computeTopBadge(input: BadgeInput, t: BadgeT, locale?: string, o
 /**
  * Decide cosa congelare in `badgeExtra` del mapping salvato. I badge
  * time-bound non si congelano mai (resterebbero per sempre): "In uscita",
- * "Nuova stagione" e — da quando è auto — "Ritorna" (lo status è
+ * "Nuova stagione", "Ritorna", "Just Added" e "Serie conclusa" (lo status è
  * transitorio, Stremio lo ricalcola a runtime). "Miniserie" resta
  * congelabile (formato permanente).
  */
 export function resolveSavedBadgeExtra(
-  computed: Pick<ComputedTopBadge, "badge" | "upcomingRelease" | "newSeason">,
+  computed: Pick<ComputedTopBadge, "badge" | "upcomingRelease" | "newSeason"> & Partial<Pick<ComputedTopBadge, "justAdded" | "seriesEnded">>,
   t: BadgeT,
 ): string | undefined {
   if (computed.badge?.type !== "extra") return undefined
   if (computed.upcomingRelease && computed.badge.label === computed.upcomingRelease) return undefined
   if (computed.newSeason && computed.badge.label === computed.newSeason) return undefined
   if (computed.badge.label === t("badge.returning")) return undefined
+  if (computed.justAdded && computed.badge.label === computed.justAdded) return undefined
+  if (computed.seriesEnded && computed.badge.label === computed.seriesEnded) return undefined
   return computed.badge.label
 }

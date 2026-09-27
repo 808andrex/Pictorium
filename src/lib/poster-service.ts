@@ -138,6 +138,10 @@ export interface GenerationInput {
 
   // Badge data sources
   mediaType: "movie" | "tv"
+  /** TMDB ID per il lookup premi certi (liste ID in award-ids.ts). */
+  tmdbId?: number | null
+  /** Data uscita digitale già calcolata dal pre-release: Just Added. */
+  digitalReleaseDate?: string | null
   finalRank: number | null
   animeRankResult: number | null
   rankingResult: number | null
@@ -758,6 +762,8 @@ export async function generatePosterBuffer(input: GenerationInput): Promise<Buff
 
   const badgeInput: BadgeInput = {
     mediaType,
+    tmdbId: input.tmdbId ?? null,
+    digitalReleaseDate: input.digitalReleaseDate ?? null,
     releaseDate: releaseDate ?? null,
     firstAirDate: firstAirDate ?? null,
     lastAirDate: lastAirDate ?? null,

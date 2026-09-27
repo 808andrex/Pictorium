@@ -70,7 +70,7 @@ describe("poster editor current/default split", () => {
     expect(result.current.badgeStyle).toBe("pill")
     expect(result.current.defaultBadgeStyle).toBe("shadow")
     expect(result.current.blurIntensity).toBe(9)
-    expect(result.current.defaultBlurIntensity).toBe(20)
+    expect(result.current.defaultBlurIntensity).toBe(50)
     expect(result.current.networkLogo).toBe(false)
     expect(result.current.defaultNetworkLogo).toBe(true)
     expect(result.current.ribbonSide).toBe("right")
@@ -96,7 +96,7 @@ describe("poster editor current/default split", () => {
     expect(result.current.defaultBadgeStyle).toBe("pill")
     expect(result.current.badgeStyle).toBe("shadow")
     expect(result.current.defaultBlurIntensity).toBe(9)
-    expect(result.current.blurIntensity).toBe(20)
+    expect(result.current.blurIntensity).toBe(50)
   })
 
   it("saveDefaults persists defaults without touching the open poster", async () => {

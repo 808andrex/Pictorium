@@ -62,7 +62,8 @@ export function matchStudios(labels: string[]): string[] {
 }
 
 export function getAwardBadgeLabel(awards: string[], t?: (key: string, params?: Record<string, string | number>) => string): string | null {
-  const priority = ["Oscar", "Cannes", "Venezia", "BAFTA", "Golden Globe", "Emmy", "David"]
+  // Emmy prima di Golden Globe: per le serie l'Emmy è il premio apicale.
+  const priority = ["Oscar", "Cannes", "Venezia", "BAFTA", "Emmy", "Golden Globe", "David"]
   for (const a of priority) {
     if (awards.includes(a)) return t ? t("badge.winner", { name: t(`award.${a.toLowerCase().replace(/ /g, "_")}`) }) : `${a}`
   }
@@ -70,7 +71,7 @@ export function getAwardBadgeLabel(awards: string[], t?: (key: string, params?: 
 }
 
 export function getNominationBadgeLabel(nominations: string[], t?: (key: string, params?: Record<string, string | number>) => string): string | null {
-  const priority = ["Oscar", "Cannes", "Venezia", "BAFTA", "Golden Globe", "Emmy", "David"]
+  const priority = ["Oscar", "Cannes", "Venezia", "BAFTA", "Emmy", "Golden Globe", "David"]
   for (const a of priority) {
     if (nominations.includes(a)) return t ? t("badge.nominee", { name: t(`award.${a.toLowerCase().replace(/ /g, "_")}`) }) : `Candidato ${a}`
   }

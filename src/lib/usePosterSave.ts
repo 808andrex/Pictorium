@@ -221,6 +221,7 @@ export function usePosterSave(deps: PosterSaveDeps) {
     const animeRankData = mdblistAnimeList?.find((a) => a.id === selected.id)
     const badgeInput: BadgeInput = {
       mediaType: selected.media_type === "tv" ? "tv" : "movie",
+      tmdbId: selected.id,
       releaseDate: metaInfo.release_date ?? null,
       firstAirDate: metaInfo.first_air_date ?? null,
       lastAirDate: metaInfo.last_air_date ?? null,

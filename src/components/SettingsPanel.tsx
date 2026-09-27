@@ -11,13 +11,14 @@ import { SliderRow } from "@/components/SliderRow"
 import { Toggle } from "@/components/Toggle"
 import { BadgeStyleSelector, MenuItem } from "@/components/ui"
 import { UI_RATING_SOURCES } from "@/lib/rating-weights"
-import { SASH_BUCKETS, DEFAULT_SASH_ORDER, parseSashOrder, type SashBucket } from "@/lib/badge-priority"
+import { SASH_BUCKETS, DEFAULT_SASH_ORDER, parseSashOrder, moveSashItem, type SashBucket } from "@/lib/badge-priority"
 import { formatRating } from "@/lib/custom-rating/formatter"
 import { REGIONS } from "@/lib/regions"
 import { UI_LANGUAGES } from "@/lib/utils"
 import { RatingSourceIcon } from "@/components/RatingSourceIcon"
 import { UserKeysSection } from "@/components/UserKeysSection"
-import { GRADIENT_PRESET_COLOR, NATURAL_GRADIENT_DEFAULTS, matchesGradientPreset, type GradientPresetValues } from "@/lib/gradient-presets"
+import { NATURAL_GRADIENT_DEFAULTS, type GradientPresetValues } from "@/lib/gradient-presets"
+import { GradientPresetRow } from "@/components/GradientPresetRow"
 import { UserSpaceSection } from "@/components/UserSpaceSection"
 import { isMultiUserServer } from "@/lib/guest-guard"
 import { adminAuthHeaders, hasAdminToken } from "@/lib/admin-token"
@@ -48,6 +49,7 @@ import {
   Wand2,
   Globe,
   X,
+  Menu,
   Lock,
   KeyRound,
   Search,
@@ -113,6 +115,7 @@ export function SettingsPanel({ setSettingsOpen, exportData, importData, mobile 
   const [sourcesOpen, setSourcesOpen] = useState(false)
   const [editVal, setEditVal] = useState<string | null>(null)
   const [editTxt, setEditTxt] = useState("")
+  const [sashDrag, setSashDrag] = useState<SashBucket | null>(null)
   const [saved, setSaved] = useState(false)
   const settingsRef = useRef<HTMLDivElement>(null)
   const [clearStatus, setClearStatus] = useState<"idle" | "clearing" | "cleared">("idle")
@@ -614,31 +617,67 @@ export function SettingsPanel({ setSettingsOpen, exportData, importData, mobile 
             />
           </div>
 
-          {/* Categorie sash (priorità badge superiore): toggle ON/OFF in ordine fisso */}
+          {/* Scala priorità sash: l'ordine in lista è l'ordine di vittoria del badge superiore */}
           <div className="pt-1">
             <span className="text-[10px] font-semibold uppercase tracking-wide text-muted">
               {t("ui.sashTitle")}
             </span>
             <div className="mt-1 space-y-1.5">
-              {SASH_BUCKETS.map((b) => {
+              {(() => {
                 const sash = ed.defaultSashOrder ?? [...DEFAULT_SASH_ORDER]
-                const isOn = sash.includes(b)
-                return (
-                  <div key={b} className="flex items-center justify-between">
-                    <span className="text-zinc-300 font-medium">{t(`ui.sash_${b}`)}</span>
-                    <Toggle
-                      value={isOn}
-                      onChange={(v) => {
-                        const next: SashBucket[] = v
-                          ? DEFAULT_SASH_ORDER.filter((x) => x === b || sash.includes(x))
-                          : sash.filter((x) => x !== b)
-                        ed.setDefaultSashOrder(next)
-                      }}
-                      label={t(`ui.sash_${b}`)}
-                    />
-                  </div>
-                )
-              })}
+                // Accese nell'ordine salvato, spente in coda in ordine canonico.
+                const ordered: SashBucket[] = [...sash, ...SASH_BUCKETS.filter((b) => !sash.includes(b))]
+                const drop = (target: SashBucket) => {
+                  if (sashDrag && sashDrag !== target) {
+                    ed.setDefaultSashOrder(moveSashItem(sash, sashDrag, sash.indexOf(target)))
+                  }
+                  setSashDrag(null)
+                }
+                return ordered.map((b) => {
+                  const isOn = sash.includes(b)
+                  const dragging = sashDrag === b
+                  return (
+                    <div key={b}
+                         draggable={isOn}
+                         onDragStart={() => { if (isOn) setSashDrag(b) }}
+                         onDragEnd={() => setSashDrag(null)}
+                         onDragOver={isOn ? (e) => e.preventDefault() : undefined}
+                         onDrop={isOn ? (e) => { e.preventDefault(); drop(b) } : undefined}
+                         className={`flex items-center justify-between gap-1 rounded-md select-none ${dragging ? "opacity-40" : ""} ${sashDrag && !dragging && isOn ? "outline outline-1 outline-accent/30" : ""}`}>
+                      <span className="inline-flex items-center gap-1 min-w-0">
+                        {isOn && (
+                          <span title={t("ui.dragOne")}
+                                className="pointer-coarse:hidden cursor-grab active:cursor-grabbing p-1 rounded-md hover:bg-white/10 text-muted hover:text-accent transition-colors">
+                            <Menu className="w-4 h-4 stroke-[2.5]" />
+                          </span>
+                        )}
+                        <span className={`text-zinc-300 font-medium ${isOn ? "" : "opacity-50"}`}>{t(`ui.sash_${b}`)}</span>
+                      </span>
+                      <span className="inline-flex items-center gap-0.5">
+                        <Toggle
+                          value={isOn}
+                          onChange={(v) => {
+                            // Riaccensione nello slot canonico, le altre mantengono
+                            // l'ordine relativo (niente reset della scala).
+                            const next: SashBucket[] = v
+                              ? (() => {
+                                  const home = DEFAULT_SASH_ORDER.indexOf(b)
+                                  return [
+                                    ...sash.filter((x) => DEFAULT_SASH_ORDER.indexOf(x) < home),
+                                    b,
+                                    ...sash.filter((x) => DEFAULT_SASH_ORDER.indexOf(x) > home),
+                                  ]
+                                })()
+                              : sash.filter((x) => x !== b)
+                            ed.setDefaultSashOrder(next)
+                          }}
+                          label={t(`ui.sash_${b}`)}
+                        />
+                      </span>
+                    </div>
+                  )
+                })
+              })()}
             </div>
           </div>
 
@@ -1231,53 +1270,33 @@ export function SettingsPanel({ setSettingsOpen, exportData, importData, mobile 
           </span>
           <button type="button" aria-label={t("ui.reset")}
                   onClick={() => {
-                    ed.setDefaultGradientHeight(30)
-                    ed.setDefaultBlurIntensity(20)
-                    ed.setDefaultBlurFade(50)
-                    ed.setDefaultBlurDarkness(30)
-                    ed.setDefaultTintStrength(20)
+                    ed.setDefaultGradientHeight(NATURAL_GRADIENT_DEFAULTS.gradientHeight)
+                    ed.setDefaultBlurIntensity(NATURAL_GRADIENT_DEFAULTS.blurIntensity)
+                    ed.setDefaultBlurFade(NATURAL_GRADIENT_DEFAULTS.blurFade)
+                    ed.setDefaultBlurDarkness(NATURAL_GRADIENT_DEFAULTS.blurDarkness)
+                    ed.setDefaultTintStrength(NATURAL_GRADIENT_DEFAULTS.tintStrength)
                   }}
                   className="text-xs text-muted hover:text-accent transition-colors px-2 py-0.5 rounded-md border border-border/50 hover:border-accent/30">
             {t("ui.reset")}
           </button>
         </div>
 
-        <div className="flex items-center gap-1.5 px-0.5">
-          {(() => {
-            const currentDefaults: GradientPresetValues = {
-              gradientHeight: ed.defaultGradientHeight,
-              blurIntensity: ed.defaultBlurIntensity,
-              blurFade: ed.defaultBlurFade,
-              blurDarkness: ed.defaultBlurDarkness,
-              tintStrength: ed.defaultTintStrength,
-              blurEnabled: ed.defaultBlurEnabled,
-            }
-            const applyDefaults = (v: GradientPresetValues) => {
-              ed.setDefaultBlurEnabled(true)
-              ed.setDefaultGradientHeight(v.gradientHeight)
-              ed.setDefaultBlurIntensity(v.blurIntensity)
-              ed.setDefaultBlurFade(v.blurFade)
-              ed.setDefaultBlurDarkness(v.blurDarkness)
-              ed.setDefaultTintStrength(v.tintStrength)
-            }
-            const isNatural = matchesGradientPreset(currentDefaults, NATURAL_GRADIENT_DEFAULTS)
-            const isColor = matchesGradientPreset(currentDefaults, GRADIENT_PRESET_COLOR)
-            return (<>
-              <button type="button"
-                      aria-pressed={isNatural}
-                      onClick={() => applyDefaults(NATURAL_GRADIENT_DEFAULTS)}
-                      className={`text-xs px-2 py-0.5 rounded-md border transition-colors ${isNatural ? "text-accent border-accent/50" : "text-muted hover:text-accent border-border/50 hover:border-accent/30"}`}>
-                {t("ui.gradientPresetNatural")}
-              </button>
-              <button type="button"
-                      aria-pressed={isColor}
-                      onClick={() => applyDefaults(GRADIENT_PRESET_COLOR)}
-                      className={`text-xs px-2 py-0.5 rounded-md border transition-colors ${isColor ? "text-accent border-accent/50" : "text-muted hover:text-accent border-border/50 hover:border-accent/30"}`}>
-                {t("ui.gradientPresetColor")}
-              </button>
-            </>)
-          })()}
-        </div>
+        <GradientPresetRow
+          current={{ gradientHeight: ed.defaultGradientHeight, blurIntensity: ed.defaultBlurIntensity, blurFade: ed.defaultBlurFade, blurDarkness: ed.defaultBlurDarkness, tintStrength: ed.defaultTintStrength, blurEnabled: ed.defaultBlurEnabled }}
+          onApply={(v: GradientPresetValues) => {
+            ed.setDefaultBlurEnabled(true)
+            ed.setDefaultGradientHeight(v.gradientHeight)
+            ed.setDefaultBlurIntensity(v.blurIntensity)
+            ed.setDefaultBlurFade(v.blurFade)
+            ed.setDefaultBlurDarkness(v.blurDarkness)
+            ed.setDefaultTintStrength(v.tintStrength)
+          }}
+          naturalLabel={t("ui.gradientPresetNatural")}
+          colorLabel={t("ui.gradientPresetColor")}
+          addTitle={t("ui.gradientPresetAdd")}
+          namePlaceholder={t("ui.gradientPresetName")}
+          deleteLabel={t("ui.gradientPresetDelete")}
+        />
 
         <div className="space-y-1.5 pt-1 animate-fade-in">
             <SliderRow
@@ -1313,7 +1332,7 @@ export function SettingsPanel({ setSettingsOpen, exportData, importData, mobile 
                 ed.setDefaultBlurIntensity(v)
               }}
               onDoubleClick={() => {
-                ed.setDefaultBlurIntensity(20)
+                ed.setDefaultBlurIntensity(NATURAL_GRADIENT_DEFAULTS.blurIntensity)
               }}
               editingValue={editVal}
               editText={editTxt}
@@ -1334,7 +1353,7 @@ export function SettingsPanel({ setSettingsOpen, exportData, importData, mobile 
                 ed.setDefaultBlurFade(v)
               }}
               onDoubleClick={() => {
-                ed.setDefaultBlurFade(50)
+                ed.setDefaultBlurFade(NATURAL_GRADIENT_DEFAULTS.blurFade)
               }}
               editingValue={editVal}
               editText={editTxt}
