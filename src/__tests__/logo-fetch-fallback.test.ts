@@ -13,7 +13,7 @@ const IMG = "https://image.tmdb.org/t/p"
 function okResponse(bytes: number): Response {
   return {
     ok: true,
-    headers: { get: (h: string) => null },
+    headers: { get: (_h: string) => null },
     arrayBuffer: async () => new Uint8Array(bytes).buffer as ArrayBuffer,
   } as unknown as Response
 }
