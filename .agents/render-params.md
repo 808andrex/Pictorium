@@ -64,7 +64,7 @@ ombra trasparente `TOP_SHADOW_PAD=14`):
 
 | Parametro | Server (`svg-badge.ts:renderRankingBadge/renderExtraBadge`) |
 |---|---|
-| Font size base | `24 * pw / 380` (rank), `×0.9` per extra (era 20); nastro Netflix invariato |
+| Font size base | `30 * pw / 380` (rank), `×0.9` per extra; nastro Netflix a base `24 * 1.15` (+15% default) |
 | Padding X | `px = round(finalFontSize * 0.75)` (unificato con genre badges) |
 | Altezza scatola | `boxH = badgeBoxHeight(fs) = fs + round(fs * 0.40) * 2` (unificato con genre badges) |
 | Border radius | `r = round(finalFontSize * 0.45)` per default (`RANKING_DEFAULT_RADIUS_FACTOR`: squadrata ma non a spigolo), `boxH / 2` per pill (lo stile `bar` del ranking è rimosso: `?rs=bar` degrada a default) |
@@ -88,7 +88,7 @@ ombra trasparente `TOP_SHADOW_PAD=14`):
 | Bordo | `topLight ? "rgba(0,0,0,0.15)" : "rgba(255,255,255,0.20)"` stroke-width 1px |
 | Padding | `px = round(fs * 0.65)`, `pt = pb = round(fs * 0.32)` dove `fs = round(max(18 * pw / 380, 12))` |
 | Raggio | `r = round(pillH * 0.35)` (squircle, identico al badge qualità) |
-| Posizione | default in alto a sinistra (`top = round(18 * STD_H / 570) + 10`, `left = round(18 * STD_W / 380)`, resta a sinistra anche con `side="right"`); centrato sopra il logo film (`top = logoTop - h - gap + 10`) SOLO con nastro Netflix o Coming Soon; senza logo film e con nastro: a fianco del nastro (`w + 10`). Se si sovrappone al badge centrale, rimpicciolisce fino a 0.55x |
+| Posizione | default in alto a sinistra (`top = round(18 * STD_H / 570) + 10`, `left = round(18 * STD_W / 380)`, resta a sinistra anche con `side="right"`); centrato sopra il logo film (`top = logoTop - h - gap + 10`) con logo film + badge alto (nastro Netflix, badge centrale rank/extra, o Coming Soon); senza logo film e con nastro: a fianco del nastro (`w + 10`). Se si sovrappone al badge centrale, rimpicciolisce fino a 0.55x |
 | Scala (`netscale`) | Resize bitmap dopo il fetch, prima del fit; `%` 10..200, default 100 |
 | Offset (`nox`/`noy`) | `top += noy`, `left += nox` (px, default 0) dopo il posizionamento automatico |
 | Logo interno | `topLight ? rgba(255,255,255,0.85) : rgba(18,18,22,0.88)` (eccetto Marvel a colori brand) |

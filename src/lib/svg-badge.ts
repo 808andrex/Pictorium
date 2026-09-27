@@ -61,9 +61,9 @@ export async function buildExtraBadgeSVG(
   // Cap estetico per gli stili compatti: oltre il 65% di pw il testo si
   // rimpicciolisce (le label corte restano invariate).
   const maxBadgeW = Math.round(pw * 0.65)
-  // Extra al 90% del badge ranking (base 24): a pari fs le label lunghe
+  // Extra al 90% del badge ranking (base 30): a pari fs le label lunghe
   // ("Candidato Golden Globe") restano compatte rispetto ai rank.
-  let finalFs = 24 * 0.9 * pw / 380
+  let finalFs = 30 * 0.9 * pw / 380
   const projectedW = estimateTextWidth(label, finalFs) + Math.round(finalFs * 2) + Math.round(finalFs * 0.6) * 2
   if (projectedW > maxBadgeW) {
     finalFs = Math.max(maxBadgeW / projectedW * finalFs, 10)
@@ -212,8 +212,8 @@ function netflixSubLabel(isAnime: boolean | undefined, label: string | undefined
 }
 
 export function buildNetflixRankBadgeSVG(rank: number, pw: number, topLight: boolean, side: "left" | "right" = "left", isAnime?: boolean, label?: string) {
-  // Leggermente ridotto (-11%): fs base 24, w proporzionale 2.65
-  const fs = Math.round(Math.max(24 * pw / 380, 16))
+  // Nastro maggiorato (+15% default): fs base 24 → 27.6, w/h proporzionali.
+  const fs = Math.round(Math.max(24 * 1.15 * pw / 380, 16))
   const w = Math.round(fs * 2.65)
   // Sottotitolo presente (anime o film/serie con etichetta): nastro allungato
   // verso il basso (h × 1.65) per dare pieno respiro alla scritta sopra la V.
@@ -313,8 +313,8 @@ export async function buildRankingBadgeSVG(
   const periodText = label || "Oggi"
   const fullText = `#${rank} ${periodText}`
   const maxBadgeW = pw - 20
-  // Base 24px (+20% scala nativa): placca visibile in alto, lo slider `topBadgeScale` parte da 100.
-  let finalFs = 24 * pw / 380
+  // Base 30px: placca visibile in alto, lo slider `topBadgeScale` parte da 100.
+  let finalFs = 30 * pw / 380
   const projectedW = estimateTextWidth(fullText, finalFs) + Math.round(finalFs * 2) + Math.round(finalFs * 0.6) * 2
   if (projectedW > maxBadgeW) {
     finalFs = Math.max(maxBadgeW / projectedW * finalFs, 10)

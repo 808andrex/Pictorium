@@ -1114,9 +1114,10 @@ export async function generatePosterBuffer(input: GenerationInput): Promise<Buff
       left: ribbonSide === "right" ? Math.round(CW - safeComingSoonResult.w + ribbonLayout.offset) : -ribbonLayout.offset,
     })
   }
-  // Network: in alto a sinistra di default; centrato sopra il logo film SOLO
-  // con nastro Netflix o Coming Soon. Senza logo film resta il layout storico
-  // (top-left, o a fianco del nastro).
+  // Network: centrato sopra il logo film quando c'è un badge alto
+  // (nastro Netflix, badge centrale rank/extra, o angolo Coming Soon);
+  // in alto a sinistra SOLO senza alcun badge alto. Senza logo film resta
+  // il layout storico (top-left, o a fianco del nastro).
   // netTopLeftBottom traccia il fondo del logo network quando occupa il top-left (per qualità Stremio sotto).
   // Tuning editoriale globale (default per tutti i poster): pill network +10px Y.
   const NETWORK_LOGO_SHIFT_Y = 10
@@ -1166,8 +1167,9 @@ export async function generatePosterBuffer(input: GenerationInput): Promise<Buff
         return box
       }
 
-      if (logoResult && (isNetflixRibbon || hasComingSoonCorner)) {
-        // Con logo film + nastro Netflix o Coming Soon: subito sopra il logo film
+      if (logoResult && (finalRankBadge || hasComingSoonCorner)) {
+        // Con logo film + badge alto (nastro Netflix, badge centrale
+        // rank/extra, o Coming Soon): subito sopra il logo film
         // (in Cinematic Left allineato a sinistra come sopratitolo, non centrato).
         top = Math.max(0, logoResult.top - fittedRaw.h - gap)
         left = isLandscapeLeft ? logoResult.left : Math.round((CW - fittedRaw.w) / 2)
@@ -1179,8 +1181,9 @@ export async function generatePosterBuffer(input: GenerationInput): Promise<Buff
         fittedRaw = await shrinkToAvoidRank(fittedRaw, top, left)
         netTopLeftBottom = top + NETWORK_LOGO_SHIFT_Y + fittedRaw.h
       } else if (logoResult) {
-        // Con logo film ma SENZA nastro Netflix né Coming Soon: in alto a
-        // sinistra (resta a sinistra anche con side="right").
+        // Con logo film ma SENZA alcun badge alto (né nastro Netflix, né
+        // Coming Soon, né badge centrale): in alto a sinistra
+        // (resta a sinistra anche con side="right").
         top = netPadY
         left = netPadX
         fittedRaw = await shrinkToAvoidRank(fittedRaw, top, left)

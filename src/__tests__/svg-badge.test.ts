@@ -353,7 +353,7 @@ describe("buildRankingBadgeSVG", () => {
     expect(svg).toContain(">4</text>")
     expect(svg).toContain(">Oggi</text>")
     // Nastro esteso (h × 1.65): il testo ha bisogno di spazio
-    const fs = Math.round(Math.max(24 * 1000 / 380, 16))
+    const fs = Math.round(Math.max(24 * 1.15 * 1000 / 380, 16))
     const w = Math.round(fs * 2.65)
     const extendedH = Math.round(w * 1.65) + Math.round(fs * 0.4)
     expect(h).toBe(extendedH)
@@ -362,7 +362,7 @@ describe("buildRankingBadgeSVG", () => {
   it("stays compact without label and not anime", () => {
     const { svg, h } = buildNetflixRankBadgeSVG(4, 1000, false)
     expect(svg).not.toContain(">anime</text>")
-    const fs = Math.round(Math.max(24 * 1000 / 380, 16))
+    const fs = Math.round(Math.max(24 * 1.15 * 1000 / 380, 16))
     const w = Math.round(fs * 2.65)
     expect(h).toBe(Math.round(w * 1.35) + Math.round(fs * 0.4))
   })
@@ -391,8 +391,7 @@ describe("buildRankingBadgeSVG", () => {
 
 describe("top badge uniformity (rank vs extra)", () => {
   it("renders extra badges at 90% of the rank size", async () => {
-    // Rank a fs 20, extra al 90% (~fs 18): un'etichetta lunga a 100%
-    // risultava troppo grande. h extra ≈ 41, h rank ≈ 47 a pw 380.
+    // Rank a fs 30, extra al 90% (fs 27): h extra ≈ 49, h rank ≈ 54 a pw 380.
     const rank = await buildRankingBadgeSVG(3, 380, "Oggi", false, "default", "#555555")
     const extra = await buildExtraBadgeSVG("Oscar 2024", 380, false, "default", "#555555")
     expect(rank).not.toBeNull()
