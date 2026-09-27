@@ -30,6 +30,29 @@ export interface ChangelogRelease {
  *  (which bumps on every commit and would leave the dot permanently on). */
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    version: "1.23.4",
+    date: "2026-09-27",
+    title: "Release 1.23.4",
+    items: [
+      { type: "fix", text: "Oversized film logos now display instead of disappearing" },
+      { type: "feature", text: "Larger top badges and network logo above the film logo" },
+      { type: "fix", text: "Gradient tint default now saves and applies to Stremio posters" },
+      { type: "feature", text: "version compact Stremio poster URLs with tuning defaults" },
+      { type: "feature", text: "smoother poster gradients with top shade and Stremio preview warning" },
+      { type: "fix", text: "Normalize raw compound TV genre names on badges" },
+      { type: "feature", text: "Serve WebP posters by default (JPEG on request)" },
+      { type: "perf", text: "Optional WebP posters, sharper JPEGs and faster repeat renders" },
+      { type: "feature", text: "Linear scrim fade and retuned Colore gradient preset" },
+      { type: "feature", text: "Curated award lists, date-based badges, gradient presets and sash reorder" },
+      { type: "feature", text: "Stronger blur in the Colore gradient preset" },
+      { type: "fix", text: "Fallback to region language in poster route and proxy modal" },
+      { type: "fix", text: "Stremio catalogs sometimes stuck empty until restart" },
+      { type: "feature", text: "Colore gradient preset, richer scene tint and squarer top badges" },
+      { type: "feature", text: "link the ElfHosted menu's private-instance row" },
+      { type: "fix", text: "no doomed defaults sync from the multi-user root editor" },
+    ],
+  },
+  {
     version: "1.23.3",
     date: "2026-09-26",
     title: "Release 1.23.3",
