@@ -224,8 +224,8 @@ test.describe("poster API — functional", () => {
   })
 
   test("explicit fmt=jpeg — jpeg response in any default mode", async ({ request }) => {
-    // Sotto default jpeg è il canonico, sotto PICTORIUM_IMAGE_FORMAT=webp è la
-    // variante convertita dal canonico webp: il contratto è identico.
+    // Sotto default webp è la variante convertita dal canonico webp, sotto
+    // PICTORIUM_IMAGE_FORMAT=jpeg è il canonico: il contratto è identico.
     const url = posterUrl({ genreName: "Action", voteAverage: "7.8", badges: "1", ranking: "0", fmt: "jpeg" })
     const res = await request.get(url)
     expect(res.ok()).toBeTruthy()

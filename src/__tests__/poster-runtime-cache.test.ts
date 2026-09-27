@@ -244,13 +244,13 @@ describe("poster inflight coalescing (R4)", () => {
 
 describe("poster image format negotiation (WebP / AVIF)", () => {
   it("resolves output format from Accept header correctly", () => {
-    expect(resolveImageFormat(null)).toBe("jpeg")
-    expect(resolveImageFormat("image/jpeg,image/png")).toBe("jpeg")
+    expect(resolveImageFormat(null)).toBe("webp")
+    expect(resolveImageFormat("image/jpeg,image/png")).toBe("webp")
     expect(resolveImageFormat("image/webp,image/apng,*/*")).toBe("webp")
     // C3: Accept avif → webp (encode avif 3-5×, i client avif accettano webp);
-    // bare "image/avif" senza webp → jpeg (fallback universale, mai webp non negoziato)
+    // bare "image/avif" senza webp → default webp (mai jpeg non negoziato)
     expect(resolveImageFormat("image/avif,image/webp,image/apng,*/*")).toBe("webp")
-    expect(resolveImageFormat("image/avif")).toBe("jpeg")
+    expect(resolveImageFormat("image/avif")).toBe("webp")
   })
 
   it("prioritizes query param fmt over Accept header", () => {
@@ -336,31 +336,31 @@ describe("poster image format negotiation (WebP / AVIF)", () => {
       return fresh
     }
 
-    it("defaults to jpeg without env (comportamento storico)", async () => {
+    it("defaults to webp without env", async () => {
       const fresh = await resolveWithEnv(undefined)
-      expect(fresh.DEFAULT_IMAGE_FORMAT).toBe("jpeg")
-      expect(fresh.resolveImageFormat(null)).toBe("jpeg")
-      expect(fresh.resolveImageFormat("*/*")).toBe("jpeg")
-      expect(fresh.resolveImageFormat("image/avif")).toBe("jpeg")
-    })
-
-    it("serves webp to generic clients with PICTORIUM_IMAGE_FORMAT=webp", async () => {
-      const fresh = await resolveWithEnv("webp")
       expect(fresh.DEFAULT_IMAGE_FORMAT).toBe("webp")
       expect(fresh.resolveImageFormat(null)).toBe("webp")
       expect(fresh.resolveImageFormat("*/*")).toBe("webp")
-      // Accept esplicito webp resta webp; ?fmt=jpeg resta via di fuga
+      expect(fresh.resolveImageFormat("image/avif")).toBe("webp")
+    })
+
+    it("serves jpeg to generic clients with PICTORIUM_IMAGE_FORMAT=jpeg", async () => {
+      const fresh = await resolveWithEnv("jpeg")
+      expect(fresh.DEFAULT_IMAGE_FORMAT).toBe("jpeg")
+      expect(fresh.resolveImageFormat(null)).toBe("jpeg")
+      expect(fresh.resolveImageFormat("*/*")).toBe("jpeg")
+      // Accept esplicito webp resta webp; ?fmt=webp resta via di fuga
       expect(fresh.resolveImageFormat("image/webp")).toBe("webp")
-      expect(fresh.resolveImageFormat("*/*", "jpeg")).toBe("jpeg")
-      expect(fresh.resolveImageFormat(null, "jpg")).toBe("jpeg")
+      expect(fresh.resolveImageFormat("*/*", "webp")).toBe("webp")
+      expect(fresh.resolveImageFormat(null, "webp")).toBe("webp")
       expect(fresh.resolveImageFormat(null, "avif")).toBe("avif")
     })
 
-    it("falls back to jpeg on invalid values (mai avif implicito)", async () => {
+    it("falls back to webp on invalid values (mai avif implicito)", async () => {
       for (const bad of ["avif", "png", "bogus"]) {
         const fresh = await resolveWithEnv(bad)
-        expect(fresh.DEFAULT_IMAGE_FORMAT).toBe("jpeg")
-        expect(fresh.resolveImageFormat(null)).toBe("jpeg")
+        expect(fresh.DEFAULT_IMAGE_FORMAT).toBe("webp")
+        expect(fresh.resolveImageFormat(null)).toBe("webp")
       }
     })
   })

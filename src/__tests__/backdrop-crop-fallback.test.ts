@@ -123,7 +123,7 @@ describe("B2 backdrop-crop fallback (404 → 200 con base 2:3)", () => {
   it("renders 200 portrait 500x750 from the backdrop crop when no poster exists", async () => {
     const { res, buf } = await getPoster(620101)
     expect(res.status).toBe(200)
-    expect(res.headers.get("content-type")).toContain("image/jpeg")
+    expect(res.headers.get("content-type")).toContain("image/webp")
     const meta = await sharp(buf).metadata()
     expect(meta.width).toBe(500)
     expect(meta.height).toBe(750)

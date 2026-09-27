@@ -148,16 +148,15 @@ const FORMAT_MIME_TYPES: Record<PosterImageFormat, string> = {
 }
 
 // Formato servito ai client che non dichiarano preferenze (Accept generico
-// `*/*` o assente — quasi tutti i client Stremio nativi). Storico `jpeg`;
-// `PICTORIUM_IMAGE_FORMAT=webp` lo sposta su webp (opt-in operatore, come
-// PostersPlus IMAGE_FORMAT). Lettura a module level: cambio = restart.
-// `?fmt=` resta override esplicito in entrambi i sensi (via di fuga per
-// client che non digeriscono il default). Solo `webp` abilita il default
-// alternativo: qualsiasi altro valore (incluso `avif`, che costa 3-5×
-// in encode) ricade sul jpeg sicuro.
+// `*/*` o assente — quasi tutti i client Stremio nativi). Default `webp`
+// (~25-30% più leggero del jpeg a pari qualità); `PICTORIUM_IMAGE_FORMAT=jpeg`
+// torna al jpeg universale per istanze con client datati. Lettura a module
+// level: cambio = restart. `?fmt=` resta override esplicito in entrambi i sensi
+// (via di fuga). Solo `jpeg` è accettato come alternativa: qualsiasi altro
+// valore (incluso `avif`, che costa 3-5× in encode) ricade sul default webp.
 export const DEFAULT_IMAGE_FORMAT: Exclude<PosterImageFormat, "avif"> = (() => {
   const raw = envWithFallback("IMAGE_FORMAT")
-  return raw && raw.trim().toLowerCase() === "webp" ? "webp" : "jpeg"
+  return raw && raw.trim().toLowerCase() === "jpeg" ? "jpeg" : "webp"
 })()
 
 export function resolveImageFormat(acceptHeader?: string | null, queryFmt?: string | null): PosterImageFormat {

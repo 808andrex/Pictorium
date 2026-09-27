@@ -170,7 +170,7 @@ describe("B1 TVDB poster rescue (no TMDB clean + logo + key)", () => {
   it("renders 200 with the TVDB textless poster and keeps the logo", async () => {
     const { res, buf } = await getPoster("tv", 630101, "&tvdb_key=K")
     expect(res.status).toBe(200)
-    expect(res.headers.get("content-type")).toContain("image/jpeg")
+    expect(res.headers.get("content-type")).toContain("image/webp")
     const meta = await sharp(buf).metadata()
     expect(meta.width).toBe(500)
     expect(meta.height).toBe(750)

@@ -114,8 +114,8 @@ Rating wait is SHARED with the tmdb-details route (same knob).
   exceptions — a transient timeout must not hide an existing logo for an hour.
 
 ### 11. Canonical render + variant (C3)
-- Posters render ONE canonical (jpeg storico, webp con
-  `PICTORIUM_IMAGE_FORMAT=webp`); the other format is a response-time
+- Posters render ONE canonical (webp di default, jpeg con
+  `PICTORIUM_IMAGE_FORMAT=jpeg`); the other format is a response-time
   conversion (same opts as the direct pipeline encode: webp q85/effort-2,
   jpeg q82+mozjpeg), cached as variant with a derived etag, 304-capable.
   Inflight/coalescing is keyed canonical so one render serves both formats.
