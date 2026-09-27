@@ -67,6 +67,7 @@ import {
   STD_H,
   STD_W,
   fetchImg,
+  fetchLogoImg,
   hashKey,
   imgSrc,
   isValidHex,
@@ -1201,7 +1202,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
           : fetchImg(imgSrc(posterPath), renderAbort.signal).catch(() => null),
         logoPathBuffer
           ? Promise.resolve(logoPathBuffer)
-          : logoPath ? fetchImg(imgSrc(logoPath, "original"), renderAbort.signal).catch(() => null) : Promise.resolve(null),
+          : logoPath ? fetchLogoImg(logoPath, renderAbort.signal).catch(() => null) : Promise.resolve(null),
         backdropPath ? fetchImg(isLandscape ? landscapeBackdropUrl(backdropPath) : imgSrc(backdropPath), renderAbort.signal).catch(() => null) : Promise.resolve(null),
         rankingEnabledEarly
           // R3: signal del watchdog — allo scatto della deadline il fetch

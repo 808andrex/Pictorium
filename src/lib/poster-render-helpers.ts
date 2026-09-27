@@ -74,6 +74,35 @@ export function isValidHex(color: string): boolean {
   return /^#([0-9A-Fa-f]{3}){1,2}$/.test(color)
 }
 
+/** Vero quando fetchImg ha rifiutato per il cap anti-OOM (non per 404/timeout). */
+export function isImageTooLargeError(e: unknown): boolean {
+  return e instanceof Error && e.message === "image too large"
+}
+
+/**
+ * Fetch di un logo TMDB con fallback morbido sulla taglia: `original` per la
+ * nitidezza, ma gli originali giganti (>10MB, es. PNG 7795px) vengono
+ * rifiutati dal cap anti-OOM di fetchImg — in quel caso (e solo in quel
+ * caso: 404/timeout/abort rilanciano subito) riprova `w780` e poi `w500`.
+ * Su un poster da 380px un logo a 780px è già oltre la nitidezza necessaria.
+ */
+export async function fetchLogoImg(path: string, signal?: AbortSignal): Promise<Buffer> {
+  // URL esterni (http): imgSrc non inserisce la taglia, riprovare lo stesso
+  // URL sarebbe inutile — un solo tentativo come prima.
+  if (path.startsWith("http")) return fetchImg(imgSrc(path), signal)
+  try {
+    return await fetchImg(imgSrc(path, "original"), signal)
+  } catch (e) {
+    if (!isImageTooLargeError(e)) throw e
+  }
+  try {
+    return await fetchImg(imgSrc(path, "w780"), signal)
+  } catch (e) {
+    if (!isImageTooLargeError(e)) throw e
+  }
+  return fetchImg(imgSrc(path, "w500"), signal)
+}
+
 export function imgSrc(path: string, size = "w500"): string {
   if (path.startsWith("http")) {
     // SSRF protection: only allow the TMDB image CDN and the TVDB artworks
