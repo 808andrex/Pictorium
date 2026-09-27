@@ -669,6 +669,7 @@
   "ui.pinSaveError": "保存中にエラーが発生しました",
   "ui.minimal": "ミニマル",
   "ui.tintStrength": "ティント強度",
+  "ui.topShade": "上部シェード",
   "ui.gradientPresetNatural": "Natural",
   "ui.gradientPresetColor": "Color",
   "ui.gradientPresetAdd": "Save current as preset",

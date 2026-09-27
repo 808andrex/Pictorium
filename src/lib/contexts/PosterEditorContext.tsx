@@ -162,6 +162,12 @@ export interface PosterEditorCtx {
   /** Intensità tinta di scena 0-100 (default 20). */
   tintStrength: number
   setTintStrength: (v: number | ((prev: number) => number)) => void
+  /** Ombra lineare superiore 0-100 in editing (solo per-titolo, default 0). */
+  topShade: number
+  setTopShade: (v: number | ((prev: number) => number)) => void
+  /** Ombra superiore di default 0-100 (Impostazioni globali, default 50). */
+  defaultTopShade: number
+  setDefaultTopShade: (v: number | ((prev: number) => number)) => void
   blurFade: number
   setBlurFade: (v: number | ((prev: number) => number)) => void
   blurDarkness: number
@@ -295,14 +301,14 @@ export function PosterEditorProvider({
   const {
     globalBadges, rankingBadges, networkLogo, preRelease, ribbonSide, posterShape, logoAlign,
     badgeGenre, badgeYear, badgeRating, badgeQuality, customRatings, ratingSources, separateRatings,
-    gradientHeight, blurIntensity, blurFade, blurDarkness, blurEnabled, tintStrength,
+    gradientHeight, blurIntensity, blurFade, blurDarkness, blurEnabled, tintStrength, topShade,
     topBadgeScale, topBadgeOffsetX, topBadgeOffsetY,
     genreBadgeScale, qualityBadgeScale, networkLogoScale,
     genreBadgeOffsetX, genreBadgeOffsetY, qualityBadgeOffsetX, qualityBadgeOffsetY,
     networkLogoOffsetX, networkLogoOffsetY,
     badgeStyle, rankingBadgeStyle,
     defaultBadgeStyle, defaultRankingBadgeStyle,
-    defaultBlurEnabled, defaultBlurIntensity, defaultBlurFade, defaultBlurDarkness, defaultTintStrength,
+    defaultBlurEnabled, defaultBlurIntensity, defaultBlurFade, defaultBlurDarkness, defaultTintStrength, defaultTopShade,
     defaultGradientHeight, defaultGlobalBadges, defaultRankingBadges,
     defaultTopBadgeScale, defaultTopBadgeOffsetX, defaultTopBadgeOffsetY,
     defaultGenreBadgeScale, defaultQualityBadgeScale, defaultNetworkLogoScale,
@@ -468,6 +474,16 @@ export function PosterEditorProvider({
       const next = typeof v === "function" ? v(tintStrength) : v
       update({ tintStrength: next })
     }, [tintStrength, update])
+  const setTopShade = useCallback(
+    (v: number | ((prev: number) => number)) => {
+      const next = typeof v === "function" ? v(topShade) : v
+      update({ topShade: next })
+    }, [topShade, update])
+  const setDefaultTopShade = useCallback(
+    (v: number | ((prev: number) => number)) => {
+      const next = typeof v === "function" ? v(defaultTopShade) : v
+      update({ defaultTopShade: next })
+    }, [defaultTopShade, update])
   const setBlurFade = useCallback(
     (v: number | ((prev: number) => number)) => {
       const next = typeof v === "function" ? v(blurFade) : v
@@ -862,6 +878,10 @@ export function PosterEditorProvider({
       setBlurIntensity,
       tintStrength,
       setTintStrength,
+      topShade,
+      setTopShade,
+      defaultTopShade,
+      setDefaultTopShade,
       blurFade,
       setBlurFade,
       blurDarkness,
@@ -1024,6 +1044,8 @@ export function PosterEditorProvider({
       blurEnabled, setBlurEnabled,
       blurIntensity, setBlurIntensity,
       tintStrength, setTintStrength,
+      topShade, setTopShade,
+      defaultTopShade, setDefaultTopShade,
       blurFade, setBlurFade,
       blurDarkness, setBlurDarkness,
 

@@ -23,6 +23,8 @@ export interface ServerDefaults {
   blurDarkness?: number
   /** Intensità tinta di scena 0-100 (default 20). */
   tintStrength?: number
+  /** Ombra lineare superiore 0-100 (default 50). */
+  topShade?: number
   gradientHeight?: number
   globalBadges?: boolean
   rankingBadges?: boolean
@@ -171,6 +173,7 @@ function defaultsFromEnv(): ServerDefaults {
   const blurF = envNum("BLUR_FADE")
   const blurD = envNum("BLUR_DARKNESS")
   const tintS = envNum("TINT_STRENGTH")
+  const topSh = envNum("TOP_SHADE")
   const gradH = envNum("GRADIENT_HEIGHT")
   const topBadgeScale = envNum("TOP_BADGE_SCALE")
   const topBadgeOX = envNum("TOP_BADGE_OFFSET_X")
@@ -202,6 +205,7 @@ function defaultsFromEnv(): ServerDefaults {
   if (blurF !== undefined) d.blurFade = blurF
   if (blurD !== undefined) d.blurDarkness = blurD
   if (tintS !== undefined) d.tintStrength = tintS
+  if (topSh !== undefined) d.topShade = topSh
   if (gradH !== undefined) d.gradientHeight = gradH
   if (topBadgeScale !== undefined) d.topBadgeScale = topBadgeScale
   if (topBadgeOX !== undefined) d.topBadgeOffsetX = topBadgeOX

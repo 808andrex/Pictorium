@@ -60,6 +60,15 @@ describe("mappingSchema CRUD", () => {
     expect(mappingSchema.safeParse({ tmdbId: 1, mediaType: "movie", title: "T", posterPath: "/p.jpg", customBadge: "x".repeat(40) }).success).toBe(true)
     expect(mappingSchema.safeParse({ tmdbId: 1, mediaType: "movie", title: "T", posterPath: "/p.jpg", customBadge: "x".repeat(41) }).success).toBe(false)
   })
+
+  it("conserva topShade al save (niente strip silenzioso: lo vedeva solo la preview)", () => {
+    const r = mappingSchema.safeParse({ tmdbId: 1, mediaType: "movie", title: "T", posterPath: "/p.jpg", topShade: 70 })
+    expect(r.success).toBe(true)
+    expect(r.success && r.data.topShade).toBe(70)
+    const n = mappingSchema.safeParse({ tmdbId: 1, mediaType: "movie", title: "T", posterPath: "/p.jpg", topShade: null })
+    expect(n.success).toBe(true)
+    expect(n.success && n.data.topShade).toBeNull()
+  })
 })
 
 describe("badge priority edge cases", () => {

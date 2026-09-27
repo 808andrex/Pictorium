@@ -11,6 +11,28 @@ export function cinematicVignetteSVG(pw: number, ph: number): string {
 }
 
 /**
+ * Ombra lineare superiore (top scrim, opt-in `ts=0..100`, default 0 = spento).
+ * Gradiente nero dal bordo alto al 25% del canvas, poi trasparente: incornicia
+ * il poster e fa risaltare badge/testi superiori (look di riferimento). A 0
+ * non cambia un pixel (il chiamante salta il composite); a 100 il bordo alto
+ * è velato al 75% come il riferimento. Sotto logo e badge (restano luminosi).
+ */
+export function topShadeSVG(pw: number, ph: number, strength: number): string {
+  const s = Math.min(Math.max(Math.round(strength), 0), 100)
+  const sh = Math.max(1, Math.round(ph * 0.25))
+  const a = ((0.75 * s) / 100).toFixed(3)
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${pw}" height="${ph}">
+  <defs>
+    <linearGradient id="tsh" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#000000" stop-opacity="${a}"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <rect width="${pw}" height="${sh}" fill="url(#tsh)"/>
+</svg>`
+}
+
+/**
  * Scrim d'angolo per il layout landscape "Cinematic Left": gradiente radiale
  * concentrato in basso a sinistra (logo + metadati), destra limpida.
  * Sostituisce la fascia blur/gradiente bassa quando non esplicitata.

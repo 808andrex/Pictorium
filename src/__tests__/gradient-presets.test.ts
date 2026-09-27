@@ -32,30 +32,42 @@ describe("gradient presets (slider shortcuts, no new server param)", () => {
     expect(GRADIENT_PRESET_COLOR.blurEnabled).toBe(true)
   })
 
+  it("GRADIENT_PRESET_COLOR matches the reference values", () => {
+    expect(GRADIENT_PRESET_COLOR).toEqual({
+      gradientHeight: 35,
+      blurIntensity: 20,
+      blurFade: 10,
+      blurDarkness: 0,
+      tintStrength: 100,
+      blurEnabled: true,
+    })
+  })
+
   it("Colore is taller, more tinted and has no dark veil", () => {
     const natural = naturalGradientForPoster({ iso_639_1: null })
     expect(GRADIENT_PRESET_COLOR.gradientHeight).toBeGreaterThan(natural.gradientHeight)
     expect(GRADIENT_PRESET_COLOR.tintStrength).toBeGreaterThan(natural.tintStrength)
     expect(GRADIENT_PRESET_COLOR.blurDarkness).toBe(0)
-    expect(GRADIENT_PRESET_COLOR.blurIntensity).toBeLessThan(natural.blurIntensity)
+    expect(GRADIENT_PRESET_COLOR.blurIntensity).toBe(natural.blurIntensity)
+    expect(natural.blurIntensity).toBe(20)
   })
 
-  it("natural matches the Reset values (intensity 50, fade 80, landscape 70)", () => {
+  it("natural matches the Reset values (intensity 20, fade 50, landscape 70)", () => {
     expect(naturalGradientForPoster({ iso_639_1: null })).toMatchObject({
       gradientHeight: CLEAN_GRADIENT_HEIGHT,
-      blurIntensity: 50,
-      blurFade: 80,
+      blurIntensity: 20,
+      blurFade: 50,
       blurDarkness: 30,
       tintStrength: 20,
       blurEnabled: true,
     })
     expect(naturalGradientForPoster({ iso_639_1: "it" })).toMatchObject({
       gradientHeight: NON_CLEAN_GRADIENT_HEIGHT,
-      blurIntensity: 50,
-      blurFade: 80,
+      blurIntensity: 20,
+      blurFade: 50,
     })
     expect(naturalGradientForPoster({ iso_639_1: null }, "landscape").blurFade).toBe(70)
-    expect(naturalGradientForPoster({ iso_639_1: null }, "landscape").blurIntensity).toBe(50)
+    expect(naturalGradientForPoster({ iso_639_1: null }, "landscape").blurIntensity).toBe(20)
   })
 
   it("matchesGradientPreset detects the active preset", () => {
@@ -68,8 +80,8 @@ describe("gradient presets (slider shortcuts, no new server param)", () => {
   it("NATURAL_GRADIENT_DEFAULTS matches the Settings Reset values", () => {
     expect(NATURAL_GRADIENT_DEFAULTS).toEqual({
       gradientHeight: 30,
-      blurIntensity: 50,
-      blurFade: 80,
+      blurIntensity: 20,
+      blurFade: 50,
       blurDarkness: 30,
       tintStrength: 20,
       blurEnabled: true,
@@ -114,8 +126,8 @@ describe("gradient presets (slider shortcuts, no new server param)", () => {
     expect(defaultFadeForPoster(GRADIENT_PRESET_COLOR.blurFade, nonClean)).toBe(
       GRADIENT_PRESET_COLOR.blurFade,
     )
-    // Default Naturale (fade 80) -> assoluti anche loro.
-    expect(defaultFadeForPoster(NATURAL_GRADIENT_DEFAULTS.blurFade, { iso_639_1: null })).toBe(80)
+    // Default Naturale (30/50 = factory storiche) -> ricalibrazione per tipo.
+    expect(defaultFadeForPoster(NATURAL_GRADIENT_DEFAULTS.blurFade, { iso_639_1: null })).toBe(50)
   })
 })
 

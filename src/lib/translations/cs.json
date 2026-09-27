@@ -669,6 +669,7 @@
   "ui.pinSaveError": "Chyba při ukládání",
   "ui.minimal": "Minimální",
   "ui.tintStrength": "Síla odstínu",
+  "ui.topShade": "Horní stín",
   "ui.gradientPresetNatural": "Natural",
   "ui.gradientPresetColor": "Color",
   "ui.gradientPresetAdd": "Save current as preset",

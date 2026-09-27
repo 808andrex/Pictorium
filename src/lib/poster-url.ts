@@ -36,6 +36,8 @@ interface BadgeParams {
   blurEnabled: boolean
   /** Intensità tinta di scena 0-100 (default 20 quando omesso). */
   tintStrength?: number
+  /** Ombra lineare superiore 0-100 (default 0 = spenta). */
+  topShade?: number
   /** Scala % + offset px del badge superiore (solo stili centrati per gli offset). */
   topBadgeScale: number
   topBadgeOffsetX: number
@@ -142,6 +144,7 @@ export function buildUrlPattern(bp: BadgeParams & {
     blurDarkness: bp.blurDarkness,
     blurEnabled: bp.blurEnabled,
     tintStrength: bp.tintStrength,
+    topShade: bp.topShade,
     networkLogo: bp.networkLogo,
     preRelease: bp.preRelease,
     ribbonSide: bp.ribbonSide,
@@ -244,6 +247,7 @@ export function buildPreviewUrl(ps: PosterState, bp: BadgeParams): string {
   params.push(`bf=${bp.blurFade}`)
   params.push(`bd=${bp.blurDarkness}`)
   params.push(`tint=${bp.tintStrength ?? 20}`)
+  params.push(`ts=${bp.topShade ?? 50}`)
   params.push(`bs=${bp.badgeStyle}`)
   params.push(`rs=${bp.rankingBadgeStyle}`)
   params.push(`tscale=${bp.topBadgeScale}`)

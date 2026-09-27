@@ -47,6 +47,7 @@ describe("buildStremioPosterSearchParams", () => {
     expect(params.get("bf")).toBe("50")
     expect(params.get("bd")).toBe("30")
     expect(params.get("tint")).toBe("20")
+    expect(params.has("ts")).toBe(false)
     expect(params.get("bs")).toBe("shadow")
     expect(params.get("rs")).toBe("default")
   })
@@ -72,6 +73,13 @@ describe("buildStremioPosterSearchParams", () => {
   it("always emits explicit tint (default 20)", () => {
     expect(buildStremioPosterSearchParams({}).get("tint")).toBe("20")
     expect(buildStremioPosterSearchParams({ tintStrength: 60 }).get("tint")).toBe("60")
+  })
+
+  it("omits ts at default 50, emits it when different", () => {
+    expect(buildStremioPosterSearchParams({}).has("ts")).toBe(false)
+    expect(buildStremioPosterSearchParams({ topShade: 50 }).has("ts")).toBe(false)
+    expect(buildStremioPosterSearchParams({ topShade: 0 }).get("ts")).toBe("0")
+    expect(buildStremioPosterSearchParams({ topShade: 70 }).get("ts")).toBe("70")
   })
 
   it("serializes ribbonSide left and right explicitly", () => {

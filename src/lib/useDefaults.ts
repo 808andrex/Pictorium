@@ -22,6 +22,8 @@ export interface DefaultsState {
   defaultBlurDarkness: number
   /** Intensità tinta di scena di default 0-100 (default 20). */
   defaultTintStrength: number
+  /** Ombra lineare superiore di default 0-100 (default 50). */
+  defaultTopShade: number
   defaultGradientHeight: number
   defaultTopBadgeScale: number
   defaultTopBadgeOffsetX: number
@@ -109,6 +111,12 @@ export interface DefaultsState {
   blurEnabled: boolean
   /** Intensità tinta di scena 0-100 (default 20). */
   tintStrength: number
+  /**
+   * Ombra lineare superiore 0-100 in editing (solo per-titolo, default 0 =
+   * spenta). Nessun default globale in Fase 1: parte sempre da 0 e si carica
+   * dal mapping all'apertura titolo.
+   */
+  topShade: number
   badgeStyle: BadgeStyle
   rankingBadgeStyle: RankingBadgeStyle
 }
@@ -117,10 +125,11 @@ const DEFAULTS: DefaultsState = {
   defaultBadgeStyle: "shadow",
   defaultRankingBadgeStyle: "default",
   defaultBlurEnabled: true,
-  defaultBlurIntensity: 50,
-  defaultBlurFade: 80,
+  defaultBlurIntensity: 20,
+  defaultBlurFade: 50,
   defaultBlurDarkness: 30,
   defaultTintStrength: 20,
+  defaultTopShade: 50,
   defaultGradientHeight: 30,
   defaultTopBadgeScale: 100,
   defaultTopBadgeOffsetX: 0,
@@ -184,11 +193,12 @@ const DEFAULTS: DefaultsState = {
   qualityBadgeOffsetY: 0,
   networkLogoOffsetX: 0,
   networkLogoOffsetY: 0,
-  blurIntensity: 50,
-  blurFade: 80,
+  blurIntensity: 20,
+  blurFade: 50,
   blurDarkness: 30,
   blurEnabled: true,
   tintStrength: 20,
+  topShade: 50,
   badgeStyle: "shadow",
   rankingBadgeStyle: "default",
 }
@@ -220,6 +230,7 @@ interface StoredDefaults {
   blurDarkness?: number
   blurEnabled?: boolean
   tintStrength?: number
+  topShade?: number
   badgeStyle?: BadgeStyle
   rankingBadgeStyle?: RankingBadgeStyle
   defaultBadgeStyle?: BadgeStyle
@@ -229,6 +240,7 @@ interface StoredDefaults {
   defaultBlurFade?: number
   defaultBlurDarkness?: number
   defaultTintStrength?: number
+  defaultTopShade?: number
   defaultGradientHeight?: number
   defaultTopBadgeScale?: number
   defaultTopBadgeOffsetX?: number
@@ -322,10 +334,11 @@ function buildFromStored(d: StoredDefaults | null): DefaultsState {
     defaultBadgeStyle: d.defaultBadgeStyle ?? d.badgeStyle ?? "shadow",
     defaultRankingBadgeStyle: d.defaultRankingBadgeStyle ?? d.rankingBadgeStyle ?? "default",
     defaultBlurEnabled: d.defaultBlurEnabled ?? d.blurEnabled ?? true,
-    defaultBlurIntensity: d.defaultBlurIntensity ?? d.blurIntensity ?? 50,
-    defaultBlurFade: d.defaultBlurFade ?? d.blurFade ?? 80,
+    defaultBlurIntensity: d.defaultBlurIntensity ?? d.blurIntensity ?? 20,
+    defaultBlurFade: d.defaultBlurFade ?? d.blurFade ?? 50,
     defaultBlurDarkness: d.defaultBlurDarkness ?? d.blurDarkness ?? 30,
     defaultTintStrength: d.defaultTintStrength ?? d.tintStrength ?? 20,
+    defaultTopShade: d.defaultTopShade ?? d.topShade ?? 50,
     defaultGradientHeight: d.defaultGradientHeight ?? d.gradientHeight ?? 30,
     defaultTopBadgeScale: d.defaultTopBadgeScale ?? d.topBadgeScale ?? 100,
     defaultTopBadgeOffsetX: d.defaultTopBadgeOffsetX ?? d.topBadgeOffsetX ?? 0,
@@ -394,11 +407,14 @@ function buildFromStored(d: StoredDefaults | null): DefaultsState {
     qualityBadgeOffsetY: d.qualityBadgeOffsetY ?? d.defaultQualityBadgeOffsetY ?? 0,
     networkLogoOffsetX: d.networkLogoOffsetX ?? d.defaultNetworkLogoOffsetX ?? 0,
     networkLogoOffsetY: d.networkLogoOffsetY ?? d.defaultNetworkLogoOffsetY ?? 0,
-    blurIntensity: d.blurIntensity ?? d.defaultBlurIntensity ?? 50,
-    blurFade: d.blurFade ?? d.defaultBlurFade ?? 80,
+    blurIntensity: d.blurIntensity ?? d.defaultBlurIntensity ?? 20,
+    blurFade: d.blurFade ?? d.defaultBlurFade ?? 50,
     blurDarkness: d.blurDarkness ?? d.defaultBlurDarkness ?? 30,
     blurEnabled: d.blurEnabled ?? d.defaultBlurEnabled ?? true,
     tintStrength: d.tintStrength ?? d.defaultTintStrength ?? 20,
+    // Solo per-titolo nel localStorage (dal mapping): il default globale vive
+    // in defaultTopShade — qui si segue lo stesso per coerenza coi correnti.
+    topShade: d.topShade ?? d.defaultTopShade ?? 50,
     badgeStyle: d.badgeStyle ?? d.defaultBadgeStyle ?? "shadow",
     rankingBadgeStyle: d.rankingBadgeStyle ?? d.defaultRankingBadgeStyle ?? "default",
   }
@@ -419,6 +435,7 @@ function defaultsToPayload(d: DefaultsState): Record<string, unknown> {
     blurFade: d.defaultBlurFade,
     blurDarkness: d.defaultBlurDarkness,
     tintStrength: d.defaultTintStrength,
+    topShade: d.defaultTopShade,
     gradientHeight: d.defaultGradientHeight,
     topBadgeScale: d.defaultTopBadgeScale,
     topBadgeOffsetX: d.defaultTopBadgeOffsetX,

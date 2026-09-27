@@ -116,6 +116,9 @@ export function buildStremioPosterUrl(input: BuildStremioPosterUrlInput): URL {
     blurDarkness: eff?.blurDarkness ?? input.defaults.blurDarkness,
     blurEnabled: eff?.blurEnabled ?? input.defaults.blurEnabled,
     tintStrength: eff?.tintStrength ?? input.defaults.tintStrength,
+    // Ombra superiore: per-titolo, poi default globale, poi 50 (default di
+    // formato invariato). Assente negli URL legacy = default del server.
+    topShade: mapping?.topShade ?? input.defaults.topShade ?? 50,
     customBadge,
     title: mapping?.title ?? undefined,
     networkLogo: (input.defaults.networkLogo !== false) && (mapping?.networkLogo !== false),

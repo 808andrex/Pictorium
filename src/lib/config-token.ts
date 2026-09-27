@@ -43,6 +43,7 @@ export const configTokenSchema = z.object({
   blurFade: z.number().finite(),
   blurDarkness: z.number().finite(),
   tintStrength: z.number().finite().optional(),
+  topShade: z.number().finite().optional(),
   gradientHeight: z.number().finite(),
   // Scala/offset del badge superiore: opzionali per back-compat (i token
   // generati prima non devono fallire il safeParse — vedi logoFitEnabled).
@@ -196,6 +197,7 @@ export function decodeConfig(token: string): PictoriumUserConfig | null {
       ...result.data,
       blurIntensity: clamp(Math.round(result.data.blurIntensity), 1, 100),
       tintStrength: result.data.tintStrength !== undefined ? clamp(Math.round(result.data.tintStrength), 0, 100) : undefined,
+      topShade: result.data.topShade !== undefined ? clamp(Math.round(result.data.topShade), 0, 100) : undefined,
       blurFade: clamp(Math.round(result.data.blurFade), 0, 100),
       blurDarkness: clamp(Math.round(result.data.blurDarkness), 0, 100),
       gradientHeight: clamp(Math.round(result.data.gradientHeight), 5, 100),

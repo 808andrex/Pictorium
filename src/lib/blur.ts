@@ -17,10 +17,14 @@ import { STD_W, STD_H } from "./image-utils"
  * 1. Estrazione con bleed (16px sopra gradTop) per eliminare artefatti di cucitura.
  * 2. Doppio passaggio gaussiano concorrente (low-sigma all'inizio zona, high-sigma al fondo).
  * 3. Interpolazione progressiva nel loop raw RGBA:
- *    - Curva opacità: smoothstep S(u) = u² · (3 - 2u)
- *    - Curva scurimento: shade(u) = 1 - darkAlpha · u (lineare, discesa uniforme)
+ *    - Curva opacità: ease-out continuo u(t) = 1-(1-t)^γ, γ da blurFade
+ *      (default 80 → γ=1.5, look di riferimento). NESSUN plateau: u tocca 1
+ *      solo all'ultima riga — niente "scalino" orizzontale.
+ *    - Curva scurimento: shade(u) = 1 - darkAlpha · u (stessa rampa di u,
+ *      atterraggio a derivata zero, nessun kink a metà fascia)
  *    - Blend sigma: smoothstep S(t) da sigmaLow a sigmaHigh (diffusione progressiva)
  *    - Tinta accento: lerp cromatico controllato (default 20%) verso accentColor
+ *      sulla stessa rampa u (tinta piena solo al fondo)
  *    - Dithering ordinato Bayer 4x4 deterministico (±1 LSB su RGBA): rompe il
  *      banding del gradiente scuro senza cambiare il valor medio locale.
  *      Deterministico per (x, y) — mai Math.random (ETag/snapshot stabili).
@@ -91,7 +95,12 @@ export async function applyBlur(params: BlurParams): Promise<BlurOverlay | null>
 
   const fadedPct = Math.min(Math.max(blurFade, 0), 100)
   const darkAlpha = Math.min(Math.max(blurDarkness / 100, 0), 1)
-  const fadeStop = fadedPct / 100
+  // Ease-out continuo (anti-"scalino"): γ da blurFade — 80 (default) → 1.5,
+  // 100 → 1.0 (rampa lineare su tutta la fascia), 0 → banda piena legacy.
+  // u(t) = 1-(1-t)^γ tocca 1 solo a t=1: alpha, shade e tinta condividono
+  // un'unica rampa senza clip né plateau (il vecchio min(t/fadeStop,1)
+  // appiattiva il 20% inferiore e piega lo shade a metà fascia).
+  const gamma = fadedPct <= 0 ? 0 : 1 + (1 - fadedPct / 100) * 2.5
 
   // Sigmi dual-stage: low-sigma all'inizio zona, high-sigma al fondo
   const clampedIntensity = Math.min(Math.max(blurIntensity, 1), 100)
@@ -132,13 +141,10 @@ export async function applyBlur(params: BlurParams): Promise<BlurOverlay | null>
 
   for (let y = 0; y < extH; y++) {
     const t = extH <= 1 ? 1 : y / (extH - 1)
-    const u = fadeStop <= 0 ? 1 : Math.min(t / fadeStop, 1)
+    const u = gamma <= 0 ? 1 : 1 - Math.pow(1 - t, gamma)
+    const alphaBase = u * 255
 
-    // Curva smoothstep per transizione opacità (niente stacchi al bordo)
-    const smoothU = u * u * (3 - 2 * u)
-    const alphaBase = smoothU * 255
-
-    // Scurimento lineare (discesa uniforme, risposta proporzionale allo slider)
+    // Scurimento sulla stessa rampa u (atterraggio morbido a t=1 per γ>1)
     const shade = 1 - darkAlpha * u
 
     // Interpolazione raggio progressivo con curva smoothstep in t (non lineare secca)

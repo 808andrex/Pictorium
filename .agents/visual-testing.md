@@ -17,7 +17,7 @@
 ## Test attivi
 
 - **4 screenshot fissi**: home full-page, home viewport, home mobile, /status — sempre attivi
-- **21 test poster API** (10 funzionali + 11 visual): badge shadow/pill/bar/colored, ranking, extra, gradient height (`gradHeight`; `gradColor/gradOpacity/gradFade/gradDir` rimossi in quanto morti), blur, clean, anime — sempre attivi (grazie al mock server)
+- **22 test poster API** (11 funzionali + 11 visual): badge shadow/pill/bar/colored, ranking, extra, gradient height (`gradHeight`; `gradColor/gradOpacity/gradFade/gradDir` rimossi in quanto morti), blur, top shade (`ts`), clean, anime — sempre attivi (grazie al mock server)
 
 ## Regole
 

@@ -20,7 +20,7 @@ import {
   type BadgeStyle,
   type RankingBadgeStyle,
 } from "./badge-styles"
-import { NON_CLEAN_GRADIENT_HEIGHT } from "./gradient-defaults"
+import { NON_CLEAN_BLUR_FADE, NON_CLEAN_GRADIENT_HEIGHT } from "./gradient-defaults"
 
 export function clamp(v: number, min: number, max: number): number {
   return Math.min(Math.max(v, min), max)
@@ -75,6 +75,12 @@ export interface PosterRenderConfig {
   blurDarkness: number
   /** Intensità tinta di scena 0-100 (default 20). */
   tintStrength: number
+  /**
+   * Ombra lineare superiore 0-100 (default 50). Catena completa come la tinta:
+   * query `ts` > mapping per-titolo > config token > server defaults
+   * (`PICTORIUM_TOP_SHADE`) > 50. Solo flat (vale per entrambi i canvas).
+   */
+  topShade: number
   badgesEnabled: boolean
   rankingEnabled: boolean
   /** Quali componenti del badge genere/rating mostrare (default tutti ON). */
@@ -204,15 +210,16 @@ export function resolvePosterRenderConfig(input: PosterRenderConfigInput): Poste
     ? clamp(rawBlur, 1, 100)
     : (m?.blurIntensity != null && Number.isFinite(m.blurIntensity)
         ? clamp(m.blurIntensity, 1, 100)
-        : (configOverride !== null ? clamp(configOverride.blurIntensity, 1, 100) : (sd.blurIntensity != null && Number.isFinite(sd.blurIntensity) ? clamp(sd.blurIntensity, 1, 100) : 50)))
-  // Fade di default: 70 in landscape, 80 nel portrait (look Naturale; il
-  // profilo non-clean era già 80, il clean sale da 50 — sync col client).
+        : (configOverride !== null ? clamp(configOverride.blurIntensity, 1, 100) : (sd.blurIntensity != null && Number.isFinite(sd.blurIntensity) ? clamp(sd.blurIntensity, 1, 100) : 20)))
+  // Fade di default: 70 in landscape, 50 nel portrait (look Naturale), 80
+  // per i mapping non-clean senza valori congelati (profilo per tipo, come
+  // l'altezza 20 — sync con stremio-poster-url e ramo Stremio unmapped).
   const rawBf = q.get("bf") ? Number(q.get("bf")) : NaN
   const blurFade = Number.isFinite(rawBf)
     ? clamp(rawBf, 0, 100)
     : (m?.blurFade != null && Number.isFinite(m.blurFade)
         ? clamp(m.blurFade, 0, 100)
-        : (configOverride !== null ? clamp(configOverride.blurFade, 0, 100) : (sd.blurFade != null && Number.isFinite(sd.blurFade) ? clamp(sd.blurFade, 0, 100) : (posterShape === "landscape" ? 70 : 80))))
+        : (configOverride !== null ? clamp(configOverride.blurFade, 0, 100) : (sd.blurFade != null && Number.isFinite(sd.blurFade) ? clamp(sd.blurFade, 0, 100) : (posterShape === "landscape" ? 70 : (mappingNonClean ? NON_CLEAN_BLUR_FADE : 50)))))
   const rawBd = q.get("bd") ? Number(q.get("bd")) : NaN
   const blurDarkness = Number.isFinite(rawBd)
     ? clamp(rawBd, 0, 100)
@@ -233,6 +240,19 @@ export function resolvePosterRenderConfig(input: PosterRenderConfigInput): Poste
             : (sd.tintStrength != null && Number.isFinite(sd.tintStrength)
                 ? clamp(Math.round(sd.tintStrength), 0, 100)
                 : 20)))
+
+  // Ombra superiore 0-100 — catena completa (query > mapping > config token >
+  // server defaults > 50). Stessi clamp anti-DoS.
+  const rawTs = q.get("ts") ? Number(q.get("ts")) : NaN
+  const topShade = q.get("ts") !== null
+    ? (Number.isFinite(rawTs) ? clamp(Math.round(rawTs), 0, 100) : 50)
+    : (m?.topShade != null && Number.isFinite(m.topShade)
+        ? clamp(Math.round(m.topShade), 0, 100)
+        : (configOverride?.topShade != null && Number.isFinite(configOverride.topShade)
+            ? clamp(Math.round(configOverride.topShade), 0, 100)
+            : (sd.topShade != null && Number.isFinite(sd.topShade)
+                ? clamp(Math.round(sd.topShade), 0, 100)
+                : 50)))
 
   const qBadges = q.get("badges")
   const qRanking = q.get("ranking")
@@ -442,6 +462,7 @@ export function resolvePosterRenderConfig(input: PosterRenderConfigInput): Poste
     blurFade,
     blurDarkness,
     tintStrength,
+    topShade,
     badgesEnabled,
     rankingEnabled,
     badgeGenre,

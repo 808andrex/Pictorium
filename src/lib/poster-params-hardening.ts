@@ -96,7 +96,7 @@ export const POSTER_CACHE_ALLOWLIST: ReadonlySet<string> = new Set([
   "gscale", "gox", "goy", "qscale", "qox", "qoy", "netscale", "nox", "noy",
   "bscale", "box", "boy", "gradHeight", "blur", "bf", "bd", "voteAverage",
   "year", "rd", "fad", "mv", "fmt", "format", "shape", "align", "ac",
-  "tl", "bl", "bs", "rs",
+  "tl", "bl", "bs", "rs", "ts",
   // Funzionali (letti dalla route / poster-config, mai stile libero).
   "badges", "ranking", "bg", "by", "br", "bq", "cr", "sep", "netLogo",
   "pre", "side", "hideLogo", "tint", "be", "preview", "u", "user",
@@ -104,9 +104,9 @@ export const POSTER_CACHE_ALLOWLIST: ReadonlySet<string> = new Set([
   "region", "country", "logoFit", "debug",
 ])
 
-// Numerici 0-100 (gradienti/blur/tinta/fade) e offset px: step 5.
+// Numerici 0-100 (gradienti/blur/tinta/fade/ombra-alta) e offset px: step 5.
 const STEP_5_PARAMS: ReadonlySet<string> = new Set([
-  "gradHeight", "blur", "bf", "bd", "tint",
+  "gradHeight", "blur", "bf", "bd", "tint", "ts",
   "tox", "toy", "gox", "goy", "qox", "qoy", "nox", "noy",
   "ox", "oy", "box", "boy",
 ])

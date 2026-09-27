@@ -669,6 +669,7 @@
   "ui.pinSaveError": "Error al guardar",
   "ui.minimal": "Minimal",
   "ui.tintStrength": "Intensidad del tinte",
+  "ui.topShade": "Sombra superior",
   "ui.gradientPresetNatural": "Natural",
   "ui.gradientPresetColor": "Color",
   "ui.gradientPresetAdd": "Save current as preset",

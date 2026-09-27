@@ -669,6 +669,7 @@
   "ui.pinSaveError": "저장 중 오류가 발생했습니다",
   "ui.minimal": "미니멀",
   "ui.tintStrength": "틴트 강도",
+  "ui.topShade": "상단 음영",
   "ui.gradientPresetNatural": "Natural",
   "ui.gradientPresetColor": "Color",
   "ui.gradientPresetAdd": "Save current as preset",

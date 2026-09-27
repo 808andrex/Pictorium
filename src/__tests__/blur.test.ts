@@ -217,4 +217,35 @@ describe("applyBlur", () => {
     expect(vals.size).toBeGreaterThan(1) // dither attivo, non overlay liscio
     expect(Math.max(...vals) - Math.min(...vals)).toBeLessThanOrEqual(2) // ampiezza ±1 LSB
   })
+
+  it("has no flat plateau: alpha rises continuously to 255 only at the last row (bf=80)", async () => {
+    const posterBuf = await createTestImage()
+    const result = await applyBlur({
+      posterBuf,
+      blurEnabled: true,
+      blurHeight: 30,
+      blurIntensity: 15,
+      blurFade: 80,
+      blurDarkness: 30,
+      canvasW: STD_W,
+      canvasH: STD_H,
+    })
+    expect(result).not.toBeNull()
+    const { overlay, height } = result!
+    const rowAlpha = (r: number): number => {
+      let sum = 0
+      const off = r * STD_W * 4
+      for (let x = 0; x < STD_W; x++) sum += overlay[off + x * 4 + 3]!
+      return sum / STD_W
+    }
+    const a85 = rowAlpha(Math.floor(height * 0.85))
+    const a95 = rowAlpha(Math.floor(height * 0.95))
+    const aLast = rowAlpha(height - 1)
+    // Niente plateau: sotto il 100% fino all'ultima riga, in salita continua
+    // (col vecchio min(t/fadeStop,1) a85 e a95 erano già a 255).
+    expect(a85).toBeLessThan(255)
+    expect(a95).toBeLessThan(255)
+    expect(a95).toBeGreaterThan(a85)
+    expect(aLast).toBe(255)
+  })
 })

@@ -340,6 +340,24 @@ test.describe("poster API — functional", () => {
     expect(buffer.length).toBeGreaterThan(1000)
   })
 
+  test("top shade (ts) — default 50, off needs explicit ts=0", async ({ request }) => {
+    // Default 50: senza parametro e con ts=50 i byte sono identici;
+    // con ts=0 (spenta) il render differisce.
+    const base = { genreName: "Action", voteAverage: "7.8", badges: "1", ranking: "0" }
+    const defRes = await request.get(posterUrl(base))
+    expect(defRes.ok()).toBeTruthy()
+    const defBuffer = await defRes.body()
+    expect(defBuffer.length).toBeGreaterThan(1000)
+    const fiftyRes = await request.get(posterUrl({ ...base, ts: "50" }))
+    expect(fiftyRes.ok()).toBeTruthy()
+    expect(Buffer.compare(defBuffer, await fiftyRes.body())).toBe(0)
+    const offRes = await request.get(posterUrl({ ...base, ts: "0" }))
+    expect(offRes.ok()).toBeTruthy()
+    const offBuffer = await offRes.body()
+    expect(offBuffer.length).toBeGreaterThan(1000)
+    expect(Buffer.compare(defBuffer, offBuffer)).not.toBe(0)
+  })
+
   test("all badges off (clean poster) — valid image", async ({ request }) => {
     const url = posterUrl({ badges: "0", ranking: "0" })
     const res = await request.get(url)

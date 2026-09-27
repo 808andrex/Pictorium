@@ -26,9 +26,9 @@ type PosterKind = { iso_639_1?: string | null } | null | undefined
  * (height 5-100, intensity 1-100, gli altri 0-100) — da calibrare a occhio.
  */
 export const GRADIENT_PRESET_COLOR: GradientPresetValues = {
-  gradientHeight: 40,
+  gradientHeight: 35,
   blurIntensity: 20,
-  blurFade: 60,
+  blurFade: 10,
   blurDarkness: 0,
   tintStrength: 100,
   blurEnabled: true,
@@ -42,8 +42,8 @@ export const GRADIENT_PRESET_COLOR: GradientPresetValues = {
  */
 export const NATURAL_GRADIENT_DEFAULTS: GradientPresetValues = {
   gradientHeight: 30,
-  blurIntensity: 50,
-  blurFade: 80,
+  blurIntensity: 20,
+  blurFade: 50,
   blurDarkness: 30,
   tintStrength: 20,
   blurEnabled: true,
@@ -53,8 +53,8 @@ export const NATURAL_GRADIENT_DEFAULTS: GradientPresetValues = {
  * Factory storiche (pre-preset) di altezza/fade: distinguono "default mai
  * toccato" (ancora soggetto ad auto-calibrazione per tipo poster) da un
  * default personalizzato (assoluto). NON allinearle a NATURAL_GRADIENT_DEFAULTS:
- * con fade Naturale a 80, il confronto deve restare sul 50 storico o un
- * default a fade 80 verrebbe ricalibrato per tipo all'apertura titolo.
+ * il Naturale (30/50) coincide con le factory — i default mai toccati seguono
+ * il tipo poster, solo un valore personalizzato diverso resta assoluto.
  */
 const LEGACY_GRADIENT_HEIGHT = 30
 const LEGACY_BLUR_FADE = 50
@@ -64,8 +64,8 @@ export function naturalGradientForPoster(
 ): GradientPresetValues {
   return {
     gradientHeight: defaultGradientHeightForPoster(poster),
-    blurIntensity: 50,
-    blurFade: posterShape === "landscape" ? 70 : 80,
+    blurIntensity: 20,
+    blurFade: posterShape === "landscape" ? 70 : 50,
     blurDarkness: 30,
     tintStrength: 20,
     blurEnabled: true,

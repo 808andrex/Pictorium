@@ -380,7 +380,7 @@ export function TransformControls() {
               boundsMin={1}
               boundsMax={100}
               onChange={(v) => ed.setBlurIntensity(v)}
-              onDoubleClick={() => ed.setBlurIntensity(50)}
+              onDoubleClick={() => ed.setBlurIntensity(20)}
               editingValue={editingValue}
               editText={editText}
               setEditingValue={setEditingValue}
@@ -397,7 +397,7 @@ export function TransformControls() {
               boundsMin={0}
               boundsMax={100}
               onChange={(v) => ed.setBlurFade(v)}
-              onDoubleClick={() => ed.setBlurFade(ed.posterShape === "landscape" ? 70 : 80)}
+              onDoubleClick={() => ed.setBlurFade(ed.posterShape === "landscape" ? 70 : 50)}
               editingValue={editingValue}
               editText={editText}
               setEditingValue={setEditingValue}
@@ -437,6 +437,23 @@ export function TransformControls() {
               setEditingValue={setEditingValue}
               setEditText={setEditText}
               editingKey="tintStrength"
+              suffix="%"
+            />
+            <SliderRow
+              icon={<Circle className="w-3.5 h-3.5" />}
+              label={t("ui.topShade")}
+              value={ed.topShade}
+              min={0}
+              max={100}
+              boundsMin={0}
+              boundsMax={100}
+              onChange={(v) => ed.setTopShade(v)}
+              onDoubleClick={() => ed.setTopShade(50)}
+              editingValue={editingValue}
+              editText={editText}
+              setEditingValue={setEditingValue}
+              setEditText={setEditText}
+              editingKey="topShade"
               suffix="%"
             />
           </div>

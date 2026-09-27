@@ -38,6 +38,13 @@ export interface StremioPosterParamsInput {
   readonly blurEnabled?: boolean
   /** Intensità tinta di scena 0-100 (default 20). Emessa sempre esplicita. */
   readonly tintStrength?: number
+  /**
+   * Ombra lineare superiore 0-100 (default 50). Emessa solo quando diversa
+   * dal default (come qmin/sash): gli URL esistenti non cambiano e la cache
+   * non si invalida in massa. Sotto compactTuning la risolve il server dal
+   * mapping (stessa catena, stesso render).
+   */
+  readonly topShade?: number
   readonly networkLogo?: boolean
   /** Scala % del badge superiore (default 100). */
   readonly topBadgeScale?: number
@@ -102,6 +109,7 @@ const DEFAULT_STREMIO_POSTER_PARAMS = {
   blurFade: 50,
   blurDarkness: 30,
   tintStrength: 20,
+  topShade: 50,
   blurEnabled: true,
   networkLogo: true,
   topBadgeScale: 100,
@@ -167,6 +175,10 @@ export function buildStremioPosterSearchParams(input: StremioPosterParamsInput):
     params.set("tint", String(input.tintStrength ?? DEFAULT_STREMIO_POSTER_PARAMS.tintStrength))
     params.set("bf", String(input.blurFade ?? DEFAULT_STREMIO_POSTER_PARAMS.blurFade))
     params.set("bd", String(input.blurDarkness ?? DEFAULT_STREMIO_POSTER_PARAMS.blurDarkness))
+    // Ombra superiore solo quando diversa dal default: a 50 l'URL resta
+    // identico al passato (la risolve il server).
+    const ts = input.topShade ?? DEFAULT_STREMIO_POSTER_PARAMS.topShade
+    if (ts !== DEFAULT_STREMIO_POSTER_PARAMS.topShade) params.set("ts", String(ts))
   }
   params.set("bs", input.badgeStyle || DEFAULT_STREMIO_POSTER_PARAMS.badgeStyle)
   params.set("rs", input.rankingBadgeStyle || DEFAULT_STREMIO_POSTER_PARAMS.rankingBadgeStyle)

@@ -10,6 +10,7 @@ import { useT } from "@/lib/contexts/TranslationContext"
 import { usePosterEditor } from "@/lib/contexts/PosterEditorContext"
 import type { TMDBImage } from "@/lib/types"
 import { effectiveMappingForShape, type LandscapeSettings } from "@/lib/types"
+import { isGradientDirty } from "@/lib/gradient-dirty"
 import { PosterOptions } from "@/components/PosterOptions"
 import { BackdropOptions } from "@/components/BackdropOptions"
 import { LogoOptions } from "@/components/LogoOptions"
@@ -27,7 +28,7 @@ import { TransformControls } from "@/components/TransformControls"
 import { EpisodeGroupControls } from "@/components/EpisodeGroupControls"
 import { JwRankBadge } from "@/components/JwRankBadge"
 import { usePosterPreview } from "@/lib/usePosterPreview"
-import { Check, Clock, Save, Trash2, X, ChevronLeft, RectangleVertical, RectangleHorizontal, Tv } from "lucide-react"
+import { Check, Clock, Save, Trash2, X, ChevronLeft, RectangleVertical, RectangleHorizontal, Tv, AlertTriangle } from "lucide-react"
 
 export default function EditView() {
   const accentColor = usePSelector((v) => v.accentColor)
@@ -129,6 +130,25 @@ export default function EditView() {
   const selectedMappingKey = selected ? `${selected.media_type}:${selected.id}` : null
   const selectedMapping = selectedMappingKey ? mappingsMap.get(selectedMappingKey) : undefined
   const hasMapping = !!selectedMapping
+
+  // Il modale "Testa URL Stremio" mostra lo stato SALVATO (stesso URL dei
+  // cataloghi): con preset/slider non ancora salvati la sfumatura in preview
+  // non corrisponde. Stessa risoluzione del load in context.tsx (profilo
+  // landscape incluso, flat per tinta/ombra).
+  const gradientDirty = useMemo(() => isGradientDirty(
+    {
+      gradientHeight: ed.gradientHeight, blurEnabled: ed.blurEnabled,
+      blurIntensity: ed.blurIntensity, blurFade: ed.blurFade, blurDarkness: ed.blurDarkness,
+      tintStrength: ed.tintStrength, topShade: ed.topShade,
+    },
+    selectedMapping ?? null,
+    {
+      gradientHeight: ed.defaultGradientHeight, blurEnabled: ed.defaultBlurEnabled,
+      blurIntensity: ed.defaultBlurIntensity, blurFade: ed.defaultBlurFade, blurDarkness: ed.defaultBlurDarkness,
+      tintStrength: ed.defaultTintStrength, topShade: ed.defaultTopShade,
+    },
+    ed.defaultPosterShape,
+  ), [ed, selectedMapping])
 
   const handleSave = useCallback(async () => {
     await saveConfig()
@@ -699,6 +719,15 @@ export default function EditView() {
               {/* eslint-disable-next-line @next/next/no-img-element -- poster reale renderizzato dal server */}
               <img src={stremioPreviewUrl} alt="Stremio" className="w-full" />
             </div>
+            {gradientDirty && (
+              <div className="mt-3 flex items-center gap-2 rounded-xl border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs text-amber-200">
+                <AlertTriangle className="h-4 w-4 shrink-0" />
+                <span className="flex-1">{t("ui.unsavedChanges")}</span>
+                <button type="button" aria-label={t("ui.savePoster")} onClick={() => { void handleSave() }} className="shrink-0 rounded-lg border border-amber-400/40 px-3 py-1.5 font-semibold hover:bg-amber-400/20 transition-colors">
+                  {t("ui.savePoster")}
+                </button>
+              </div>
+            )}
             <div className="mt-4 flex items-center gap-2 bg-black/40 border border-white/10 rounded-xl px-3 py-2">
               <code className="flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-[11px] font-mono text-muted select-text">{stremioPreviewUrl}</code>
             </div>

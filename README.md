@@ -283,6 +283,7 @@ npm install --ignore-scripts && npm run build && npm start
 | `PICTORIUM_RIBBON_SIDE` | `left` | Lato del nastro Netflix Top 10 (`left` / `right`). |
 | `PICTORIUM_BLUR_ENABLED` | `1` | Attiva o disattiva lo sfondo sfocato dei poster verticali. |
 | `PICTORIUM_TINT_STRENGTH` | `20` | Intensità della tinta di scena per lo sfondo sfocato (0–100). |
+| `PICTORIUM_TOP_SHADE` | `50` | Ombra lineare superiore sul primo 25% del poster (0–100, 0 = spenta). |
 | `PICTORIUM_BADGE_QUALITY` | `1` | Mostra/nasconde il badge di risoluzione video streaming (4K/FHD). |
 | `PICTORIUM_QUALITY_SOURCE` | `torrentio` | Sorgente qualità streaming: `torrentio` (con fallback JustWatch), `justwatch` (solo JW), `none` (badge mai mostrato, zero upstream). |
 | `PICTORIUM_NETWORK_LOGO` | `1` | Mostra/nasconde il logo del network o studio di produzione. |

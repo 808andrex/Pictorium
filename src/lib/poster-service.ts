@@ -4,7 +4,7 @@ import { renderMultiRatings } from "./multi-rating-renderer"
 import type { SeparateRating } from "./ratings"
 import { renderSeparateRatingStack } from "./separate-rating-renderer"
 import { cacheGet, cacheSet } from "./cache"
-import { GENRE_FALLBACK, cinematicVignetteSVG, cinematicCornerGradientSVG } from "./badges"
+import { GENRE_FALLBACK, cinematicVignetteSVG, cinematicCornerGradientSVG, topShadeSVG } from "./badges"
 import { applyBlur } from "./blur"
 import {
   STD_W,
@@ -84,6 +84,12 @@ export interface GenerationInput {
   blurDarkness: number
   /** Intensità tinta di scena 0-100 (default 20, convertita in frazione per applyBlur). */
   tintStrength?: number
+  /**
+   * Ombra lineare superiore 0-100 (default 50, come la catena di default).
+   * Solo flat (vale per entrambi i canvas): incornicia il poster e
+   * fa risaltare badge/testi superiori. Sotto logo e badge.
+   */
+  topShade?: number
 
   // Badge flags
   badgesEnabled: boolean
@@ -257,6 +263,22 @@ async function getPreReleaseDim(canvasW: number = STD_W, canvasH: number = STD_H
     // Reset su reject: vedi getVignette sopra.
     fresh.catch(() => { if (_preReleaseDimCache.get(key) === fresh) _preReleaseDimCache.delete(key) })
     _preReleaseDimCache.set(key, fresh)
+    p = fresh
+  }
+  return p
+}
+
+// ---- Top shade overlay (una entry per dimensioni canvas + intensità) ----
+const _topShadeCache = new Map<string, Promise<Buffer>>()
+async function getTopShade(canvasW: number, canvasH: number, strength: number): Promise<Buffer> {
+  const s = Math.min(Math.max(Math.round(strength), 0), 100)
+  const key = `${canvasW}x${canvasH}:${s}`
+  let p = _topShadeCache.get(key)
+  if (!p) {
+    const fresh = sharp(Buffer.from(topShadeSVG(canvasW, canvasH, s))).png().toBuffer()
+    // Reset su reject: vedi getVignette sopra.
+    fresh.catch(() => { if (_topShadeCache.get(key) === fresh) _topShadeCache.delete(key) })
+    _topShadeCache.set(key, fresh)
     p = fresh
   }
   return p
@@ -572,6 +594,8 @@ export async function generatePosterBuffer(input: GenerationInput): Promise<Buff
     blurEnabled, blurHeight, blurIntensity, blurFade, blurDarkness,
     // Default 20 quando il chiamante non lo passa (test diretti, vecchi adapter).
     tintStrength = 20,
+    // Ombra superiore: default 50 = catena di default (test diretti inclusi).
+    topShade = 50,
     badgesEnabled, rankingEnabled, genreName, voteAverage, badgeStyle,
     rankingBadgeStyle, badgeGenre, badgeYear, badgeRating, badgeQuality, quality,
     sashOrder,
@@ -731,6 +755,11 @@ export async function generatePosterBuffer(input: GenerationInput): Promise<Buff
   // luminosi e leggibili). Costante cachata, nessun cambio di output a flag spento.
   if (preRelease) {
     composites.push({ input: await getPreReleaseDim(CW, CH), top: 0, left: 0 })
+  }
+  // Ombra lineare superiore (default 50): sopra vignetta/velo ma sotto logo
+  // e badge (restano luminosi). A 0 nessun composite (zero pixel cambiati).
+  if (topShade > 0) {
+    composites.push({ input: await getTopShade(CW, CH, topShade), top: 0, left: 0 })
   }
   if (logoResult) {
     // Rete di sicurezza per la leggibilità: quando il logo e la fascia di poster

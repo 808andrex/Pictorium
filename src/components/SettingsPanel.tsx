@@ -1404,6 +1404,27 @@ export function SettingsPanel({ setSettingsOpen, exportData, importData, mobile 
               editingKey="tint"
               suffix="%"
             />
+            <SliderRow
+              icon={<Circle className="w-3.5 h-3.5" />}
+              label={t("ui.topShade")}
+              value={ed.defaultTopShade}
+              min={0}
+              max={100}
+              boundsMin={0}
+              boundsMax={100}
+              onChange={(v) => {
+                ed.setDefaultTopShade(v)
+              }}
+              onDoubleClick={() => {
+                ed.setDefaultTopShade(50)
+              }}
+              editingValue={editVal}
+              editText={editTxt}
+              setEditingValue={setEditVal}
+              setEditText={setEditTxt}
+              editingKey="tsdef"
+              suffix="%"
+            />
           </div>
       </div>
       )}
