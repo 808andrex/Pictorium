@@ -44,7 +44,7 @@ export const GENRE_FALLBACK: Record<string, string> = {
   Thriller: '#4A4A4A', 'מותחן': '#4A4A4A',
   Adventure: '#2E86AB', Avventura: '#2E86AB', Aventure: '#2E86AB', 'הרפתקאות': '#2E86AB',
   Animation: '#E67E22', Animazione: '#E67E22', 'אנימציה': '#E67E22',
-  'Science Fiction': '#3498DB', 'Science-Fiction': '#3498DB', Fantascienza: '#3498DB', 'מדע בדיוני': '#3498DB',
+  'Science Fiction': '#3498DB', 'Science-Fiction': '#3498DB', Fantascienza: '#3498DB', 'Sci-Fi': '#3498DB', 'מדע בדיוני': '#3498DB',
   Romance: '#E74C3C', Romantico: '#E74C3C', 'רומנטיקה': '#E74C3C',
   Documentary: '#7F8C8D', Documentario: '#7F8C8D', 'תיעודי': '#7F8C8D',
   Mystery: '#6C3483', Mistero: '#6C3483', 'מסתורין': '#6C3483',
@@ -55,4 +55,7 @@ export const GENRE_FALLBACK: Record<string, string> = {
   Family: '#2ECC71', Famiglia: '#2ECC71', 'משפחה': '#2ECC71',
   History: '#A67B5B', Storico: '#A67B5B', Storia: '#A67B5B', 'היסטוריה': '#A67B5B',
   Crime: '#2C3E50', Crimine: '#2C3E50', 'פשע': '#2C3E50',
+  // Generi composti TV grezzi (sicurezza: il badge normalizza a monte, ma un
+  // valore grezzo da mapping storici/cache non deve mai degradare a grigio).
+  'Sci-Fi & Fantasy': '#3498DB', 'Action & Adventure': '#D4A574', 'War & Politics': '#6B4226',
 }

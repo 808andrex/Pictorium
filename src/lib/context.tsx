@@ -15,6 +15,7 @@ import { http, userFetch } from "./http"
 import { currentPathUuid, fetchWithUserAuthRetry, userAuthHeaders, USER_UNLOCK_EVENT } from "./user-token"
 import { copyText } from "./clipboard"
 import { useRootColors } from "./useRootColors"
+import { normalizeGenreName } from "./genre-normalize"
 import { buildUrlPattern, buildPreviewUrl } from "./poster-url"
 import { selectBestLogo, autoLogoSelection, logoDefaultScale } from "./logo-selection"
 import { useTrending } from "./useTrending"
@@ -932,7 +933,7 @@ export function usePictorium(): PictoriumCtx {
   const landscapePreview = posterShape === "landscape"
   useRootColors(
     landscapePreview ? (selectedBackdrop ?? navigation.previewPoster) : navigation.previewPoster,
-    metaInfo.genres[0]?.name,
+    normalizeGenreName(metaInfo.genres[0]?.name, lang) || undefined,
     posterUrl,
     { setAccentColor, setAutoAccentColor, setTopEdgeColor, setBottomEdgeColor },
     landscapePreview ? "w780" : "w342",

@@ -9,6 +9,7 @@ import { adjustGradientForPosterChange } from "./gradient-presets"
 import { logoDefaultScale } from "./logo-selection"
 import { t } from "./i18n"
 import { isManualAccent } from "./accent-color"
+import { normalizeGenreName } from "./genre-normalize"
 import type { EnrichedAnimeItem } from "./validation"
 import { http, ApiError } from "./http"
 
@@ -182,7 +183,7 @@ export function usePosterSave(deps: PosterSaveDeps) {
           posterPath: previewPoster?.file_path || selected.poster_path!, logoPath: null,
           originalPosterPath: selected.poster_path, language: previewPoster?.iso_639_1 || null,
           logoScale, logoOffsetX, logoOffsetY,
-          genreName: metaInfo.genres[0]?.name || null,
+          genreName: normalizeGenreName(metaInfo.genres[0]?.name, lang) || null,
           voteAverage: metaInfo.voteAverage || null,
           trendRank: trendRank ?? null,
           logoDisabled: true,
@@ -334,7 +335,7 @@ export function usePosterSave(deps: PosterSaveDeps) {
           backdropScale: backdropScaleToSave,
           backdropOffsetX: backdropOffsetXToSave,
           backdropOffsetY: backdropOffsetYToSave,
-          genreName: metaInfo.genres[0]?.name || null,
+          genreName: normalizeGenreName(metaInfo.genres[0]?.name, lang) || null,
           voteAverage: metaInfo.voteAverage || null,
           // IMDb ID per provider custom rating: evita getExternalIds sui salvati.
           imdbId: metaInfo.imdb_id || null,

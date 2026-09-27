@@ -7,6 +7,7 @@ import { RENDER_VERSION } from "./render-version"
 import { isValidWikidataQid } from "./badge-labels"
 import { TOP_LIGHT_LUMINANCE } from "./constants"
 import { hexLuminance, computeBottomLight } from "./accent-color"
+import { normalizeGenreName } from "./genre-normalize"
 import type { SearchResult, TMDBImage } from "./types"
 import type { EnrichedAnimeItem } from "./validation"
 import type { BadgeStyle, RankingBadgeStyle } from "./badge-styles"
@@ -191,7 +192,7 @@ export function buildPreviewUrl(ps: PosterState, bp: BadgeParams): string {
   if (bp.ratingSources && bp.ratingSources.length > 0) params.push(`rsrc=${encodeURIComponent(bp.ratingSources.join(","))}`)
   if (ps.previewPoster) {
     params.push(`poster=${encodeURIComponent(ps.previewPoster.file_path)}`)
-    const genre = ps.metaInfo.genres[0]?.name
+    const genre = normalizeGenreName(ps.metaInfo.genres[0]?.name, ps.lang)
     if (genre) params.push(`genreName=${encodeURIComponent(genre)}`)
     // Un decimale come il badge (`toFixed(1)` nel renderer): la media grezza
     // può essere un float lungo (es. 7.080000000000001) che supera il bound

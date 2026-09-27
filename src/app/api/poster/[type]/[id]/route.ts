@@ -74,6 +74,7 @@ import {
   bottomLuminance,
 } from "@/lib/poster-render-helpers"
 import { computeBottomLight } from "@/lib/accent-color"
+import { normalizeGenreName } from "@/lib/genre-normalize"
 import { NON_CLEAN_BLUR_FADE, NON_CLEAN_GRADIENT_HEIGHT } from "@/lib/gradient-defaults"
 import { LAND_W, LAND_H, landscapeBackdropUrl, pillarboxLandscapeBase, cropBackdropToPortrait } from "@/lib/image-utils"
 import { generatePosterBuffer, type GenerationInput } from "@/lib/poster-service"
@@ -1613,6 +1614,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
     )
 
     const locale = req.nextUrl.searchParams.get("lang") || mapping?.language || posterRegion.lang2
+    // Normalizza i generi composti TV grezzi ("Sci-Fi & Fantasy" mai localizzato
+    // in it-IT) in etichette brevi da badge — stesso helper del client, così
+    // preview e poster Stremio non divergono e i mapping storici grezzi si
+    // sanano senza migrazione. Idempotente.
+    genreName = normalizeGenreName(genreName, locale) || null
     const targetCenter = Math.round(30 * (isLandscape ? LAND_H : STD_H) / 570)
 
     // 8. Pre-resolve accent color override

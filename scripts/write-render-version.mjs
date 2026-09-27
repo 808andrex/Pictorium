@@ -26,6 +26,7 @@ const RENDER_FILES = [
   "src/lib/blur.ts",
   "src/lib/config-token.ts",
   "src/lib/fonts.ts",
+  "src/lib/genre-normalize.ts",
   "src/lib/image-utils.ts",
   "src/lib/justwatch.ts",
   "src/lib/logo-contrast.ts",
