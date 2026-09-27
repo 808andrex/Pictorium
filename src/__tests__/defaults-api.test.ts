@@ -83,6 +83,25 @@ describe("PUT /api/defaults", () => {
     expect(body.gradientHeight).toBe(55)
   })
 
+  it("persists gradient tuning including tintStrength", async () => {
+    delete process.env.ADMIN_TOKEN
+    const res = await PUT(mockPutRequest({ gradientHeight: 40, tintStrength: 60 }) as unknown as NextRequest)
+    expect(res.status).toBe(200)
+
+    const resGet = await GET(new Request("http://localhost:3000/api/defaults") as unknown as NextRequest)
+    const body = (await resGet.json()) as Record<string, unknown>
+    expect(body.gradientHeight).toBe(40)
+    expect(body.tintStrength).toBe(60)
+  })
+
+  it("rejects invalid tintStrength instead of silently stripping it", async () => {
+    delete process.env.ADMIN_TOKEN
+    // Senza il campo nello schema, zod stripperebbe la chiave e il PUT
+    // risponderebbe 200 scartando il valore (bug tinta non salvata).
+    const res = await PUT(mockPutRequest({ tintStrength: "hot" }) as unknown as NextRequest)
+    expect(res.status).toBe(400)
+  })
+
   it("accepts a valid custom rating endpoint and rejects unsafe ones", async () => {
     delete process.env.ADMIN_TOKEN
     const ok = await PUT(mockPutRequest({ customRatingEndpoint: "https://example.com/ratings/{imdbId}" }) as unknown as NextRequest)

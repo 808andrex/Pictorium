@@ -29,6 +29,7 @@ const defaultsSchema = z.object({
   blurIntensity: z.number().optional(),
   blurFade: z.number().optional(),
   blurDarkness: z.number().optional(),
+  tintStrength: z.number().optional(),
   topShade: z.number().optional(),
   gradientHeight: z.number().optional(),
   topBadgeScale: z.number().optional(),
