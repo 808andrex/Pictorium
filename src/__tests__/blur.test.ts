@@ -186,4 +186,35 @@ describe("applyBlur", () => {
     expect(res2).not.toBeNull()
     expect(res1!.overlay.equals(res2!.overlay)).toBe(true)
   })
+
+  it("applies deterministic Bayer dithering (±1 LSB, zero-mean) on flat regions", async () => {
+    // PNG piatto (niente artefatti JPEG): il blur di una costante è la costante,
+    // quindi ogni variazione nell'overlay è solo dither — mai rumore di sorgente.
+    const posterBuf = await sharp({
+      create: { width: STD_W, height: STD_H, channels: 3, background: { r: 60, g: 60, b: 60 } },
+    }).png().toBuffer()
+    const params = {
+      posterBuf,
+      blurEnabled: true,
+      blurHeight: 30,
+      blurIntensity: 15,
+      blurFade: 60,
+      blurDarkness: 40,
+      canvasW: STD_W,
+      canvasH: STD_H,
+    }
+    const res1 = await applyBlur(params)
+    const res2 = await applyBlur(params)
+    expect(res1).not.toBeNull()
+    // Mai Math.random(): due render danno byte identici (ETag/snapshot stabili)
+    expect(res1!.overlay.equals(res2!.overlay)).toBe(true)
+
+    // Riga centrale (alpha interno): il dither deve muoversi senza spostare la media
+    const midRow = Math.floor(res1!.height / 2)
+    const off = midRow * STD_W * 4
+    const vals = new Set<number>()
+    for (let x = 0; x < STD_W; x++) vals.add(res1!.overlay[off + x * 4]!)
+    expect(vals.size).toBeGreaterThan(1) // dither attivo, non overlay liscio
+    expect(Math.max(...vals) - Math.min(...vals)).toBeLessThanOrEqual(2) // ampiezza ±1 LSB
+  })
 })

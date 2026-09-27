@@ -223,6 +223,24 @@ test.describe("poster API — functional", () => {
     expect(res.headers()["content-type"]).toMatch(/image\/(?:png|webp|jpeg)/)
   })
 
+  test("explicit fmt=jpeg — jpeg response in any default mode", async ({ request }) => {
+    // Sotto default jpeg è il canonico, sotto PICTORIUM_IMAGE_FORMAT=webp è la
+    // variante convertita dal canonico webp: il contratto è identico.
+    const url = posterUrl({ genreName: "Action", voteAverage: "7.8", badges: "1", ranking: "0", fmt: "jpeg" })
+    const res = await request.get(url)
+    expect(res.ok()).toBeTruthy()
+    expect(res.headers()["content-type"]).toBe("image/jpeg")
+    expect((await res.body()).length).toBeGreaterThan(1000)
+  })
+
+  test("explicit fmt=webp — webp response in any default mode", async ({ request }) => {
+    const url = posterUrl({ genreName: "Action", voteAverage: "7.8", badges: "1", ranking: "0", fmt: "webp" })
+    const res = await request.get(url)
+    expect(res.ok()).toBeTruthy()
+    expect(res.headers()["content-type"]).toBe("image/webp")
+    expect((await res.body()).length).toBeGreaterThan(1000)
+  })
+
   test("badge style: pill — valid image", async ({ request }) => {
     const url = posterUrl({ genreName: "Action", voteAverage: "7.8", bs: "pill", badges: "1", ranking: "0" })
     const res = await request.get(url)

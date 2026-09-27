@@ -260,6 +260,7 @@ npm install --ignore-scripts && npm run build && npm start
 | `PICTORIUM_POSTER_PARAMS` | *(auto)* | Poster cache-busting hardening: `presets` restricts non-preview requests to a finite render set (cache-key allowlist, coarse 5/10/5px numeric steps, palette-only `ac`, no anonymous free-text/keyless overrides), `free` is the historic behavior. Auto-`presets` on public instances (`PUBLIC_INSTANCE=1`, `HOSTED_BY=elfhosted` or `MULTI_USER=1`); the WYSIWYG preview stays live for user spaces and unlocked sessions. |
 | `PICTORIUM_PREVIEW_AUTH` | *(auto)* | Preview hardening: on public instances anonymous previews (`preview=1` without a space or session) are downgraded and cached like normal requests (no bot bypass). Existing user spaces and unlocked sessions stay live. Auto-on on public instances (`PUBLIC_INSTANCE=1`, `HOSTED_BY=elfhosted`, `MULTI_USER=1`); `0` forces OFF, `1` forces ON. |
 | `PICTORIUM_FRAME_ANCESTORS` | *(HF default)* | Overrides the CSP `frame-ancestors` (default is HF Spaces compatible). E.g. `'self'` for public instances that should never be embedded. |
+| `PICTORIUM_IMAGE_FORMAT` | `jpeg` | Poster format for clients that declare no preference (generic `Accept`, almost all native Stremio apps): `jpeg` (safe everywhere) or `webp` (~25–30% lighter at equal quality, but some dated clients may not decode it). `?fmt=` remains a per-request override in both directions. Requires restart; switching invalidates the cache once. |
 
 ### Multi-User Mode
 

@@ -14,6 +14,11 @@ vi.mock("@/lib/poster-render-helpers", async (importOriginal) => {
 
 import { extractBadgeColor } from "@/lib/poster-render-helpers"
 import {
+  bottomLuminance,
+  extractSceneTint,
+  topLuminance,
+} from "@/lib/poster-render-helpers"
+import {
   backdropMetaCached,
   resizeBackdropCached,
   resizeLogoCached,
@@ -144,5 +149,57 @@ describe("backdropMetaCached (cache metadata backdrop)", () => {
     const backdrop = Buffer.from("not-an-image")
 
     await expect(backdropMetaCached(backdrop, "/b.jpg")).rejects.toThrow()
+  })
+})
+
+function solidPoster(color: string): Promise<Buffer> {
+  return sharp({
+    create: { width: 500, height: 750, channels: 3, background: color },
+  }).png().toBuffer()
+}
+
+describe("extractSceneTint + luminance (cache analisi pixel)", () => {
+  it("tint: same key reuses the first result even for different bytes", async () => {
+    const red = await solidPoster("#c02020")
+    const blue = await solidPoster("#2040c0")
+
+    const fromRed = await extractSceneTint(red, "Action", "test:tint:A")
+    const fromBlue = await extractSceneTint(blue, "Action", "test:tint:A")
+
+    // Cache hit per chiave, non per byte: il secondo non ricalcola
+    expect(fromBlue).toBe(fromRed)
+
+    // Sanity: senza cache i due solidi danno tinte diverse
+    // (altrimenti il test sopra sarebbe tautologico)
+    cacheClear()
+    const redFresh = await extractSceneTint(red, "Action", null)
+    const blueFresh = await extractSceneTint(blue, "Action", null)
+    expect(redFresh).toMatch(/^#[0-9a-f]{6}$/)
+    expect(blueFresh).toMatch(/^#[0-9a-f]{6}$/)
+    expect(redFresh).not.toBe(blueFresh)
+  })
+
+  it("luminance: same key reuses, different keys recompute", async () => {
+    const light = await solidPoster("#f0f0f0")
+    const dark = await solidPoster("#0a0a0a")
+
+    const l1 = await topLuminance(light, "test:lum:A")
+    const l2 = await topLuminance(dark, "test:lum:A")
+    expect(l2).toBe(l1) // hit, non ricalcolo
+
+    const l3 = await topLuminance(dark, "test:lum:B")
+    expect(l3).toBeLessThan(l1) // entry separata
+  })
+
+  it("luminance: null key always recomputes, bottom included", async () => {
+    const light = await solidPoster("#f0f0f0")
+    const dark = await solidPoster("#0a0a0a")
+
+    expect(await topLuminance(light, null)).toBeGreaterThan(0.9)
+    expect(await topLuminance(dark, null)).toBeLessThan(0.1)
+    const bDark = await bottomLuminance(dark, "test:lum:C")
+    expect(bDark).toBeLessThan(0.5)
+    // Stessa chiave, byte diversi → hit (vale il primo risultato)
+    expect(await bottomLuminance(light, "test:lum:C")).toBe(bDark)
   })
 })

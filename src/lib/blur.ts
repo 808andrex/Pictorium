@@ -21,6 +21,9 @@ import { STD_W, STD_H } from "./image-utils"
  *    - Curva scurimento: shade(u) = 1 - darkAlpha · u (lineare, discesa uniforme)
  *    - Blend sigma: smoothstep S(t) da sigmaLow a sigmaHigh (diffusione progressiva)
  *    - Tinta accento: lerp cromatico controllato (default 20%) verso accentColor
+ *    - Dithering ordinato Bayer 4x4 deterministico (±1 LSB su RGBA): rompe il
+ *      banding del gradiente scuro senza cambiare il valor medio locale.
+ *      Deterministico per (x, y) — mai Math.random (ETag/snapshot stabili).
  */
 export interface BlurParams {
   posterBuf: Buffer
@@ -44,6 +47,24 @@ export interface BlurOverlay {
   readonly top: number
   readonly height: number
 }
+
+/**
+ * Matrice di Bayer 4x4 ordinata (valori 0..15, riga per riga).
+ *
+ * Dithering DETERMINISTICO dell'overlay: il pattern è funzione pura di (x, y).
+ * Mai Math.random() qui: un dither stocastico produrrebbe byte diversi a ogni
+ * render dello stesso poster → ETag non deterministici, cache mai convergente
+ * e snapshot visivi flaky. Con Bayer lo stesso input dà sempre gli stessi byte.
+ */
+const BAYER_4X4 = [
+  0, 8, 2, 10,
+  12, 4, 14, 6,
+  3, 11, 1, 9,
+  15, 7, 13, 5,
+]
+
+/** Ampiezza dither in LSB: ±15/16 ≈ ±0.94, un livello di quantizzazione. */
+const DITHER_AMPLITUDE = 15 / 16
 
 function parseHexColor(hex?: string): { r: number; g: number; b: number } | null {
   if (!hex || !hex.startsWith("#") || hex.length !== 7) return null
@@ -115,7 +136,7 @@ export async function applyBlur(params: BlurParams): Promise<BlurOverlay | null>
 
     // Curva smoothstep per transizione opacità (niente stacchi al bordo)
     const smoothU = u * u * (3 - 2 * u)
-    const alpha = Math.round(smoothU * 255)
+    const alphaBase = smoothU * 255
 
     // Scurimento lineare (discesa uniforme, risposta proporzionale allo slider)
     const shade = 1 - darkAlpha * u
@@ -129,6 +150,8 @@ export async function applyBlur(params: BlurParams): Promise<BlurOverlay | null>
     const invTint = 1 - tintMix
 
     const rowOffset = y * canvasW
+    // Riga Bayer per il dithering ordinato (solo i 2 bit bassi contano)
+    const bayerRow = (y & 3) << 2
     for (let x = 0; x < canvasW; x++) {
       const si = (rowOffset + x) * 3
       const di = (rowOffset + x) * 4
@@ -143,10 +166,21 @@ export async function applyBlur(params: BlurParams): Promise<BlurOverlay | null>
         b = b * invTint + tint.b * tintMix
       }
 
-      overlay[di] = Math.min(255, Math.max(0, Math.round(r * shade)))
-      overlay[di + 1] = Math.min(255, Math.max(0, Math.round(g * shade)))
-      overlay[di + 2] = Math.min(255, Math.max(0, Math.round(b * shade)))
-      overlay[di + 3] = alpha
+      // Dithering ordinato anti-banding: il gradiente scuro ha <1 livello
+      // di luminanza per pixel e il JPEG quantizza i blocchi 8x8 allo stesso
+      // valore medio → bande orizzontali. Un rumore deterministico di ±1 LSB
+      // disperde la quantizzazione senza cambiare il valore medio locale.
+      // Stesso valore sui 3 canali (niente speckle cromatico, la tinta resta).
+      const dither = (BAYER_4X4[bayerRow | (x & 3)]! - 7.5) / 8 * DITHER_AMPLITUDE
+
+      overlay[di] = Math.min(255, Math.max(0, Math.round(r * shade + dither)))
+      overlay[di + 1] = Math.min(255, Math.max(0, Math.round(g * shade + dither)))
+      overlay[di + 2] = Math.min(255, Math.max(0, Math.round(b * shade + dither)))
+      // L'alpha si dithera solo all'interno del gradiente: agli estremi esatti
+      // (0 in alto per il bleed senza cuciture, 255 in basso) non c'è errore di
+      // quantizzazione da decorrelare — il rumore lì sarebbe solo rumore.
+      const alphaDither = alphaBase > 0 && alphaBase < 255 ? dither : 0
+      overlay[di + 3] = Math.min(255, Math.max(0, Math.round(alphaBase + alphaDither)))
     }
   }
 

@@ -147,6 +147,19 @@ const FORMAT_MIME_TYPES: Record<PosterImageFormat, string> = {
   avif: "image/avif",
 }
 
+// Formato servito ai client che non dichiarano preferenze (Accept generico
+// `*/*` o assente — quasi tutti i client Stremio nativi). Storico `jpeg`;
+// `PICTORIUM_IMAGE_FORMAT=webp` lo sposta su webp (opt-in operatore, come
+// PostersPlus IMAGE_FORMAT). Lettura a module level: cambio = restart.
+// `?fmt=` resta override esplicito in entrambi i sensi (via di fuga per
+// client che non digeriscono il default). Solo `webp` abilita il default
+// alternativo: qualsiasi altro valore (incluso `avif`, che costa 3-5×
+// in encode) ricade sul jpeg sicuro.
+export const DEFAULT_IMAGE_FORMAT: Exclude<PosterImageFormat, "avif"> = (() => {
+  const raw = envWithFallback("IMAGE_FORMAT")
+  return raw && raw.trim().toLowerCase() === "webp" ? "webp" : "jpeg"
+})()
+
 export function resolveImageFormat(acceptHeader?: string | null, queryFmt?: string | null): PosterImageFormat {
   if (queryFmt) {
     const q = queryFmt.toLowerCase()
@@ -157,26 +170,37 @@ export function resolveImageFormat(acceptHeader?: string | null, queryFmt?: stri
     if (q === "avif") return "avif"
     if (q === "jpeg" || q === "jpg") return "jpeg"
   }
-  if (!acceptHeader) return "jpeg"
+  if (!acceptHeader) return DEFAULT_IMAGE_FORMAT
   const accept = acceptHeader.toLowerCase()
   if (accept.includes("image/webp")) return "webp"
-  return "jpeg"
+  return DEFAULT_IMAGE_FORMAT
 }
 
 // C3: conversione jpeg canonico → webp on-the-fly. Stesse opzioni
-// dell'encode webp diretto in poster-service (q80, effort 2): byte non
+// dell'encode webp diretto in poster-service (q85, effort 2): byte non
 // identici al render diretto (doppia compressione), ma stessa qualità
 // percepita — il webp esiste solo come variante di risposta, mai come chiave
 // di render. ~20-50ms contro ~2-8s di re-render completo.
+// Con PICTORIUM_IMAGE_FORMAT=webp il verso si inverte (canonico webp,
+// variante jpeg): vedi convertToJpeg sotto.
 export async function convertPosterFormat(jpeg: Buffer): Promise<Buffer> {
   const sharp = (await import("sharp")).default
-  return sharp(jpeg).webp({ quality: 80, effort: 2 }).toBuffer()
+  return sharp(jpeg).webp({ quality: 85, effort: 2 }).toBuffer()
 }
 
-/** ETag deterministico della variante webp derivato da quello canonico. */
-export function variantEtagFor(canonicalEtag: string): string {
+/** Conversione inversa (canonico webp → variante jpeg): stesse opzioni
+ *  dell'encode jpeg diretto in poster-service (q82 + mozjpeg). */
+export async function convertToJpeg(webp: Buffer): Promise<Buffer> {
+  const sharp = (await import("sharp")).default
+  return sharp(webp).jpeg({ quality: 82, mozjpeg: true }).toBuffer()
+}
+
+/** ETag deterministico della variante derivato da quello canonico. Il default
+ *  `webp` conserva gli etag storici byte-identici; le varianti jpeg usano
+ *  suffisso proprio (mai collisione col canonico né tra varianti). */
+export function variantEtagFor(canonicalEtag: string, variant: Exclude<PosterImageFormat, "avif"> = "webp"): string {
   let h = 0x811c9dc5
-  const s = `${canonicalEtag}:webp`
+  const s = `${canonicalEtag}:${variant}`
   for (let i = 0; i < s.length; i++) {
     h ^= s.charCodeAt(i)
     h = Math.imul(h, 0x01000193)

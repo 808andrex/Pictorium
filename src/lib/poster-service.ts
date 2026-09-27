@@ -174,6 +174,13 @@ export interface GenerationInput {
   imdbTop250?: boolean
   /** Path sorgente del poster (cache image-level). Assente → niente cache. */
   posterSrc?: string | null
+  /**
+   * Chiave analisi pixel (luminance/tinta) costruita dalla route: identifica i
+   * byte effettivi della base (`portrait:poster:…`, `landscape:backdrop:…`,
+   * `landscape:pillarbox:…`), non il path nominale — pillarbox e backdrop
+   * derivano da sorgenti diverse a parità di path. Assente → ricalcolo diretto.
+   */
+  analysisKey?: string | null
   /** Formato di output negoziazione Accept (jpeg | webp | avif). Default: jpeg. */
   format?: PosterImageFormat
   /** Path sorgente del logo (cache image-level). Assente → niente cache. */
@@ -582,7 +589,7 @@ export async function generatePosterBuffer(input: GenerationInput): Promise<Buff
     lastAirDate, seasonCount, originCountries,
     wikidataResult, tmdbKeywords, locale, t,
     qLabel, queryExtra, qNetLogo, networkLogo, sd, accentOverride, imdbTop250,
-    logoSrc, backdropSrc,
+    logoSrc, backdropSrc, analysisKey,
     preRelease = false,
     hideLogo = false,
     logoScrimDisabled,
@@ -652,7 +659,7 @@ export async function generatePosterBuffer(input: GenerationInput): Promise<Buff
   // sicurezza: fallback genere/grigio. resolveBadgeColors resta esportata e
   // testata ma non è più sul path render.
   const sceneTintHex = (blurEnabled || hasGenreBadge || rankingEnabled)
-    ? await extractSceneTint(posterBuf, genreName)
+    ? await extractSceneTint(posterBuf, genreName, analysisKey ? `${analysisKey}:${genreName ?? "x"}` : null)
     : null
 
   const accentColorGenre = accentOverride?.genreColor ?? sceneTintHex ?? (GENRE_FALLBACK[genreName || ""] || "#555555")
@@ -1311,15 +1318,13 @@ export async function generatePosterBuffer(input: GenerationInput): Promise<Buff
 
   // Il blur è un overlay RGBA grezzo (nessun PNG intermedio): entra come primo
   // layer, sotto backdrop/vignetta/badge — stesso ordine del vecchio blur "cotto"
-  // nella base. Il modulate sulla base (posterBuf) vive nella stessa pipeline del
-  // composite finale → 1 decode + 1 encode totali invece del roundtrip PNG
-  // blur→modulate (che ri-decodava il PNG del blur a ogni render).
+  // nella base. La base (posterBuf) non subisce ritocchi colore: niente modulate,
+  // l'artwork TMDB passa invariato nel composite finale.
   const layers: Array<PosterComposite | { input: Buffer; raw: { width: number; height: number; channels: 4 }; top: number; left: number }> = blurOverlay
     ? [{ input: blurOverlay.overlay, raw: { width: CW, height: blurOverlay.height, channels: 4 }, top: blurOverlay.top, left: 0 }, ...safeComposites]
     : safeComposites
 
   let pipeline = sharp(posterBuf)
-    .modulate({ brightness: 1.01, saturation: 1.06 })
 
   if (showComingSoon) {
     pipeline = pipeline.blur(PRE_RELEASE_BLUR_SIGMA)
@@ -1331,7 +1336,7 @@ export async function generatePosterBuffer(input: GenerationInput): Promise<Buff
     return await pipeline.avif({ quality: 75, effort: 2 }).toBuffer()
   }
   if (input.format === "webp") {
-    return await pipeline.webp({ quality: 80, effort: 2 }).toBuffer()
+    return await pipeline.webp({ quality: 85, effort: 2 }).toBuffer()
   }
-  return await pipeline.jpeg({ quality: 70 }).toBuffer()
+  return await pipeline.jpeg({ quality: 82, mozjpeg: true }).toBuffer()
 }

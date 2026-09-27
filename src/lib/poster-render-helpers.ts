@@ -1,5 +1,6 @@
 import crypto from "node:crypto"
 import sharp from "sharp"
+import { cacheGet, cacheSet } from "./cache"
 import { findAccentColor, findSceneTint } from "@/lib/accent-color"
 import { GENRE_FALLBACK } from "@/lib/badges"
 import { ARTWORKS_BASE } from "@/lib/tvdb"
@@ -25,6 +26,16 @@ export type PosterComposite = { input: Buffer; top: number; left: number }
 export function hashKey(key: string): string {
   return crypto.createHash("md5").update(key).digest("hex").slice(0, 16)
 }
+
+// Cache delle analisi pixel (luminance top/bottom, tinta di scena): come gli
+// altri image-level cache, vive 24h sotto il tag "poster-extract" e la chiave
+// identifica i byte sorgente (path TMDB immutabili per path + derivazione:
+// portrait/backdrop/pillarbox). Nessun cambio dell'output: stessi byte in
+// ingresso → stessi numeri in uscita, solo calcolati una volta per titolo
+// invece che a ogni variante di cache key poster. Chiave null → ricalcolo
+// diretto senza cache (mai poison da byte non identificati).
+const ANALYSIS_CACHE_TTL = 24 * 60 * 60 * 1000
+const ANALYSIS_CACHE_TAG = "poster-extract"
 
 export async function fetchImg(url: string, signal?: AbortSignal): Promise<Buffer> {
   // Se il chiamante passa un signal esterno, unirlo al timeout interno invece
@@ -115,11 +126,15 @@ export async function fitCompositeToCanvas(
  * and skipped alpha removal; computeRegionStats uses RGB stride-3 with
  * unrounded Rec.709 luminance. This is why RENDER_VERSION was bumped.
  */
-export async function topLuminance(buf: Buffer): Promise<number> {
+export async function topLuminance(buf: Buffer, cacheKey?: string | null): Promise<number> {
+  const key = cacheKey ? `lum:top:${cacheKey}` : null
+  const hit = key ? cacheGet<number>(key) : null
+  if (hit !== null) return hit
   const stripH = Math.max(Math.round(STD_H * 0.08), 3)
   const stats = await computeRegionStats(buf, 0, 0, STD_W, stripH)
-  if (!stats) return 0.5 // fallback: medium luminance
-  return stats.mean / 255
+  const lum = stats ? stats.mean / 255 : 0.5 // fallback: medium luminance
+  if (key) cacheSet(key, lum, [ANALYSIS_CACHE_TAG], ANALYSIS_CACHE_TTL)
+  return lum
 }
 
 /**
@@ -128,11 +143,15 @@ export async function topLuminance(buf: Buffer): Promise<number> {
  * (bottomLight), che non può riusare il top su poster con alto chiaro e
  * fondo scuro. Stesso pool di computeRegionStats, stessa metrica.
  */
-export async function bottomLuminance(buf: Buffer): Promise<number> {
+export async function bottomLuminance(buf: Buffer, cacheKey?: string | null): Promise<number> {
+  const key = cacheKey ? `lum:bottom:${cacheKey}` : null
+  const hit = key ? cacheGet<number>(key) : null
+  if (hit !== null) return hit
   const stripH = Math.max(Math.round(STD_H * 0.08), 3)
   const stats = await computeRegionStats(buf, 0, STD_H - stripH, STD_W, stripH)
-  if (!stats) return 0.5 // fallback: medium luminance
-  return stats.mean / 255
+  const lum = stats ? stats.mean / 255 : 0.5 // fallback: medium luminance
+  if (key) cacheSet(key, lum, [ANALYSIS_CACHE_TAG], ANALYSIS_CACHE_TTL)
+  return lum
 }
 
 // B3: memo decode condivisi per extractBadgeColor (chiamato 2× — top+bottom —
@@ -236,8 +255,12 @@ export async function extractBadgeColor(
 export async function extractSceneTint(
   posterBuf: Buffer,
   fallbackGenre?: string | null,
+  cacheKey?: string | null,
 ): Promise<string> {
   const defaultFallback = fallbackGenre ? (GENRE_FALLBACK[fallbackGenre] || "#555555") : "#555555"
+  const key = cacheKey ? `tint:${cacheKey}:${fallbackGenre ?? "x"}` : null
+  const hit = key ? cacheGet<string>(key) : null
+  if (hit !== null) return hit
   try {
     const thumbBuf = await posterThumb(posterBuf)
     const posterW = 200
@@ -245,7 +268,9 @@ export async function extractSceneTint(
 
     const pixels = await sharp(thumbBuf).ensureAlpha().raw().toBuffer()
     const tint = findSceneTint(pixels, posterW, posterH, fallbackGenre || "")
-    return `#${tint.r.toString(16).padStart(2, "0")}${tint.g.toString(16).padStart(2, "0")}${tint.b.toString(16).padStart(2, "0")}`
+    const hex = `#${tint.r.toString(16).padStart(2, "0")}${tint.g.toString(16).padStart(2, "0")}${tint.b.toString(16).padStart(2, "0")}`
+    if (key) cacheSet(key, hex, [ANALYSIS_CACHE_TAG], ANALYSIS_CACHE_TTL)
+    return hex
   } catch {
     return defaultFallback
   }

@@ -290,12 +290,79 @@ describe("poster image format negotiation (WebP / AVIF)", () => {
     expect(meta.height).toBe(16)
   })
 
-  it("derives a deterministic variant etag distinct from the canonical one", () => {
+  it("converts canonical webp back to jpeg with matching encoder options", async () => {
+    const sharp = (await import("sharp")).default
+    const { convertToJpeg } = await import("@/lib/poster-runtime-cache")
+    const webp = await sharp({ create: { width: 16, height: 16, channels: 3, background: { r: 30, g: 200, b: 120 } } })
+      .webp({ quality: 85 })
+      .toBuffer()
+    const jpeg = await convertToJpeg(webp)
+    // Magic bytes JPEG: FF D8 FF
+    expect(jpeg[0]).toBe(0xff)
+    expect(jpeg[1]).toBe(0xd8)
+    expect(jpeg[2]).toBe(0xff)
+    const meta = await sharp(jpeg).metadata()
+    expect(meta.format).toBe("jpeg")
+    expect(meta.width).toBe(16)
+    expect(meta.height).toBe(16)
+  })
+
+  it("derives distinct deterministic etags per variant kind", () => {
     const canonical = "\"abc123\""
-    const variant = variantEtagFor(canonical)
-    expect(variant).not.toBe(canonical)
-    expect(variant).toBe(variantEtagFor(canonical))
-    expect(variant.startsWith("\"") && variant.endsWith("\"")).toBe(true)
+    const webpVariant = variantEtagFor(canonical)
+    const jpegVariant = variantEtagFor(canonical, "jpeg")
+    // Default resta l'etag webp storico (byte-identico al passato)
+    expect(webpVariant).toBe(variantEtagFor(canonical, "webp"))
+    expect(jpegVariant).not.toBe(canonical)
+    expect(jpegVariant).not.toBe(webpVariant)
+    expect(jpegVariant).toBe(variantEtagFor(canonical, "jpeg"))
+    for (const tag of [webpVariant, jpegVariant]) {
+      expect(tag.startsWith("\"") && tag.endsWith("\"")).toBe(true)
+    }
+  })
+
+  describe("PICTORIUM_IMAGE_FORMAT default (opt-in operatore)", () => {
+    afterEach(() => {
+      vi.unstubAllEnvs()
+      vi.resetModules()
+    })
+
+    async function resolveWithEnv(env: string | undefined) {
+      if (env === undefined) vi.stubEnv("PICTORIUM_IMAGE_FORMAT", "")
+      else vi.stubEnv("PICTORIUM_IMAGE_FORMAT", env)
+      vi.resetModules()
+      const fresh = await import("@/lib/poster-runtime-cache")
+      expect(fresh.DEFAULT_IMAGE_FORMAT).toBeDefined()
+      return fresh
+    }
+
+    it("defaults to jpeg without env (comportamento storico)", async () => {
+      const fresh = await resolveWithEnv(undefined)
+      expect(fresh.DEFAULT_IMAGE_FORMAT).toBe("jpeg")
+      expect(fresh.resolveImageFormat(null)).toBe("jpeg")
+      expect(fresh.resolveImageFormat("*/*")).toBe("jpeg")
+      expect(fresh.resolveImageFormat("image/avif")).toBe("jpeg")
+    })
+
+    it("serves webp to generic clients with PICTORIUM_IMAGE_FORMAT=webp", async () => {
+      const fresh = await resolveWithEnv("webp")
+      expect(fresh.DEFAULT_IMAGE_FORMAT).toBe("webp")
+      expect(fresh.resolveImageFormat(null)).toBe("webp")
+      expect(fresh.resolveImageFormat("*/*")).toBe("webp")
+      // Accept esplicito webp resta webp; ?fmt=jpeg resta via di fuga
+      expect(fresh.resolveImageFormat("image/webp")).toBe("webp")
+      expect(fresh.resolveImageFormat("*/*", "jpeg")).toBe("jpeg")
+      expect(fresh.resolveImageFormat(null, "jpg")).toBe("jpeg")
+      expect(fresh.resolveImageFormat(null, "avif")).toBe("avif")
+    })
+
+    it("falls back to jpeg on invalid values (mai avif implicito)", async () => {
+      for (const bad of ["avif", "png", "bogus"]) {
+        const fresh = await resolveWithEnv(bad)
+        expect(fresh.DEFAULT_IMAGE_FORMAT).toBe("jpeg")
+        expect(fresh.resolveImageFormat(null)).toBe("jpeg")
+      }
+    })
   })
 })
 

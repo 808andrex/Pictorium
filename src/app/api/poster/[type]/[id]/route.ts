@@ -40,6 +40,7 @@ import {
   posterNotModifiedHeaders,
   posterResponse,
   convertPosterFormat,
+  convertToJpeg,
   variantEtagFor,
   dynamicPosterTtlSec,
   readCachedPoster,
@@ -56,6 +57,7 @@ import {
   recordBackdropCropRescue,
   serverTimingValue,
   resolveImageFormat,
+  DEFAULT_IMAGE_FORMAT,
   type PosterCachePayload,
   type PosterErrorStatus,
 } from "@/lib/poster-runtime-cache"
@@ -435,12 +437,17 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
   const mapVersion = mapping?.updatedAt ? `:mu${mapping.updatedAt}` : ""
   const configHash = configOverride ? hashKey(JSON.stringify(configOverride)) : ""
   const outputFormat = resolveImageFormat(req.headers.get("accept"), req.nextUrl.searchParams.get("fmt") || req.nextUrl.searchParams.get("format"))
-  // C3: render canonico jpeg (il webp è variante di risposta convertita
-  // on-the-fly); solo ?fmt=avif esplicito mantiene chiave+render dedicati.
+  // C3: un solo render canonico per chiave (jpeg storico, webp con
+  // PICTORIUM_IMAGE_FORMAT=webp); gli altri formati sono varianti di risposta
+  // convertite on-the-fly. Solo ?fmt=avif esplicito mantiene chiave+render
+  // dedicati. Il marcatore di formato in chiave evita poison al flip env
+  // (stessa chiave + formato diverso = buffer col Content-Type sbagliato).
   const legacyAvif = outputFormat === "avif"
-  const formatKey = legacyAvif ? ":fmtavif" : ""
+  const canonicalFormat = legacyAvif ? "avif" : DEFAULT_IMAGE_FORMAT
+  const formatKey = legacyAvif ? ":fmtavif" : canonicalFormat === "webp" ? ":fmtwebp" : ""
   const cacheKey = `poster:v${RENDER_VERSION}:${mediaType}:${tmdbId}:reg${posterRegion.code}:r${cachedRank ?? "x"}:sd${sdHash}:${cacheParams.toString()}${rotateKey}${mapVersion}${configHash ? `:cfg${configHash}` : ""}${formatKey}`
-  const variantKey = outputFormat === "webp" ? `${cacheKey}:fmtwebp` : cacheKey
+  const needsVariant = !legacyAvif && outputFormat !== canonicalFormat
+  const variantKey = needsVariant ? `${cacheKey}:fmt${outputFormat}` : cacheKey
   const etagBase = hashKey(`v${RENDER_VERSION}:${mediaType}:${tmdbId}:reg${posterRegion.code}:r${cachedRank ?? "x"}:sd${sdHash}:${cacheParams.toString()}${configHash ? `:${configHash}` : ""}`)
   const currentMappingVersion = mappingVersionParam(mapping)
   // Rating dinamici: con provider abilitato niente cache immutable annuale
@@ -463,20 +470,20 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
   const mappingTag = mapping ? `poster:${mediaType}:${tmdbId}${scopedUser ? `:${userTagFragment(scopedUser)}` : ""}` : undefined
   // TTL reale della entry canonica (jitter deterministico ±10%): threadato
   // negli header così restano sincronizzati con lo storage (M3). La variante
-  // webp ha storage key propria → TTL proprio (vedi serveWebpVariant).
+  // ha storage key propria → TTL proprio (vedi serveResponseVariant).
   const dynamicTtlSec = dynamicPoster ? dynamicPosterTtlSec(cacheKey) : undefined
-  // La variante webp è un'entry separata (storage key propria) con TTL proprio.
-  const variantTtlSec = dynamicPoster && outputFormat === "webp" ? dynamicPosterTtlSec(variantKey) : undefined
+  // La variante è un'entry separata (storage key propria) con TTL proprio.
+  const variantTtlSec = dynamicPoster && needsVariant ? dynamicPosterTtlSec(variantKey) : undefined
 
-  // C3: risposta webp da payload canonico jpeg (cache variante o conversione).
+  // C3: risposta non-canonica da payload canonico (cache variante o conversione).
   // opts (ttlMs/immutable) dal fresh render effimero; sulle HIT riuso record.
-  const serveWebpVariant = async (canonical: PosterCachePayload, opts?: { ttlMs?: number; immutable?: boolean }): Promise<Response> => {
+  const serveResponseVariant = async (canonical: PosterCachePayload, opts?: { ttlMs?: number; immutable?: boolean }): Promise<Response> => {
     const variantHit = readCachedPoster(variantKey)
     if (variantHit.payload) {
       return posterResponse(variantHit.payload, variantHit.immutable ?? immutablePoster, isPreview, dynamicPoster, outputFormat, variantHit.ttlSec ?? variantTtlSec)
     }
-    const converted = await convertPosterFormat(canonical.buffer)
-    const variant: PosterCachePayload = { buffer: converted, etag: variantEtagFor(canonical.etag) }
+    const converted = canonicalFormat === "webp" ? await convertToJpeg(canonical.buffer) : await convertPosterFormat(canonical.buffer)
+    const variant: PosterCachePayload = { buffer: converted, etag: variantEtagFor(canonical.etag, outputFormat as "jpeg" | "webp") }
     // Le preview editor (`preview=1`, ogni tick di slider) non sporcano lo
     // storage: la chiave le separa già, ma scrivere ogni tick è flood.
     if (!isPreview) writeCachedPoster(variantKey, variant, mappingTag, opts)
@@ -485,9 +492,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
   }
 
   // 3. Memory cache check
-  // C3: la variante webp ha fast-path dedicato; il canonico jpeg resta il
+  // C3: la variante ha fast-path dedicato; il canonico resta il
   // fallback (conversione) quando la variante è assente/evicted.
-  if (outputFormat === "webp" && !refreshRequest) {
+  if (needsVariant && !refreshRequest) {
     const variantHit = readCachedPoster(variantKey)
     if (variantHit.payload) {
       recordPosterRequest(true, outputFormat)
@@ -509,14 +516,14 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
   const cachedPoster = readCachedPoster(cacheKey)
   if (cachedPoster.payload) {
     recordPosterRequest(true, outputFormat)
-    if (!isPreview && outputFormat !== "webp" && req.headers.get("If-None-Match") === cachedPoster.payload.etag) {
+    if (!isPreview && !needsVariant && req.headers.get("If-None-Match") === cachedPoster.payload.etag) {
       if (cachedPoster.stale) recordPosterStaleHit()
       log.debug("Poster cache: 304", { mediaType, tmdbId, ms: Date.now() - startTime })
         return new Response(null, { status: 304, headers: posterNotModifiedHeaders(cachedPoster.payload.etag, cachedPoster.immutable ?? immutablePoster, dynamicPoster, cachedPoster.ttlSec ?? dynamicTtlSec) })
     }
     if (!cachedPoster.stale) {
       log.debug("Poster cache: fresh hit", { mediaType, tmdbId, ms: Date.now() - startTime })
-      if (outputFormat === "webp") return serveWebpVariant(cachedPoster.payload)
+      if (needsVariant) return serveResponseVariant(cachedPoster.payload)
       return posterResponse(cachedPoster.payload, cachedPoster.immutable ?? immutablePoster, isPreview, dynamicPoster, outputFormat, cachedPoster.ttlSec ?? dynamicTtlSec,
         serverTimingValue([{ name: "cache", desc: "HIT" }, { name: "total", durMs: Date.now() - startTime }]))
     }
@@ -524,7 +531,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
       recordPosterStaleHit()
       schedulePosterRefresh(req, isPreview)
       log.debug("Poster cache: stale hit (refresh scheduled)", { mediaType, tmdbId, ms: Date.now() - startTime })
-      if (outputFormat === "webp") return serveWebpVariant(cachedPoster.payload)
+      if (needsVariant) return serveResponseVariant(cachedPoster.payload)
       return posterResponse(cachedPoster.payload, cachedPoster.immutable ?? immutablePoster, isPreview, dynamicPoster, outputFormat, cachedPoster.ttlSec ?? dynamicTtlSec)
     }
   }
@@ -547,8 +554,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
       recordPosterCoalescedHit()
       // Finding 5: il waiter della preview deve ricevere gli header no-store
       // anche quando si coalesce con un render in flight (era hardcoded false).
-      // C3: il payload condiviso è canonico jpeg — il waiter webp converte.
-      if (outputFormat === "webp" && !legacyAvif) return serveWebpVariant(payload)
+      // C3: il payload condiviso è canonico — il waiter non-canonico converte.
+      if (needsVariant) return serveResponseVariant(payload)
       return posterResponse(payload, immutablePoster, isPreview, dynamicPoster, outputFormat, dynamicTtlSec)
     }
     // Coalesce scaduto: o il render è fallito (negative cache) o è ancora in
@@ -1461,6 +1468,16 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
     const qTopLight = req.nextUrl.searchParams.get("tl")
     const qBottomLight = req.nextUrl.searchParams.get("bl")
 
+    // Chiave analisi pixel (luminance/tinta di scena): identifica i byte
+    // effettivi della base, non il path nominale. Il pillarbox landscape deriva
+    // dal poster e il resize backdrop dal backdrop: a parità di path sono byte
+    // diversi e devono restare entry separate. Null → ricalcolo senza cache.
+    const analysisKey = !isLandscape
+      ? (posterPath ? `portrait:poster:${posterPath}` : null)
+      : backdropFetch
+        ? (backdropPath ? `landscape:backdrop:${backdropPath}` : null)
+        : (posterPath ? `landscape:pillarbox:${posterPath}` : null)
+
     // Apply mapping TV metadata (synchronous — no race, no side-effects in parallel closures)
     if (mapping?.tvType) tvType = mapping.tvType
     if (mapping?.tvStatus) tvStatus = mapping.tvStatus
@@ -1472,11 +1489,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
       customRatingConfig.enabled ? fetchCustomRatings(imdbId, customRatingConfig, renderAbort.signal) : Promise.resolve([]),
       (async (): Promise<number | null> => {
         if (qTopLight === "1" || qTopLight === "0" || qTopLight === "true" || qTopLight === "false") return null
-        return await topLuminance(posterBuf)
+        return await topLuminance(posterBuf, analysisKey)
       })(),
       (async (): Promise<number | null> => {
         if (qBottomLight === "1" || qBottomLight === "0" || qBottomLight === "true" || qBottomLight === "false") return null
-        return await bottomLuminance(posterBuf)
+        return await bottomLuminance(posterBuf, analysisKey)
       })(),
       (tmdbNetworks.length === 0 && productionCompanies.length === 0)
           ? (async () => {
@@ -1782,10 +1799,12 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
       logoAlign,
       hideLogo,
       posterSrc: isLandscape ? backdropPath : posterPath,
+      analysisKey,
       logoSrc: logoPath,
       backdropSrc: isLandscape ? null : backdropPath,
-      // C3: render sempre canonico jpeg (tranne ?fmt=avif legacy esplicito).
-      format: legacyAvif ? outputFormat : "jpeg",
+      // C3: render sempre canonico (jpeg storico, webp con
+      // PICTORIUM_IMAGE_FORMAT=webp; avif solo ?fmt=avif legacy esplicito).
+      format: legacyAvif ? outputFormat : canonicalFormat,
     }
     if (renderAbort.signal.aborted) {
       throw new Error("Render deadline exceeded before poster compositing")
@@ -1818,13 +1837,13 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
     completePosterRender(payload)
     recordPosterRequest(false, outputFormat)
     // Enabled enrichment must revalidate against the final state, including [].
-    const responseEtag = outputFormat === "webp" ? variantEtagFor(etag) : etag
+    const responseEtag = needsVariant ? variantEtagFor(etag, outputFormat as "jpeg" | "webp") : etag
     if (customRatingConfig.enabled && !isPreview && req.headers.get("If-None-Match") === responseEtag) {
       return new Response(null, { status: 304, headers: posterNotModifiedHeaders(responseEtag, effectiveImmutable, dynamicPoster, effectiveTtlSec) })
     }
     log.info("Poster rendered", { mediaType, tmdbId, ms: Date.now() - startTime, bytes: composited.byteLength, cached: !!mappingTag, format: outputFormat, fetchMs: tFetchMs, prepMs: tCompositeStart - startTime - tFetchMs, compositeMs: Date.now() - tCompositeStart })
-    // C3: il webp è variante di risposta (convertita + cachata), non un render.
-    if (outputFormat === "webp") return serveWebpVariant(payload, ephemeralTtl ? { ttlMs: QUALITY_EPHEMERAL_TTL_SEC * 1000, immutable: false } : { immutable: immutablePoster })
+    // C3: il non-canonico è variante di risposta (convertita + cachata), non un render.
+    if (needsVariant) return serveResponseVariant(payload, ephemeralTtl ? { ttlMs: QUALITY_EPHEMERAL_TTL_SEC * 1000, immutable: false } : { immutable: immutablePoster })
     const renderHeaders = {
       ...posterHeaders(etag, effectiveImmutable, isPreview, dynamicPoster, outputFormat, effectiveTtlSec),
       "Server-Timing": serverTimingValue([
