@@ -9,7 +9,25 @@ const fakeState = vi.hoisted(() => ({
   strings: new Map<string, string>(),
   sets: new Map<string, Set<string>>(),
   zsets: new Map<string, Map<string, number>>(),
+  evalQueue: [] as Array<{ type: "reply"; value: unknown } | { type: "throw"; error: unknown }>,
 }))
+
+/** Focused-test control: next eval() returns/throws the queued outcome once. */
+function queueEvalReply(value: unknown): void {
+  fakeState.evalQueue.push({ type: "reply", value })
+}
+
+/** Focused-test control: next eval() throws (e.g. KvTimeoutError propagation). */
+function queueEvalThrow(error: unknown): void {
+  fakeState.evalQueue.push({ type: "throw", error })
+}
+
+// generateBadgePresetId stays real by default (passthrough mock) so the id
+// collision test can queue a taken id once without affecting other tests.
+vi.mock("@/lib/badge-preset", async (importOriginal) => {
+  const orig = await importOriginal<typeof import("@/lib/badge-preset")>()
+  return { ...orig, generateBadgePresetId: vi.fn(() => orig.generateBadgePresetId()) }
+})
 
 vi.mock("ioredis", () => {
   class FakeRedis {
@@ -92,6 +110,60 @@ vi.mock("ioredis", () => {
       const v = fakeState.zsets.get(key)?.get(member)
       return v === undefined ? null : String(v)
     }
+    /**
+     * Modeled Lua execution: the whole check-then-write transition runs
+     * synchronously (no await between check and write), so concurrent evals
+     * cannot interleave — exactly the atomicity a real Redis EVAL provides.
+     * This models the engine, it is not the engine; only the known
+     * preset-save script is accepted (anything else throws).
+     */
+    async eval(script: string, numKeys: number, ...keysAndArgs: string[]): Promise<unknown> {
+      // Focused-test override (malformed reply / transport error): consumed
+      // once, then the modeled Lua path below runs unchanged.
+      if (fakeState.evalQueue.length > 0) {
+        const next = fakeState.evalQueue.shift()!
+        if (next.type === "throw") throw next.error
+        return next.value
+      }
+      if (!script.includes("pictorium:preset-save:v1") || numKeys !== 4) {
+        throw new Error("unsupported script in fake eval")
+      }
+      const keys = keysAndArgs.slice(0, numKeys)
+      const args = keysAndArgs.slice(numKeys)
+      if (keys.length !== 4 || args.length !== 5) throw new Error("unsupported preset-save args in fake eval")
+      const [presetK, indexK, dlK, createdK] = keys
+      const [maxRaw, id, json, pubFlag, createdRaw] = args
+      if (fakeState.strings.has(indexK) || fakeState.zsets.has(indexK)) return 3
+      if (pubFlag === "1") {
+        for (const zk of [dlK, createdK]) {
+          if (fakeState.strings.has(zk) || fakeState.sets.has(zk)) return 3
+        }
+      }
+      if ((fakeState.sets.get(indexK)?.size ?? 0) >= parseInt(maxRaw, 10)) return 1
+      if (fakeState.strings.has(presetK)) return 2
+      fakeState.strings.set(presetK, json)
+      let set = fakeState.sets.get(indexK)
+      if (!set) {
+        set = new Set()
+        fakeState.sets.set(indexK, set)
+      }
+      set.add(id)
+      if (pubFlag === "1") {
+        let dl = fakeState.zsets.get(dlK)
+        if (!dl) {
+          dl = new Map()
+          fakeState.zsets.set(dlK, dl)
+        }
+        dl.set(id, 0)
+        let created = fakeState.zsets.get(createdK)
+        if (!created) {
+          created = new Map()
+          fakeState.zsets.set(createdK, created)
+        }
+        created.set(id, Number(createdRaw))
+      }
+      return 0
+    }
     async quit(): Promise<string> {
       return "OK"
     }
@@ -148,6 +220,7 @@ function clearFakeKv(): void {
   fakeState.strings.clear()
   fakeState.sets.clear()
   fakeState.zsets.clear()
+  fakeState.evalQueue.length = 0
 }
 
 async function freshFileDir(): Promise<string> {
@@ -228,6 +301,93 @@ describe("badge-preset-store (KV backend)", () => {
     const owner = randomUUID()
     for (let i = 0; i < 100; i++) await savePreset(owner, makeInput({ visibility: "private" }))
     await expect(savePreset(owner, makeInput({ visibility: "private" }))).rejects.toBeInstanceOf(PresetQuotaError)
+  })
+
+  it("rejects at exactly 100 without writing anything (private and public)", async () => {
+    const owner = randomUUID()
+    const indexKey = `pictorium:user:${owner}:presets`
+    const seeds = Array.from({ length: 100 }, (_, i) => `seed-preset-${i}`)
+    fakeState.sets.set(indexKey, new Set(seeds))
+    const stringsBefore = fakeState.strings.size
+    const dlKey = "pictorium:presets:public:downloads"
+    const createdKey = "pictorium:presets:public:created"
+    const dlBefore = fakeState.zsets.get(dlKey)?.size ?? 0
+    const createdBefore = fakeState.zsets.get(createdKey)?.size ?? 0
+    for (const visibility of ["private", "public"] as const) {
+      const err = await savePreset(owner, makeInput({ visibility })).then(
+        () => null,
+        (e: unknown) => e,
+      )
+      expect(err).toBeInstanceOf(PresetQuotaError)
+      expect((err as PresetQuotaError).max).toBe(100)
+    }
+    // No side effects: index still exactly the 100 seeds, no preset JSON or
+    // public ranking entries written.
+    expect(fakeState.sets.get(indexKey)).toEqual(new Set(seeds))
+    expect(fakeState.strings.size).toBe(stringsBefore)
+    expect(fakeState.zsets.get(dlKey)?.size ?? 0).toBe(dlBefore)
+    expect(fakeState.zsets.get(createdKey)?.size ?? 0).toBe(createdBefore)
+  })
+
+  it("stores the preset as explicit JSON that reads back identically", async () => {
+    const owner = randomUUID()
+    const stored = await savePreset(owner, makeInput())
+    const raw = fakeState.strings.get(`pictorium:preset:${stored.preset.id}`)
+    expect(raw).toBe(JSON.stringify(stored.preset))
+    expect(JSON.parse(raw as string)).toEqual(stored.preset)
+  })
+
+  it("retries on id collision without overwriting or mis-indexing", async () => {
+    const { generateBadgePresetId } = await import("@/lib/badge-preset")
+    const owner = randomUUID()
+    const takenId = "TakenPreset1"
+    const sentinel = JSON.stringify({ sentinel: true })
+    fakeState.strings.set(`pictorium:preset:${takenId}`, sentinel)
+    vi.mocked(generateBadgePresetId).mockReturnValueOnce(takenId)
+    const stored = await savePreset(owner, makeInput({ visibility: "private" }))
+    expect(stored.preset.id).not.toBe(takenId)
+    // The taken record is untouched and the taken id never lands in this
+    // owner's index; only the fresh id is stored and indexed.
+    expect(fakeState.strings.get(`pictorium:preset:${takenId}`)).toBe(sentinel)
+    expect(fakeState.strings.get(`pictorium:preset:${stored.preset.id}`)).toBe(
+      JSON.stringify(stored.preset),
+    )
+    const index = fakeState.sets.get(`pictorium:user:${owner}:presets`) ?? new Set()
+    expect(index.has(takenId)).toBe(false)
+    expect(index.has(stored.preset.id)).toBe(true)
+  })
+
+  it("fails closed on malformed EVAL replies (null/undefined/false/'')", async () => {
+    const owner = randomUUID()
+    const malformed: unknown[] = [null, undefined, false, ""]
+    for (const bad of malformed) {
+      queueEvalReply(bad)
+      const stringsBefore = fakeState.strings.size
+      const err = await savePreset(owner, makeInput({ visibility: "private" })).then(
+        () => null,
+        (e: unknown) => e,
+      )
+      // Fail closed: generic save failure, never a fake success and never a
+      // wrongly classified quota rejection.
+      expect(err).toBeInstanceOf(Error)
+      expect(err).not.toBeInstanceOf(PresetQuotaError)
+      expect((err as Error).message).toMatch("unexpected KV result")
+      // No fake success: nothing was stored by the malformed reply.
+      expect(fakeState.strings.size).toBe(stringsBefore)
+      expect(fakeState.evalQueue).toHaveLength(0)
+    }
+  })
+
+  it("propagates transport timeout without PresetQuotaError", async () => {
+    const { KvTimeoutError } = await import("@/lib/kv")
+    const owner = randomUUID()
+    queueEvalThrow(new KvTimeoutError(2000))
+    const err = await savePreset(owner, makeInput({ visibility: "private" })).then(
+      () => null,
+      (e: unknown) => e,
+    )
+    expect(err).toBeInstanceOf(KvTimeoutError)
+    expect(err).not.toBeInstanceOf(PresetQuotaError)
   })
 
   it("updates only for the owner and recomputes revision", async () => {
@@ -355,5 +515,34 @@ describe("badge-preset-store (filesystem backend)", () => {
     const owner = randomUUID()
     for (let i = 0; i < 100; i++) await savePreset(owner, makeInput({ visibility: "private" }))
     await expect(savePreset(owner, makeInput({ visibility: "private" }))).rejects.toBeInstanceOf(PresetQuotaError)
+  })
+
+  it("prunes expired filesystem throttle entries on successful increment", async () => {
+    vi.useFakeTimers()
+    try {
+      const base = new Date("2026-01-01T00:00:00.000Z").getTime()
+      vi.setSystemTime(base)
+      const owner = randomUUID()
+      const stored = await savePreset(owner, makeInput())
+      const id = stored.preset.id
+      expect(await incrementDownload(id, "old-ip-1")).toBe(1)
+      expect(await incrementDownload(id, "old-ip-2")).toBe(2)
+      vi.setSystemTime(base + 2 * 3600 * 1000)
+      expect(await incrementDownload(id, "fresh-ip")).toBe(3)
+      vi.setSystemTime(base + 25 * 3600 * 1000)
+      expect(await incrementDownload(id, "new-ip")).toBe(4)
+      // Same visitor throttled: count unchanged.
+      expect(await incrementDownload(id, "new-ip")).toBe(4)
+      const dir = process.env.PICTORIUM_DATA_DIR as string
+      const raw = await fsp.readFile(path.join(dir, "presets-store.json"), "utf-8")
+      const doc = JSON.parse(raw) as { dlThrottle: Record<string, number>; downloads: Record<string, number> }
+      expect(doc.downloads[id]).toBe(4)
+      expect(doc.dlThrottle[`${id}:old-ip-1`]).toBeUndefined()
+      expect(doc.dlThrottle[`${id}:old-ip-2`]).toBeUndefined()
+      expect(doc.dlThrottle[`${id}:fresh-ip`]).toBeGreaterThan(base + 25 * 3600 * 1000)
+      expect(doc.dlThrottle[`${id}:new-ip`]).toBeGreaterThan(base + 25 * 3600 * 1000)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

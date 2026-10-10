@@ -43,6 +43,39 @@ const presetKey = (id: string): string => `${PRESET_KEY_PREFIX}${id}`
 const userIndexKey = (userUuid: string): string => `pictorium:user:${userUuid}:presets`
 const dlThrottleKey = (presetId: string, ipHash: string): string => `pictorium:dl:${presetId}:${ipHash}`
 
+// Atomic KV insert (single EVAL): the SCARD quota check and the EXISTS id
+// collision check run BEFORE any write. Checks must precede writes because a
+// Lua runtime error aborts the script WITHOUT rolling back prior writes.
+// Return codes: 0 stored, 1 quota exceeded, 2 id collision, 3 unexpected key
+// type (fail-closed, never a quota rejection).
+const PRESET_SAVE_SCRIPT = `-- pictorium:preset-save:v1
+if redis.call('TYPE', KEYS[2])['ok'] ~= 'none' and redis.call('TYPE', KEYS[2])['ok'] ~= 'set' then
+  return 3
+end
+if ARGV[4] == '1' then
+  if redis.call('TYPE', KEYS[3])['ok'] ~= 'none' and redis.call('TYPE', KEYS[3])['ok'] ~= 'zset' then
+    return 3
+  end
+  if redis.call('TYPE', KEYS[4])['ok'] ~= 'none' and redis.call('TYPE', KEYS[4])['ok'] ~= 'zset' then
+    return 3
+  end
+end
+if redis.call('SCARD', KEYS[2]) >= tonumber(ARGV[1]) then
+  return 1
+end
+if redis.call('EXISTS', KEYS[1]) == 1 then
+  return 2
+end
+redis.call('SET', KEYS[1], ARGV[3])
+redis.call('SADD', KEYS[2], ARGV[2])
+if ARGV[4] == '1' then
+  redis.call('ZADD', KEYS[3], '0', ARGV[2])
+  redis.call('ZADD', KEYS[4], ARGV[5], ARGV[2])
+end
+return 0`
+
+const PRESET_SAVE_ID_ATTEMPTS = 4
+
 export class PresetQuotaError extends Error {
   constructor(readonly max: number) {
     super(`Preset quota exceeded: max ${max} per user`)
@@ -353,33 +386,57 @@ export async function savePreset(userUuid: string, input: PresetCreateInput): Pr
   const now = Date.now()
   if (isKvMode()) {
     const kv = getKv()
-    const ids = await kv.smembers(userIndexKey(owner))
-    if (ids.length >= MAX_PRESETS_PER_USER) throw new PresetQuotaError(MAX_PRESETS_PER_USER)
-    let id = generateBadgePresetId()
-    for (let i = 0; i < 3 && (await kv.get(presetKey(id))) !== null; i++) id = generateBadgePresetId()
-    const preset = normalizeBadgePreset({
-      version: 1,
-      id,
-      ownerUuid: owner,
-      target: parsed.data.target,
-      visibility: parsed.data.visibility,
-      forkedFrom: parsed.data.forkedFrom ?? null,
-      metadata: parsed.data.metadata,
-      variant,
-      design,
-      house,
-      createdAt: now,
-      updatedAt: now,
-      revision: computePresetFullRevision(variant, design, house),
-    })
-    assertSize(preset)
-    await kv.set(presetKey(id), preset)
-    await kv.sadd(userIndexKey(owner), id)
-    if (preset.visibility === "public") {
-      await kv.zadd(DOWNLOADS_ZSET, 0, id)
-      await kv.zadd(CREATED_ZSET, preset.createdAt, id)
+    for (let attempt = 0; attempt < PRESET_SAVE_ID_ATTEMPTS; attempt++) {
+      const id = generateBadgePresetId()
+      const preset = normalizeBadgePreset({
+        version: 1,
+        id,
+        ownerUuid: owner,
+        target: parsed.data.target,
+        visibility: parsed.data.visibility,
+        forkedFrom: parsed.data.forkedFrom ?? null,
+        metadata: parsed.data.metadata,
+        variant,
+        design,
+        house,
+        createdAt: now,
+        updatedAt: now,
+        revision: computePresetFullRevision(variant, design, house),
+      })
+      assertSize(preset)
+      // Explicit JSON serialization: both adapters receive the payload as a
+      // string, so the stored value reads back identically on either backend.
+      // Only a quota code maps to PresetQuotaError (HTTP 413); transport
+      // errors and timeouts propagate unchanged (a timed-out write has an
+      // unknown outcome, never a quota rejection).
+      const raw: unknown = await kv.eval<unknown>(
+        PRESET_SAVE_SCRIPT,
+        [presetKey(id), userIndexKey(owner), DOWNLOADS_ZSET, CREATED_ZSET],
+        [
+          String(MAX_PRESETS_PER_USER),
+          id,
+          JSON.stringify(preset),
+          preset.visibility === "public" ? "1" : "0",
+          String(preset.createdAt),
+        ],
+      )
+      // Strict fail-closed reply validation: only integer 0/1/2/3 is accepted
+      // (number or numeric string — integer Redis reply on both adapters).
+      // Number(null/false/'') coerces to 0 and would fake a successful store,
+      // so the raw reply is inspected first; anything else fails closed.
+      let code = NaN
+      if (typeof raw === "number") code = raw
+      else if (typeof raw === "string" && raw.trim() !== "") code = Number(raw)
+      if (!Number.isInteger(code) || code < 0 || code > 3)
+        throw new Error("Preset save failed: unexpected KV result")
+      if (code === 1) throw new PresetQuotaError(MAX_PRESETS_PER_USER)
+      if (code === 3) throw new Error("Preset save failed: unexpected KV key type")
+      if (code === 2) continue
+      if (code !== 0) throw new Error("Preset save failed: unexpected KV result")
+      return toStored(preset, 0)
     }
-    return toStored(preset, 0)
+    // Every candidate id collided: fail closed without writing anything.
+    throw new Error("Preset save failed: could not allocate a free preset id")
   }
   return withFileLock(async () => {
     const doc = await loadFileDoc()
@@ -550,6 +607,9 @@ export async function incrementDownload(
     const key = `${presetId}:${ipHash}`
     const now = Date.now()
     if ((doc.dlThrottle[key] ?? 0) > now) return doc.downloads[presetId] ?? 0
+    for (const k of Object.keys(doc.dlThrottle)) {
+      if ((doc.dlThrottle[k] ?? 0) <= now) delete doc.dlThrottle[k]
+    }
     doc.dlThrottle[key] = now + DL_THROTTLE_TTL_S * 1000
     doc.downloads[presetId] = (doc.downloads[presetId] ?? 0) + 1
     await writeFileDoc(doc)

@@ -11,6 +11,8 @@ interface FakeState {
   hashes: Map<string, Map<string, string>>
   setCalls: Array<{ key: string; value: string; extra: Array<string | number> }>
   scanCalls: Array<{ cursor: number | string; args: Array<string | number> }>
+  evalCalls: Array<{ script: string; numKeys: number; keysAndArgs: Array<string> }>
+  evalImpl: ((script: string, numKeys: number, ...keysAndArgs: string[]) => Promise<unknown>) | null
   quitCalls: number
 }
 
@@ -30,6 +32,8 @@ vi.mock("ioredis", () => {
         hashes: new Map(),
         setCalls: [],
         scanCalls: [],
+        evalCalls: [],
+        evalImpl: null,
         quitCalls: 0,
       }
       redisRegistry.instances.push(this.state)
@@ -94,6 +98,11 @@ vi.mock("ioredis", () => {
       this.state.quitCalls++
       return "OK"
     }
+    async eval(script: string, numKeys: number, ...keysAndArgs: string[]): Promise<unknown> {
+      this.state.evalCalls.push({ script, numKeys, keysAndArgs })
+      if (this.state.evalImpl) return this.state.evalImpl(script, numKeys, ...keysAndArgs)
+      return 1
+    }
   }
   return { default: FakeRedis }
 })
@@ -108,6 +117,7 @@ const kvMock = vi.hoisted(() => ({
   incr: vi.fn(),
   expire: vi.fn(),
   scan: vi.fn(),
+  eval: vi.fn(),
 }))
 
 vi.mock("@vercel/kv", () => ({ kv: kvMock }))
@@ -265,6 +275,48 @@ describe("kv.ts (Step 1: selezione backend + serializzazione)", () => {
     process.env.PICTORIUM_REDIS_URL = "redis://localhost:6379/0"
     const kv = await importKv()
     await expect(kv.getKv().set("bad", undefined)).rejects.toThrow(/Unserializable/)
+  })
+
+  it("redis: eval forwards script/keys/args unchanged (native numKeys first)", async () => {
+    process.env.PICTORIUM_REDIS_URL = "redis://localhost:6379/0"
+    const kv = await importKv()
+    const client = kv.getKv()
+    const script = "return redis.call('incr',KEYS[1])"
+    // Pass-through strings: no encode/decode applied to keys/args.
+    expect(await client.eval<number>(script, ["quota:u1"], ["5"])).toBe(1)
+    expect(await client.eval<number>("return 1", [], [])).toBe(1)
+    const state = redisRegistry.instances[0]
+    expect(state.evalCalls).toHaveLength(2)
+    expect(state.evalCalls[0]).toEqual({ script, numKeys: 1, keysAndArgs: ["quota:u1", "5"] })
+    expect(state.evalCalls[1]).toEqual({ script: "return 1", numKeys: 0, keysAndArgs: [] })
+  })
+
+  it("redis: eval propagates numeric result and backend errors", async () => {
+    process.env.PICTORIUM_REDIS_URL = "redis://localhost:6379/0"
+    const kv = await importKv()
+    const client = kv.getKv()
+    await client.set("k", "v")
+    const state = redisRegistry.instances[0]
+    state.evalImpl = async () => 42
+    expect(await client.eval<number>("return 42", ["k"], [])).toBe(42)
+    state.evalImpl = async () => {
+      throw new Error("ERR Error running script: quota exceeded")
+    }
+    await expect(client.eval<number>("return 0", ["k"], [])).rejects.toThrow(/quota exceeded/)
+  })
+
+  it("upstash: eval forwards the (script, keys, args) triple and returns the number", async () => {
+    process.env.KV_REST_API_URL = "https://example.upstash.io"
+    process.env.KV_REST_API_TOKEN = "test-token"
+    const kv = await importKv()
+    const client = kv.getKv()
+    const script = "return redis.call('incr',KEYS[1])"
+    kvMock.eval.mockResolvedValue(3)
+    expect(await client.eval<number>(script, ["quota:u1", "quota:u2"], ["5"])).toBe(3)
+    expect(kvMock.eval).toHaveBeenCalledWith(script, ["quota:u1", "quota:u2"], ["5"])
+    expect(kvMock.eval).toHaveBeenCalledTimes(1)
+    kvMock.eval.mockRejectedValueOnce(new Error("ERR Error running script: quota exceeded"))
+    await expect(client.eval<number>(script, ["quota:u1"], ["5"])).rejects.toThrow(/quota exceeded/)
   })
 
   it("closeKvClient: chiude e resetta (doppia chiamata sicura, riuso ricrea)", async () => {

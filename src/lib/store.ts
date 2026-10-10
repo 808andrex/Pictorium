@@ -179,10 +179,103 @@ export function getStoreInflightSize(): number {
   return n
 }
 
+// ---- Atomic KV quota scripts (Q2b2, cross-instance) ----
+// Single-hash check+write: the quota decision (HEXISTS/HLEN) and the HSET run
+// in ONE server-side EVAL. Checks precede writes because a Lua runtime error
+// aborts WITHOUT rolling back prior writes. JSON payloads travel as explicit
+// strings (parity across the Redis/Upstash adapters, same as Q2b1 presets).
+// Return codes: 0 stored, 1 quota exceeded, 3 unexpected key type
+// (fail-closed, never a quota rejection).
+const MAPPING_UPSERT_SCRIPT = `-- pictorium:mapping-upsert:v1
+if redis.call('TYPE', KEYS[1])['ok'] ~= 'none' and redis.call('TYPE', KEYS[1])['ok'] ~= 'hash' then
+  return 3
+end
+if redis.call('HEXISTS', KEYS[1], ARGV[2]) == 1 then
+  redis.call('HSET', KEYS[1], ARGV[2], ARGV[3])
+  return 0
+end
+if redis.call('HLEN', KEYS[1]) >= tonumber(ARGV[1]) then
+  return 1
+end
+redis.call('HSET', KEYS[1], ARGV[2], ARGV[3])
+return 0`
+
+const MAPPING_IMPORT_SCRIPT = `-- pictorium:mapping-import:v1
+if redis.call('TYPE', KEYS[1])['ok'] ~= 'none' and redis.call('TYPE', KEYS[1])['ok'] ~= 'hash' then
+  return 3
+end
+local fresh = 0
+for i = 2, #ARGV, 2 do
+  if redis.call('HEXISTS', KEYS[1], ARGV[i]) == 0 then
+    fresh = fresh + 1
+  end
+end
+if redis.call('HLEN', KEYS[1]) + fresh > tonumber(ARGV[1]) then
+  return 1
+end
+for i = 2, #ARGV, 2 do
+  redis.call('HSET', KEYS[1], ARGV[i], ARGV[i + 1])
+end
+return 0`
+
+// Alias insert with a counted companion hash (the mappings hash of the same
+// namespace). Preserves the historical asymmetry ON PURPOSE: mapping writes
+// never count aliases, but a NEW alias field is gated on
+// HLEN(aliases)+HLEN(mappings) >= max, while an alias overwrite bypasses the
+// gate. Global aliases keep counting against global mappings (historical).
+// No symmetric aggregate cap is imposed on mapping writes here — that stays a
+// residual contract decision, not a silent Q2b2 change.
+const ALIAS_SET_SCRIPT = `-- pictorium:alias-set:v1
+if redis.call('TYPE', KEYS[1])['ok'] ~= 'none' and redis.call('TYPE', KEYS[1])['ok'] ~= 'hash' then
+  return 3
+end
+if redis.call('TYPE', KEYS[2])['ok'] ~= 'none' and redis.call('TYPE', KEYS[2])['ok'] ~= 'hash' then
+  return 3
+end
+if redis.call('HEXISTS', KEYS[1], ARGV[2]) == 1 then
+  redis.call('HSET', KEYS[1], ARGV[2], ARGV[3])
+  return 0
+end
+if redis.call('HLEN', KEYS[1]) + redis.call('HLEN', KEYS[2]) >= tonumber(ARGV[1]) then
+  return 1
+end
+redis.call('HSET', KEYS[1], ARGV[2], ARGV[3])
+return 0`
+
+/**
+ * Strict fail-closed reply validation: only integer 0/1/3 is accepted
+ * (number or numeric string — integer Redis reply on both adapters).
+ * Number(null/false/'') coerces to 0 and would fake a successful store, so
+ * the raw reply is inspected first; anything else fails closed generically
+ * (never a quota rejection).
+ */
+function parseHashEvalCode(raw: unknown): number {
+  let code = NaN
+  if (typeof raw === "number") code = raw
+  else if (typeof raw === "string" && raw.trim() !== "") code = Number(raw)
+  if (!Number.isInteger(code) || (code !== 0 && code !== 1 && code !== 3)) {
+    throw new Error("KV quota write failed: unexpected KV result")
+  }
+  return code
+}
+
 async function kvUpsertFor(userId: string, mapping: Mapping) {
   const key = `${mapping.mediaType}:${mapping.tmdbId}`
   const next = { ...mapping, updatedAt: new Date().toISOString() }
-  await getKv().hset(userKvKey(userId), { [key]: next })
+  // Atomic cross-instance quota insert (Q2b2): the HEXISTS/HLEN check and the
+  // HSET run in ONE server-side EVAL, so two instances racing at max-1 admit
+  // exactly one writer. Overwrites (HEXISTS=1) bypass the quota, matching the
+  // historical check-then-write semantics (allowed even at/over quota).
+  // Only code 1 maps to QuotaExceededError (HTTP 413); transport errors and
+  // timeouts propagate unchanged (unknown outcome, never a quota rejection).
+  const raw: unknown = await getKv().eval<unknown>(
+    MAPPING_UPSERT_SCRIPT,
+    [userKvKey(userId)],
+    [String(getMaxMappingsPerUser()), key, JSON.stringify(next)],
+  )
+  const code = parseHashEvalCode(raw)
+  if (code === 1) throw new QuotaExceededError(getMaxMappingsPerUser())
+  if (code === 3) throw new Error("Mapping save failed: unexpected KV key type")
   const c = kvUserCaches.get(userId)
   if (c?.map) c.map[key] = next
 }
@@ -224,6 +317,20 @@ function isNodeError(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && "code" in error
 }
 
+/**
+ * Top-level shape guard for the JSON persistence files: valid JSON such as
+ * `null`, arrays or scalars parses fine but is not a record map. Assigning it
+ * to the in-memory caches makes callers throw (Object.values(null)) or
+ * misinterpret records, and can break the next write. Reject it here so the
+ * existing catch falls back to the last-known-good cache (or {} cold) with
+ * the usual warning log.
+ */
+function assertRecordMap(value: unknown, file: string): asserts value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`Invalid top-level shape in ${file}: expected a JSON object`)
+  }
+}
+
 /** Consecutive write failures — resets to 0 on success */
 let writeFailures = 0
 
@@ -260,6 +367,7 @@ async function loadFromDisk(): Promise<Record<string, Mapping>> {
     const stat = await fsp.stat(DATA_FILE).catch(() => null)
     const raw = await fsp.readFile(DATA_FILE, "utf-8")
     const data = JSON.parse(raw) as Record<string, Mapping>
+    assertRecordMap(data, DATA_FILE)
     memCache = data
     memCacheTime = stat ? stat.mtimeMs : Date.now()
     return data
@@ -369,6 +477,7 @@ async function loadUserFromDisk(userId: string): Promise<Record<string, Mapping>
     const stat = await fsp.stat(file).catch(() => null)
     const raw = await fsp.readFile(file, "utf-8")
     const data = JSON.parse(raw) as Record<string, Mapping>
+    assertRecordMap(data, file)
     mirror.data = data
     mirror.time = stat ? stat.mtimeMs : Date.now()
     return data
@@ -500,8 +609,8 @@ export async function upsert(mapping: Mapping, userId?: string | null) {
   if (userId) {
     assertValidUserId(userId)
     if (isKvMode()) {
-      const current = await kvReadAllCachedFor(userId)
-      assertUserQuota(current, `${mapping.mediaType}:${mapping.tmdbId}`)
+      // No client pre-read: the authoritative quota decision lives inside the
+      // atomic EVAL in kvUpsertFor (cross-instance safe).
       await kvUpsertFor(userId, mapping)
       return
     }
@@ -582,16 +691,25 @@ export async function importMappings(mappings: Mapping[], userId?: string | null
   if (userId) {
     assertValidUserId(userId)
     if (isKvMode()) {
-      const current = await kvReadAllCachedFor(userId)
+      // Atomic cross-instance quota import (Q2b2): dedupe on the field key
+      // first (last wins, same as the keyed-object write below), then ONE
+      // EVAL counts fresh fields via HEXISTS and rejects all-or-nothing when
+      // HLEN+fresh > max. That preserves the historical rule that an
+      // all-overwrite import is still rejected while already over quota.
       const max = getMaxMappingsPerUser()
-      const fresh = mappings.filter((m) => !(`${m.mediaType}:${m.tmdbId}` in current))
-      if (Object.keys(current).length + fresh.length > max) throw new QuotaExceededError(max)
       const entries: Record<string, Mapping> = {}
       const now = new Date().toISOString()
       for (const m of mappings) {
         entries[`${m.mediaType}:${m.tmdbId}`] = { ...m, updatedAt: now }
       }
-      await getKv().hset(userKvKey(userId), entries)
+      const fields = Object.keys(entries)
+      if (fields.length === 0) return
+      const args: string[] = [String(max)]
+      for (const f of fields) args.push(f, JSON.stringify(entries[f]))
+      const raw: unknown = await getKv().eval<unknown>(MAPPING_IMPORT_SCRIPT, [userKvKey(userId)], args)
+      const code = parseHashEvalCode(raw)
+      if (code === 1) throw new QuotaExceededError(max)
+      if (code === 3) throw new Error("Mapping import failed: unexpected KV key type")
       const c = kvUserCaches.get(userId)
       if (c?.map) Object.assign(c.map, entries)
       return
@@ -742,6 +860,7 @@ async function loadAliasesFromDisk(): Promise<Record<string, ImdbAlias>> {
     const stat = await fsp.stat(ALIAS_FILE).catch(() => null)
     const raw = await fsp.readFile(ALIAS_FILE, "utf-8")
     const data = JSON.parse(raw) as Record<string, ImdbAlias>
+    assertRecordMap(data, ALIAS_FILE)
     aliasMemCache = data
     aliasMemCacheTime = stat ? stat.mtimeMs : Date.now()
     return data
@@ -802,6 +921,7 @@ async function loadUserAliasesFromDisk(userId: string): Promise<Record<string, I
     const stat = await fsp.stat(file).catch(() => null)
     const raw = await fsp.readFile(file, "utf-8")
     const data = JSON.parse(raw) as Record<string, ImdbAlias>
+    assertRecordMap(data, file)
     mirror.data = data
     mirror.time = stat ? stat.mtimeMs : Date.now()
     return data
@@ -906,9 +1026,18 @@ export async function setImdbAlias(alias: ImdbAlias, userId?: string | null) {
   if (userId) {
     assertValidUserId(userId)
     if (isKvMode()) {
-      const current = await kvAliasRead(kvAliasUserCacheFor(userId), userAliasKvKey(userId))
-      await assertAliasQuota(current, key, userId)
-      await getKv().hset(userAliasKvKey(userId), { [key]: next })
+      // Atomic cross-instance alias insert (Q2b2): the combined
+      // mappings+aliases gate and the write run in ONE EVAL. Overwrites
+      // bypass the gate, matching the historical assertAliasQuota semantics.
+      const max = getMaxMappingsPerUser()
+      const raw: unknown = await getKv().eval<unknown>(
+        ALIAS_SET_SCRIPT,
+        [userAliasKvKey(userId), userKvKey(userId)],
+        [String(max), key, JSON.stringify(next)],
+      )
+      const code = parseHashEvalCode(raw)
+      if (code === 1) throw new QuotaExceededError(max)
+      if (code === 3) throw new Error("Alias save failed: unexpected KV key type")
       const c = kvAliasUserCaches.get(userId)
       if (c?.map) c.map[key] = next
       return
@@ -921,9 +1050,17 @@ export async function setImdbAlias(alias: ImdbAlias, userId?: string | null) {
     })
   }
   if (isKvMode()) {
-    const current = await kvAliasRead(kvAliasGlobal, "aliases")
-    await assertAliasQuota(current, key)
-    await getKv().hset("aliases", { [key]: next })
+    // Same atomic gate as the user branch, counting global aliases against
+    // global mappings (historical behavior, preserved).
+    const max = getMaxMappingsPerUser()
+    const raw: unknown = await getKv().eval<unknown>(
+      ALIAS_SET_SCRIPT,
+      ["aliases", "mappings"],
+      [String(max), key, JSON.stringify(next)],
+    )
+    const code = parseHashEvalCode(raw)
+    if (code === 1) throw new QuotaExceededError(max)
+    if (code === 3) throw new Error("Alias save failed: unexpected KV key type")
     if (kvAliasGlobal.map) kvAliasGlobal.map[key] = next
     return
   }

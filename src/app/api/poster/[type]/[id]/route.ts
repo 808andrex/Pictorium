@@ -851,6 +851,15 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
       releaseRender()
     }
   }
+  // H2: the deadline also settles the ORIGINAL caller. The timer below resolves
+  // a dedicated deadline response (bounded 503 with Retry-After) while the
+  // actual render job keeps running in the background with full cleanup
+  // ownership (slot/zombie/inflight) until it REALLY settles. The GET returns
+  // whichever settles first and never frees job-owned accounting early.
+  let resolveDeadline: ((res: Response) => void) | null = null
+  const deadlineResponse: Promise<Response> = new Promise<Response>((resolve) => {
+    resolveDeadline = resolve
+  })
   const renderDeadline = setTimeout(() => {
     deadlineFired = true
     // Osservabilità hang (Bugonia): prima lo scatto era silenzioso e l'unica
@@ -864,9 +873,26 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
     completePosterRender(null, true)
     endZombieRender = recordZombieRenderStart(`${mediaType}:${tmdbId}`)
     releaseSlotOnce()
+    // H2: single 503 accounting for the abandoned render — the late job must
+    // NOT count or write again on settle (see the deadlineFired guards in the
+    // job catch and the post-compositing guard below).
+    recordPosterError()
+    writePosterError(cacheKey, 503)
+    resolveDeadline?.(posterErrorResponse(503))
   }, Math.max(1, RENDER_TIMEOUT_MS - preflightMs))
   if (typeof renderDeadline.unref === "function") renderDeadline.unref()
 
+  // H2: whole async post-preflight render job. The GET races this job against
+  // the dedicated deadline response above, so a non-cooperative backend (one
+  // that ignores renderAbort, e.g. a stuck native worker) can no longer hang
+  // the ORIGINAL caller past the deadline. Cleanup ownership stays with the
+  // job: its catch/finally keeps releaseSlotOnce/endZombie/
+  // completePosterRender until the work ACTUALLY settles — the early GET
+  // return path must never free zombie budget or inflight while work runs.
+  // Inner lines keep their existing indentation on purpose: boundary-only
+  // diff, no 1500-line reindent.
+  const renderJob: Promise<Response> = (async (): Promise<Response> => {
+  try {
   // 4. Resolve poster/logo/backdrop paths
   let posterPath: string | null = null
   let posterPathBuffer: Buffer | null = null
@@ -1164,7 +1190,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
         if (!releaseRender) {
           clearTimeout(renderDeadline)
           completePosterRender(null)
-          writePosterError(cacheKey, 503)
+          // H2 single-503: past the deadline the watchdog already wrote the
+          // 503 entry — the late job only answers 503, never rewrites.
+          if (!deadlineFired) writePosterError(cacheKey, 503)
           return posterErrorResponse(503)
         }
       }
@@ -1489,7 +1517,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
       // (releaseSlotOnce è idempotente) — nessun return fuori dal try/finally
       // può più leakare lo slot acquisito dal logo-fit.
       if (deadlineFired || autoFetchFailed) {
-        writePosterError(cacheKey, 503)
+        // H2 single-503: past the deadline the watchdog already wrote the
+        // 503 entry — the late job only answers 503, never rewrites.
+        // Pre-deadline autoFetchFailed still writes (existing negative cache).
+        if (!deadlineFired) writePosterError(cacheKey, 503)
         completePosterRender(null)
         return posterErrorResponse(503)
       }
@@ -1515,7 +1546,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
       releaseRender = await acquirePosterRenderSlot()
       if (!releaseRender) {
         completePosterRender(null)
-        writePosterError(cacheKey, 503)
+        // H2 single-503: past the deadline the watchdog already wrote the
+        // 503 entry — the late job only answers 503, never rewrites.
+        if (!deadlineFired) writePosterError(cacheKey, 503)
         return posterErrorResponse(503)
       }
     }
@@ -1825,7 +1858,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
       // Deadline sforato → 503 con negative cache: il fetch dell'immagine è
       // stato abortito dal watchdog, non è un titolo inesistente.
       if (deadlineFired) {
-        writePosterError(cacheKey, 503)
+        // H2 single-503: the watchdog already wrote the 503 entry at the
+        // deadline — the late job only answers 503, never rewrites.
         completePosterRender(null)
         return posterErrorResponse(503)
       }
@@ -2346,6 +2380,15 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
     // Fine della fase prep (resize, config, accent): da qui solo composite CPU.
     const tCompositeStart = Date.now()
     const composited = await generatePosterBuffer(genInput)
+    // H2: the render outlived the deadline (a non-cooperative backend ignored
+    // the abort). The caller already got the bounded 503 — never write/cache
+    // poster bytes nor report success metrics for abandoned work. The watchdog
+    // applied the single 503 accounting, so just free the kept inflight entry
+    // and answer 503 without recounting.
+    if (deadlineFired || renderAbort.signal.aborted) {
+      completePosterRender(null)
+      return posterErrorResponse(503)
+    }
     // Debug with netgeo=1 (plain debug returned early above): pre-composite
     // payload plus the actually rendered network geometry. Numbers and
     // resolved config only, no sensitive data. Normal poster responses
@@ -2410,14 +2453,15 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
     return new Response(new Uint8Array(composited), { headers: renderHeaders })
   } catch (e) {
     completePosterRender(null)
-    recordPosterError()
     // Deadline sforato: il render è stato abbandonato dal watchdog perché
-    // troppo lento → 503 (con negative cache) invece di un 500 generico.
+    // troppo lento → 503 invece di un 500 generico. H2: the watchdog already
+    // applied the single 503 negative-cache entry and error count at the
+    // deadline — a late failure must not count or write twice.
     if (deadlineFired) {
-      writePosterError(cacheKey, 503)
       log.error("Poster generation failed (render deadline exceeded)", { error: e instanceof Error ? e.message : String(e) })
       return posterErrorResponse(503)
     }
+    recordPosterError()
     // F3: negative cache — lo stesso errore non ri-rende la pipeline per il TTL.
     writePosterError(cacheKey, 500)
     log.error("Poster generation failed", { error: e instanceof Error ? e.message : String(e) })
@@ -2431,4 +2475,32 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
       endZombieRender = null
     }
   }
+  } catch (outerError) {
+    // H2: setup-phase failure before the inner render try (same propagation
+    // as before — the caller still sees the throw) but without leaking the
+    // armed deadline timer, an acquired slot, or the inflight entry. Past the
+    // deadline the watchdog already accounted once: no recount here.
+    clearTimeout(renderDeadline)
+    releaseSlotOnce()
+    completePosterRender(null)
+    throw outerError
+  }
+  })()
+  // H2: a late job settlement after the deadline already answered the caller
+  // must stay silent — a late failure is logged, never unhandled and never
+  // double-counted. This handler marks the job promise handled so a late
+  // rejection cannot surface as an unhandled rejection; the race below still
+  // observes the job outcome for the timely path.
+  void renderJob.then(
+    () => {},
+    (e: unknown) => {
+      if (deadlineFired) {
+        log.error("Late poster render failed after deadline (caller already answered)", { mediaType, tmdbId, error: e instanceof Error ? e.message : String(e) })
+      }
+    },
+  )
+  // Original caller: whichever settles first wins. Past the deadline this is
+  // the bounded 503 with Retry-After; the actual job keeps running in the
+  // background with its own cleanup until it really settles.
+  return Promise.race([renderJob, deadlineResponse])
 }

@@ -24,6 +24,7 @@ vi.mock("ioredis", () => {
     zincrby(): Promise<never> { return hang() }
     zrevrange(): Promise<never> { return hang() }
     zscore(): Promise<never> { return hang() }
+    eval(): Promise<never> { return hang() }
     async quit(): Promise<string> { return "OK" }
   }
   return { default: HungRedis }
@@ -49,6 +50,7 @@ const kvMock = vi.hoisted(() => {
     zincrby: vi.fn<(...args: unknown[]) => Promise<unknown>>(hung),
     zrange: vi.fn<(...args: unknown[]) => Promise<unknown>>(hung),
     zscore: vi.fn<(...args: unknown[]) => Promise<unknown>>(hung),
+    eval: vi.fn<(...args: unknown[]) => Promise<unknown>>(hung),
   }
 })
 
@@ -108,6 +110,7 @@ describe("kv adapter: central timeout on a hung backend", () => {
         () => client.zincrby("z", 1, "m"),
         () => client.zrevrange("z", 0, 9),
         () => client.zscore("z", "m"),
+        () => client.eval("return 1", ["k"], ["a"]),
       ]
       for (const call of calls) {
         const assertion = expect(call()).rejects.toBeInstanceOf(kv.KvTimeoutError)
@@ -264,6 +267,7 @@ describe("kv adapter: central timeout on a hung backend", () => {
     kvMock.zincrby.mockResolvedValue(3)
     kvMock.zrange.mockResolvedValue(["m"])
     kvMock.zscore.mockResolvedValue(4)
+    kvMock.eval.mockResolvedValue(5)
     await expect(client.get("k")).resolves.toEqual({ a: 1 })
     await expect(client.set("k", { a: 1 }, { ex: 60 })).resolves.toBeUndefined()
     await expect(client.del("k")).resolves.toBe(1)
@@ -281,6 +285,7 @@ describe("kv adapter: central timeout on a hung backend", () => {
     await expect(client.zincrby("z", 1, "m")).resolves.toBe(3)
     await expect(client.zrevrange("z", 0, 9)).resolves.toEqual(["m"])
     await expect(client.zscore("z", "m")).resolves.toBe(4)
+    await expect(client.eval("return 1", ["k"], ["a"])).resolves.toBe(5)
   })
 
   it("redis: hung sample (get/set/hgetall/incr/expire/scan/zrevrange) rejects with KvTimeoutError", async () => {
@@ -297,6 +302,7 @@ describe("kv adapter: central timeout on a hung backend", () => {
         () => client.expire("rl:a:1", 2),
         () => client.scan(0, { match: "user:*:auth", count: 100 }),
         () => client.zrevrange("z", 0, 9),
+        () => client.eval("return 1", ["k"], ["a"]),
       ]
       for (const call of calls) {
         const assertion = expect(call()).rejects.toBeInstanceOf(kv.KvTimeoutError)

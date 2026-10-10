@@ -333,7 +333,7 @@ npm install --ignore-scripts && npm run build && npm start
 | Variable | Default | Description |
 |---|:---:|---|
 | `PICTORIUM_MAX_CONCURRENT_RENDERS` | `4` | Max concurrent Sharp renders to prevent OOM. |
-| `PICTORIUM_RENDER_TIMEOUT_MS` | `30000` | Max render timeout before falling back (ms). |
+| `PICTORIUM_RENDER_TIMEOUT_MS` | `30000` | Max render deadline before the original caller gets a bounded 503 with `Retry-After` (ms). Past the deadline the late job never caches a poster and never double-counts the 503. |
 | `PICTORIUM_CACHE_MAX_MB` | `150` | Maximum RAM allocated for in-memory image cache. |
 | `PICTORIUM_SELF_WARMUP` | `1` | Automatically pre-warm core catalogs on server start. |
 </details>

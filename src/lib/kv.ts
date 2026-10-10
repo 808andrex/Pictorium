@@ -74,6 +74,8 @@ function wrapKvWithTimeout(inner: KvClient): KvClient {
       withKvTimeout(inner.zrevrange(key, start, stop)),
     zscore: (key: string, member: string): Promise<number | null> =>
       withKvTimeout(inner.zscore(key, member)),
+    eval: <T = unknown>(script: string, keys: string[], args: string[]): Promise<T> =>
+      withKvTimeout(inner.eval<T>(script, keys, args)),
   }
 }
 
@@ -121,6 +123,13 @@ export interface KvClient {
   /** Membri in ordine decrescente di score (indici start/stop inclusivi, stile Redis). */
   zrevrange(key: string, start: number, stop: number): Promise<string[]>
   zscore(key: string, member: string): Promise<number | null>
+  /**
+   * Cross-instance atomic EVAL (quota Lua, Q2a): scripts run on the server,
+   * not in the process. `keys`/`args` pass through as unchanged strings (callers
+   * JSON.stringify payloads explicitly). Redis Cluster: multi-key scripts
+   * require the same slot; the project uses a standalone client.
+   */
+  eval<T = unknown>(script: string, keys: string[], args: string[]): Promise<T>
 }
 
 /** URL Redis: canonico PICTORIUM > legacy POSTERIUM > nudo (ElfHosted). */
@@ -218,6 +227,7 @@ type UpstashKv = {
   zincrby(key: string, increment: number, member: string): Promise<number>
   zrange(key: string, min: number, max: number, opts?: { rev?: boolean }): Promise<string[]>
   zscore(key: string, member: string): Promise<number | null>
+  eval<T>(script: string, keys: string[], args: string[]): Promise<T>
 }
 
 async function loadUpstash(): Promise<UpstashKv> {
@@ -278,6 +288,9 @@ const upstashKv: KvClient = {
     const v = await (await loadUpstash()).zscore(key, member)
     return v === null || v === undefined ? null : Number(v)
   },
+  async eval<T>(script: string, keys: string[], args: string[]): Promise<T> {
+    return (await loadUpstash()).eval<T>(script, keys, args)
+  },
 }
 
 // ---- Backend Redis nativo (ioredis, singleton lazy) ----
@@ -300,6 +313,7 @@ type RedisLike = {
   zincrby(key: string, increment: number, member: string): Promise<string>
   zrevrange(key: string, start: number, stop: number): Promise<string[]>
   zscore(key: string, member: string): Promise<string | null>
+  eval(script: string, numKeys: number, ...keysAndArgs: string[]): Promise<unknown>
   quit(): Promise<unknown>
 }
 
@@ -409,5 +423,8 @@ const redisKv: KvClient = {
   async zscore(key: string, member: string): Promise<number | null> {
     const v = await (await ensureRedis()).zscore(key, member)
     return v === null ? null : Number(v)
+  },
+  async eval<T = unknown>(script: string, keys: string[], args: string[]): Promise<T> {
+    return (await ensureRedis()).eval(script, keys.length, ...keys, ...args) as Promise<T>
   },
 }
