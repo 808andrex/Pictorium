@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test"
+import { putDefaultsWithRetry } from "./defaults-retry"
 
 // P10 FINAL GATE — Card cover layouts (provider-glass / nuvio /
 // stremio) × portrait + landscape, deterministic via the shared mock server
@@ -309,6 +310,44 @@ test.describe("card layouts — scope and rank contracts", () => {
 })
 
 test.describe("card layouts — settings selection (portrait + landscape)", () => {
+  // Isolation: this UI test writes posterLayout/posterFreshScope through the
+  // debounced autosave. Capture the pre-test server state, seed a
+  // deterministic start, and restore the captured state in afterEach (PUT +
+  // unmount + verify of OUR managed keys only — never a shared-data wipe).
+  const CARD_SEED = {
+    posterLayout: "standard",
+    posterFreshScope: "ranked",
+    landscape: {
+      posterLayout: "standard",
+      posterFreshScope: "ranked",
+    },
+  }
+  let cardBaseline: Record<string, unknown> | null = null
+  let cardDirty = false
+
+  async function getDefaults(page: Page): Promise<Record<string, unknown>> {
+    return page.evaluate(async () => {
+      const r = await fetch("/api/defaults")
+      if (!r.ok) throw new Error(`get defaults: ${r.status}`)
+      return (await r.json()) as Record<string, unknown>
+    })
+  }
+
+  async function waitDefaults(page: Page, pred: (d: Record<string, unknown>) => boolean) {
+    await expect
+      .poll(
+        async () => {
+          try {
+            return pred(await getDefaults(page)) ? "ok" : null
+          } catch {
+            return null
+          }
+        },
+        { timeout: 30_000, intervals: [500] },
+      )
+      .toBe("ok")
+  }
+
   test.beforeEach(async ({ page }) => {
     await page.addInitScript(() => {
       try {
@@ -320,6 +359,51 @@ test.describe("card layouts — settings selection (portrait + landscape)", () =
         localStorage.setItem("tmdb_key", "")
       } catch {}
     })
+    await page.goto("/")
+    cardBaseline = await getDefaults(page)
+    await putDefaultsWithRetry(page, "seed card-layout", CARD_SEED)
+    cardDirty = true
+    await page.goto("/")
+    await waitDefaults(page, (d) => d.posterLayout === "standard")
+  })
+
+  test.afterEach(async ({ page }) => {
+    if (!cardDirty || !cardBaseline) return
+    cardDirty = false
+    const base = cardBaseline
+    cardBaseline = null
+    // Settle the trailing debounced autosave BEFORE the restore PUT: the last
+    // UI action of the test restores Standard, so await that flush (no fixed
+    // sleeps — the debounce is 500ms, the poll observes its effect).
+    await waitDefaults(page, (d) => d.posterLayout === "standard").catch(() => null)
+    await page.goto("/")
+    // Merge cannot delete keys: materialize OUR managed landscape keys with
+    // the baseline effective values so a frozen/explicit dirty profile value
+    // is overwritten rather than left behind.
+    const baseLand = (base.landscape ?? {}) as Record<string, unknown>
+    const restore = {
+      ...(base as Record<string, unknown>),
+      posterLayout: base.posterLayout ?? "standard",
+      posterFreshScope: base.posterFreshScope ?? "ranked",
+      landscape: {
+        ...(baseLand as Record<string, unknown>),
+        posterLayout: (baseLand.posterLayout as string | undefined) ?? (base.posterLayout as string | undefined) ?? "standard",
+        posterFreshScope: (baseLand.posterFreshScope as string | undefined) ?? (base.posterFreshScope as string | undefined) ?? "ranked",
+      },
+    }
+    delete (restore as Record<string, unknown>).hasInstanceKeys
+    delete (restore as Record<string, unknown>).serverKeys
+    await putDefaultsWithRetry(page, "restore card-layout", restore)
+    // Clear any pending debounce by unmounting (navigation closes the editor;
+    // the hook clears its timer + aborts inflight sends on unmount).
+    await page.goto("/")
+    const got = await getDefaults(page)
+    expect(got.posterLayout).toBe(restore.posterLayout)
+    expect(got.posterFreshScope).toBe(restore.posterFreshScope)
+    const gotLand = (got.landscape ?? {}) as Record<string, unknown>
+    const wantLand = restore.landscape as Record<string, unknown>
+    expect(gotLand.posterLayout).toBe(wantLand.posterLayout)
+    expect(gotLand.posterFreshScope).toBe(wantLand.posterFreshScope)
   })
 
   async function openBadgeTab(page: Page) {
@@ -351,6 +435,12 @@ test.describe("card layouts — settings selection (portrait + landscape)", () =
     await expect(scope.getByTestId("fresh-scope-select")).toHaveValue("ranked")
 
     // Landscape edit target keeps the same scope contract (shared stored value).
+    // Strict shape independence: a PORTRAIT Card pick freezes the pre-edit
+    // landscape look (previous STANDARD) into the profile instead of following
+    // the flat — production must NOT be changed to follow the flat again. So
+    // after the portrait Nuvio pick above, landscape is expected to stay
+    // Standard (scope hidden); the Card scope is then selected EXPLICITLY in
+    // the landscape target below.
     const formatTarget = page
       .getByRole("dialog", { name: /Configura tutti i poster/i })
       .getByTestId("format-target-selector")
@@ -358,10 +448,46 @@ test.describe("card layouts — settings selection (portrait + landscape)", () =
     const landscapeBtn = formatTarget.getByRole("button", { name: /Orizzontale|Landscape/i })
     if (await landscapeBtn.count()) {
       await landscapeBtn.first().click()
-      await expect(controls.getByTestId("fresh-scope-selector")).toBeVisible()
+      // Independence boundary: portrait Nuvio must NOT leak into landscape.
+      await expect(controls.getByTestId("fresh-scope-selector")).toHaveCount(0)
+      await expect(group.getByRole("radio", { name: "Standard", exact: true })).toHaveAttribute(
+        "aria-checked",
+        "true",
+      )
+      // Backend shape isolation: flat holds the Card, the frozen profile holds
+      // Standard with the shared scope value.
+      await waitDefaults(
+        page,
+        (d) =>
+          d.posterLayout === "nuvio" &&
+          ((d.landscape ?? {}) as Record<string, unknown>).posterLayout === "standard",
+      )
+      const iso = await getDefaults(page)
+      expect(iso.posterLayout).toBe("nuvio")
+      expect(((iso.landscape ?? {}) as Record<string, unknown>).posterLayout).toBe("standard")
+
+      // Explicit landscape Card pick: scope appears in landscape only.
+      await group.getByRole("radio", { name: "Nuvio", exact: true }).click()
+      const landScope = controls.getByTestId("fresh-scope-selector")
+      await expect(landScope).toBeVisible()
       await expect(controls.getByTestId("fresh-scope-select")).toHaveValue("ranked")
+      await waitDefaults(
+        page,
+        (d) => ((d.landscape ?? {}) as Record<string, unknown>).posterLayout === "nuvio",
+      )
+      // Portrait stays put while landscape diverges (shape isolation).
       const portraitBtn = formatTarget.getByRole("button", { name: /Verticale|Portrait/i })
-      if (await portraitBtn.count()) await portraitBtn.first().click()
+      if (await portraitBtn.count()) {
+        await portraitBtn.first().click()
+        await expect(controls.getByTestId("fresh-scope-selector")).toBeVisible()
+        await expect(group.getByRole("radio", { name: "Nuvio", exact: true })).toHaveAttribute(
+          "aria-checked",
+          "true",
+        )
+        const back = await getDefaults(page)
+        expect(back.posterLayout).toBe("nuvio")
+        expect(((back.landscape ?? {}) as Record<string, unknown>).posterLayout).toBe("nuvio")
+      }
     }
 
     // Restore Standard: the scope selector hides again (no residue).

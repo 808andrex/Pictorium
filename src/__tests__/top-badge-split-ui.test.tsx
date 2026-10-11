@@ -25,7 +25,7 @@ vi.mocked(usePosterFit).mockReturnValue({ bestFitPath: null, results: [], loadin
 import { usePosterSave } from "@/lib/usePosterSave"
 import { saveDefaults } from "@/lib/save-defaults"
 import { isMappingDirty } from "@/lib/gradient-dirty"
-import { captureVisualPreset, normalizePresetExtraTuning } from "@/lib/visual-presets"
+import { captureVisualPreset, normalizePresetExtraTuning, portraitPresetPatch } from "@/lib/visual-presets"
 import type { Mapping } from "@/lib/types"
 import type { PictoriumCtx } from "@/lib/context"
 
@@ -401,14 +401,35 @@ describe("applyVisualPreset normalizes extra to the preset look", () => {
     await act(async () => {
       ed().applyVisualPreset(presetA)
     })
+    // TARGET invariant (portrait): the preset lands exactly on the flats.
     expect(ed().defaultExtraBadgeScale).toBe(130)
     expect(ed().defaultExtraBadgeOffsetX).toBe(20)
     expect(ed().defaultExtraBadgeOffsetY).toBe(30)
-    expect(captureVisualPreset(ed())).toEqual(presetA)
+    // OTHER-SHAPE invariant (landscape): the first portrait edit froze the
+    // pre-edit (null) extra as explicit own-rank nulls — pixel-identical
+    // (absent-null and explicit-null both render the rank fallback), and the
+    // landscape no longer tracks the portrait flats.
+    expect(ed().landscape.extraBadgeScale).toBeNull()
+    expect(ed().landscape.extraBadgeOffsetX).toBeNull()
+    expect(ed().landscape.extraBadgeOffsetY).toBeNull()
+    // Portrait projection roundtrips exactly (the frozen landscape profile is
+    // the other shape's business, never part of the portrait look).
+    expect(portraitPresetPatch(captureVisualPreset(ed()))).toEqual(portraitPresetPatch(presetA))
     await act(async () => {
       ed().applyVisualPreset(presetB)
     })
-    expect(captureVisualPreset(ed())).toEqual(presetB)
+    expect(ed().defaultExtraBadgeScale).toBe(80)
+    expect(ed().defaultExtraBadgeOffsetX).toBe(-10)
+    expect(ed().defaultExtraBadgeOffsetY).toBe(-20)
+    // The frozen landscape is never rebased by later portrait presets.
+    expect(ed().landscape.extraBadgeScale).toBeNull()
+    expect(ed().landscape.extraBadgeOffsetX).toBeNull()
+    expect(ed().landscape.extraBadgeOffsetY).toBeNull()
+    expect(portraitPresetPatch(captureVisualPreset(ed()))).toEqual(portraitPresetPatch(presetB))
+    // Highlights stay distinct per preset on the portrait projection.
+    expect(
+      JSON.stringify(normalizePresetExtraTuning(portraitPresetPatch(captureVisualPreset(ed())))),
+    ).not.toBe(JSON.stringify(normalizePresetExtraTuning(portraitPresetPatch(presetA))))
   })
 
   it("custom extra state cleared by legacy apply, effective follows the preset rank", async () => {
@@ -434,16 +455,36 @@ describe("applyVisualPreset normalizes extra to the preset look", () => {
     const normalized = normalizePresetExtraTuning(captureVisualPreset(ed()))
     expect(normalized.defaultExtraBadgeScale).toBe(100)
     expect(normalized.defaultExtraBadgeOffsetX).toBe(0)
-    // Normalized highlight matches the builtin look (cleared extra included).
+    // OTHER-SHAPE invariant (landscape): the portrait apply froze the
+    // pre-edit effective tuning (80/130/20/30) into the inheriting profile —
+    // the landscape keeps rendering exactly what it showed before the apply,
+    // instead of following the new portrait rank. This is the intentional 3B1
+    // independence preservation (first portrait edit snapshots pre-edit), NOT
+    // a preset regression: the portrait look above is the preset look.
+    expect(ed().landscape.topBadgeScale).toBe(80)
+    expect(ed().landscape.extraBadgeScale).toBe(130)
+    expect(ed().landscape.extraBadgeOffsetX).toBe(20)
+    expect(ed().landscape.extraBadgeOffsetY).toBe(30)
+    // Preset-match purpose preserved on the portrait projection: the applied
+    // portrait look highlights exactly like the requested builtin look
+    // (cleared extra included). The old whole-snapshot equality no longer
+    // holds because the landscape profile now (correctly) carries the frozen
+    // pre-edit values instead of staying sparse.
     const legacyCleared = {
       ...legacy,
       defaultExtraBadgeScale: null,
       defaultExtraBadgeOffsetX: null,
       defaultExtraBadgeOffsetY: null,
     }
+    const wantPortrait = {
+      ...legacyCleared,
+      defaultTopBadgeScale: 100,
+      defaultTopBadgeOffsetX: 0,
+      defaultTopBadgeOffsetY: 0,
+    }
     expect(
-      JSON.stringify(normalized)
-      === JSON.stringify(normalizePresetExtraTuning({ ...legacyCleared, defaultTopBadgeScale: 100, defaultTopBadgeOffsetX: 0, defaultTopBadgeOffsetY: 0 })),
+      JSON.stringify(normalizePresetExtraTuning(portraitPresetPatch(captureVisualPreset(ed()))))
+      === JSON.stringify(normalizePresetExtraTuning(portraitPresetPatch(wantPortrait))),
     ).toBe(true)
   })
 

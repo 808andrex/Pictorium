@@ -1,6 +1,7 @@
 import { POSTER_URL_VERSION } from "@/lib/render-version"
-import type { BadgeStyle, RankingBadgeStyle, QualityBadgeStyle, BadgeFont, SeparateRatingsStyle, ExtraBadgeStyle } from "@/lib/badge-styles"
-import { getSeparateBadgeDefaultScale, getSeparateRatingsStyleForShape, isBottomSeparateRatingsStyle } from "@/lib/badge-styles"
+import type { BadgeStyle, RankingBadgeStyle, QualityBadgeStyle, BadgeFont, SeparateRatingsStyle, ExtraBadgeStyle, ExtraBadgeFollowRank } from "@/lib/badge-styles"
+import { getSeparateBadgeDefaultScale, getSeparateRatingsStyleForShape, isAgeBadgeStyle, isBottomSeparateRatingsStyle } from "@/lib/badge-styles"
+import type { AgeBadgeStyle } from "@/lib/badge-styles"
 import type { VideoFormat } from "@/lib/av-specs"
 import { parseMinQuality, type StreamQuality } from "@/lib/quality-tiers"
 import { parseSashOrder, isDefaultSashOrder, type SashBucket } from "@/lib/badge-priority"
@@ -32,6 +33,11 @@ export interface StremioPosterParamsInput {
   /** Paese della classificazione età: emesso come `agecountry=XX` solo con
    *  badge attivo (il server risolve query > config > defaults > "IT"). */
   readonly ageCountry?: string | null
+  /** Stile della pill età: emesso come `agebs` normalizzato solo con badge
+   *  attivo (invalido/assente = "standard", resa storica). Viaggia esplicito
+   *  anche con `config` (come `age` sopra): altrimenti il token vincerebbe in
+   *  silenzio sull'impostazione corrente (divergenza d'eredità). */
+  readonly ageBadgeStyle?: AgeBadgeStyle | null
   /** Soglia minima tier qualità (emessa come `qmin` solo quando non-SD per non invalidare la cache). */
   readonly minQuality?: StreamQuality | null
   /** Riga rating custom provider (display). `false` emette `cr=0`. */
@@ -50,8 +56,8 @@ export interface StremioPosterParamsInput {
   readonly sashOrder?: readonly SashBucket[] | null
   readonly badgeStyle?: BadgeStyle
   readonly rankingBadgeStyle?: RankingBadgeStyle
-  /** Standalone extra-badge style: emitted as `xbs` only when defined. */
-  readonly extraBadgeStyle?: ExtraBadgeStyle | null
+  /** Standalone extra-badge style: emitted as `xbs` only when defined (incl. "follow-rank" sentinel). */
+  readonly extraBadgeStyle?: ExtraBadgeStyle | ExtraBadgeFollowRank | null
   /** Font dei testi badge ("inter" = resa storica). */
   readonly badgeFont?: BadgeFont
   /** Quality style: emitted as `qbs` only when non-standard (stable cache). */
@@ -356,6 +362,14 @@ export function buildStremioPosterSearchParams(input: StremioPosterParamsInput):
     if (/^[A-Z]{2}$/.test(ageCountry) && ageCountry !== "GLOBAL") {
       params.set("agecountry", ageCountry)
     }
+  }
+  // Stile pill età (default "standard" = resa storica): solo a badge attivo,
+  // normalizzato fail-closed (mai garbage in URL). Esplicito anche con token
+  // (come `age` sopra): la query vince sul config e l'impostazione corrente
+  // non perde contro il token (stesso contratto config/age, niente divergenza
+  // d'eredità tra preview e Stremio).
+  if (input.ageBadge) {
+    params.set("agebs", isAgeBadgeStyle(input.ageBadgeStyle) ? input.ageBadgeStyle : "standard")
   }
   const mq = parseMinQuality(input.minQuality ?? null)
   if (mq && mq !== "SD") params.set("qmin", mq)

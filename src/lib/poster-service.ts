@@ -21,7 +21,7 @@ import {
 } from "./poster-render-helpers"
 import { LAND_W, LAND_H } from "./image-utils"
 import { normalizeAutomaticAccentHex } from "./accent-color"
-import { renderGenreBadge, renderRankingBadge, renderExtraBadge, renderQualityBadge, renderQualityKnockoutBadge, renderComingSoonRibbon, comingSoonRibbonLayout, renderSVG, buildCustomPresetBadgeSVG, buildHousePresetBadgeSVG } from "./svg-badge"
+import { renderGenreBadge, renderRankingBadge, renderExtraBadge, renderQualityBadge, renderQualityTierBadge, renderQualityKnockoutBadge, renderComingSoonRibbon, comingSoonRibbonLayout, renderSVG, buildCustomPresetBadgeSVG, buildHousePresetBadgeSVG } from "./svg-badge"
 import { buildLogoScrim, logoContrast, logoInkLuminance, logoScrimStrength, posterLogoZoneLuminance } from "./logo-contrast"
 import { renderFirstMatchingNetworkLogoBadge, renderFirstMatchingNetworkRawBadge, renderFirstMatchingNetworkLogoBadgeHybrid, renderFirstMatchingNetworkRawBadgeHybrid, type NetworkCandidate } from "./network-svgs"
 import { computeLogoLayout, logoAlignPadX, PORTRAIT_LOGO_MAX_HEIGHT_PCT, PORTRAIT_LOGO_TOP_OFFSET, LANDSCAPE_LOGO_MAX_WIDTH_PCT, LANDSCAPE_LOGO_MAX_HEIGHT_PCT, LANDSCAPE_LOGO_BOTTOM_MARGIN_PCT, LANDSCAPE_LOGO_TOP_OFFSET, LANDSCAPE_LOGO_SHIFT_X, LANDSCAPE_LOGO_SHIFT_Y } from "./logo-layout"
@@ -41,7 +41,7 @@ import type { WikidataResult } from "./awards"
 import { directorBadgeLabel } from "./awards"
 import type { BadgeT } from "./poster-badge"
 import type { BadgeFont } from "./badge-styles"
-import { isRibbonRankingStyle, isBottomSeparateRatingsStyle, getSeparateRatingsStyleForShape, resolveNumberBadgeBaseOffsetX, type BadgeStyle, type RankingBadgeStyle, type ExtraBadgeStyle, type SeparateRatingsStyle, type SeparateBottomVariant } from "./badge-styles"
+import { isRibbonRankingStyle, isBottomSeparateRatingsStyle, isAgeBadgeStyle, getSeparateRatingsStyleForShape, resolveNumberBadgeBaseOffsetX, normalizeExtraBadgeStyleForRender, DEFAULT_AGE_BADGE_STYLE, type BadgeStyle, type RankingBadgeStyle, type ExtraBadgeStyle, type ExtraBadgeFollowRank, type SeparateRatingsStyle, type SeparateBottomVariant, type AgeBadgeStyle } from "./badge-styles"
 import { normalizeBadgeFont } from "./badge-svg-shared"
 import type { PosterImageFormat } from "@/lib/poster-runtime-cache"
 import { getPresetForUser } from "./badge-preset-store"
@@ -143,8 +143,8 @@ export interface GenerationInput {
   voteAverage: number | null
   badgeStyle: BadgeStyle
   rankingBadgeStyle: RankingBadgeStyle
-  /** Standalone extra-badge style: null = legacy `rankingBadgeStyle` fallback. */
-  extraBadgeStyle?: ExtraBadgeStyle | null
+  /** Standalone extra-badge style: null/sentinel = legacy `rankingBadgeStyle` fallback. */
+  extraBadgeStyle?: ExtraBadgeStyle | ExtraBadgeFollowRank | string | null
   /** Quali componenti del badge genere/rating mostrare (default tutti ON). */
   badgeGenre: boolean
   badgeYear: boolean
@@ -153,9 +153,14 @@ export interface GenerationInput {
   quality?: string | null
   /** Etichetta di classificazione per età già risolta e sanificata dalla
    *  route (null = badge nascosto: disabilitato o dati assenti). Il gruppo
-   *  qualità la compone come pill neutra in fondo allo stack top-right
-   *  (sotto 4K/DV/Atmos), con gli stessi offset/scale/cap della qualità. */
+   *  qualità la compone in stile `ageBadgeStyle` tra tier 4K e formati A/V
+   *  top-right (ordine: qualità, età, formati), con gli stessi offset/scale/cap
+   *  della qualità. */
   ageLabel?: string | null
+  /** Stile della pill di classificazione per età ("standard" = resa storica;
+   *  "knockout" = tag bianco con glifi ritagliati, stesso builder della
+   *  qualità knockout). Assente/invalido = "standard". */
+  ageBadgeStyle?: AgeBadgeStyle | null
   /** Font dei testi badge ("inter" = resa storica; i preset custom/house e i loghi restano invariati). */
   badgeFont?: BadgeFont | null
   /** Stile icone del badge qualità (standard = pill testuale). */
@@ -626,11 +631,15 @@ export async function renderQualityIconBadge(
 }
 
 /**
- * Renderizza la colonna verticale qualità + formati A/V (es. [4K] sopra [DV] sopra [ATMOS]).
+ * Renderizza la colonna verticale qualità + età + formati A/V (es. [4K] sopra
+ * [VM14] sopra [DV] sopra [ATMOS]). Ordine fisso: tier qualità, pill età,
+ * formati — mai indipendente, mai un secondo renderer.
  * Se non ci sono formati o falliscono, ritorna il singolo badge di risoluzione.
- * `ageLabel` (etichetta età già sanificata, es. "VM14"): pill testuale neutra
- * in FONDO allo stack (sotto 4K e formati), con la stessa base 17px e gli
- * stessi offset/scale/cap del gruppo a valle. Senza qualità né formati ma con
+ * `ageLabel` (etichetta età già sanificata, es. "VM14"): pill testuale in
+ * stile `ageStyle` ("standard" = stessa pill neutra della qualità, base 17px;
+ * "knockout" = tag bianco con glifi ritagliati via mask, stesso builder
+ * condiviso della qualità knockout) tra tier e formati, con gli stessi
+ * offset/scale/cap del gruppo a valle. Senza qualità né formati ma con
  * età, il gruppo rende la sola pill età (il badge non richiede il 4K).
  * Senza nessuno dei tre → null (nessun composite, percorso storico intatto).
  */
@@ -644,8 +653,11 @@ export async function renderQualityBadgeGroup(
   font: BadgeFont = "inter",
   /** Etichetta età sanificata (null/"" = assente). */
   ageLabel?: string | null,
+  /** Stile della pill età (default "standard" = resa storica). */
+  ageStyle?: AgeBadgeStyle | null,
 ): Promise<{ png: Buffer; w: number; h: number } | null> {
   const ageText = typeof ageLabel === "string" ? ageLabel.trim() : ""
+  const effAgeStyle: AgeBadgeStyle = isAgeBadgeStyle(ageStyle) ? ageStyle : DEFAULT_AGE_BADGE_STYLE
   const qualityText = typeof quality === "string" ? quality : ""
   const hasQuality = qualityText !== ""
   const isKnockout = qualityBadgeStyle === "knockout"
@@ -660,7 +672,10 @@ export async function renderQualityBadgeGroup(
     if (!resBadge) {
       resBadge = isKnockout
         ? await renderQualityKnockoutBadge(qualityText, pw, normalizeBadgeFont(font))
-        : await renderQualityBadge(qualityText, pw, topLight, normalizeBadgeFont(font))
+        // Standard tier tag: intentionally wider/less-rounded box than the
+        // neutral pill (buildQualityTierBadgeSvg). The age pill below keeps
+        // renderQualityBadge (historic geometry, unchanged).
+        : await renderQualityTierBadge(qualityText, pw, topLight, normalizeBadgeFont(font))
     }
   }
   if (!resBadge && ageText === "") return null
@@ -691,11 +706,17 @@ export async function renderQualityBadgeGroup(
     const icon = await renderQualityIconBadge(FORMAT_ICON_PATHS[fmt], pw, isKnockout && isDolbySingle ? false : topLight)
     if (icon) formatBadges.push(icon)
   }
-  // Pill età neutra: stessa pill testuale standard della qualità (base 17px,
-  // polarità topLight, font badge), solo testo sanificato maiuscolo-minuscolo
-  // preservato (escSvg nel builder, mai HTML grezzo).
-  const renderAgePill = async (): Promise<{ png: Buffer; w: number; h: number } | null> =>
-    ageText === "" ? null : renderQualityBadge(ageText, pw, topLight, normalizeBadgeFont(font))
+  // Pill età in stile `ageStyle`: standard = stessa pill testuale neutra
+  // della qualità (base 17px, polarità topLight, font badge); knockout =
+  // tag bianco con glifi ritagliati (stesso builder condiviso della qualità
+  // knockout: stesso box esterno, niente stroke/gradiente). Testo sanificato
+  // maiuscolo-minuscolo preservato (escSvg nel builder, mai HTML grezzo).
+  const renderAgePill = async (): Promise<{ png: Buffer; w: number; h: number } | null> => {
+    if (ageText === "") return null
+    return effAgeStyle === "knockout"
+      ? renderQualityKnockoutBadge(ageText, pw, normalizeBadgeFont(font))
+      : renderQualityBadge(ageText, pw, topLight, normalizeBadgeFont(font))
+  }
   const agePill = await renderAgePill()
   if (!resBadge && formatBadges.length === 0) {
     // Solo età (niente qualità né formati che abbiano reso): la pill età è
@@ -705,12 +726,12 @@ export async function renderQualityBadgeGroup(
   }
 
   const gap = Math.round(5 * pw / 380)
-  // Vertical stack for every style (knockout included): the tier tag on
-  // top, every verified format below — Dolby like any other format — and
-  // the neutral age pill last (below 4K and formats, never overlapping).
-  // Un singolo elemento resta il bitmap originale (percorso storico
-  // byte-identico: niente ricomposizione per qualità sola o età sola).
-  const allBadges = [...(resBadge ? [resBadge] : []), ...formatBadges, ...(agePill ? [agePill] : [])]
+  // Vertical stack for every style (knockout included), in fixed order:
+  // quality tier on top, age certification second, every verified format
+  // below — Dolby like any other format. Un singolo elemento resta il bitmap
+  // originale (percorso storico byte-identico: niente ricomposizione per
+  // qualità sola o età sola).
+  const allBadges = [...(resBadge ? [resBadge] : []), ...(agePill ? [agePill] : []), ...formatBadges]
   if (allBadges.length === 0) return null
   if (allBadges.length === 1) return allBadges[0]
   const visWidths = allBadges.map((b) => Math.max(1, b.w - TOP_SHADOW_PAD * 2))
@@ -1170,9 +1191,9 @@ export function isCornerAnchoredStyle(v: string | null | undefined): boolean {
 export function resolveTopBadgeStyle(params: {
   readonly topBadgeType: "rank" | "extra" | null | undefined
   readonly rankingBadgeStyle: RankingBadgeStyle
-  readonly extraBadgeStyle?: ExtraBadgeStyle | null
+  readonly extraBadgeStyle?: ExtraBadgeStyle | ExtraBadgeFollowRank | string | null
 }): RankingBadgeStyle {
-  if (params.topBadgeType === "extra") return params.extraBadgeStyle ?? params.rankingBadgeStyle
+  if (params.topBadgeType === "extra") return normalizeExtraBadgeStyleForRender(params.extraBadgeStyle) ?? params.rankingBadgeStyle
   return params.rankingBadgeStyle
 }
 
@@ -1231,7 +1252,7 @@ export function isNumberRightCorner(params: {
 export function isTopBadgeNumberRightCorner(params: {
   readonly topBadgeType: "rank" | "extra" | null | undefined
   readonly rankingBadgeStyle: RankingBadgeStyle
-  readonly extraBadgeStyle?: ExtraBadgeStyle | null
+  readonly extraBadgeStyle?: ExtraBadgeStyle | ExtraBadgeFollowRank | string | null
   readonly ribbonSide: string | null | undefined
   readonly hasTopBadge: boolean
 }): boolean {
@@ -1390,6 +1411,8 @@ export async function generatePosterBuffer(input: GenerationInput): Promise<Buff
     qualityBadgeStyle, videoFormats,
     // Etichetta età (null = badge nascosto: default nei test diretti).
     ageLabel = null,
+    // Stile pill età (assente = "standard" = resa storica).
+    ageBadgeStyle: rawAgeBadgeStyle = null,
     sashOrder,
     topLight, targetCenter, ribbonSide,
     // Nastro stile Netflix all'angolo: default true (comportamento storico per
@@ -1431,6 +1454,9 @@ export async function generatePosterBuffer(input: GenerationInput): Promise<Buff
   const bottomLight = bottomLightOpt ?? topLight
   // Font badge normalizzato (assente/invalido → "inter" = resa storica).
   const badgeFont = normalizeBadgeFont(input.badgeFont)
+  // Stile pill età normalizzato (assente/invalido → "standard" = resa
+  // storica; entra nella chiave solo con l'età presente).
+  const ageBadgeStyle: AgeBadgeStyle = isAgeBadgeStyle(rawAgeBadgeStyle) ? rawAgeBadgeStyle : DEFAULT_AGE_BADGE_STYLE
   // Fresh apply scope (assente/invalido → default condiviso "ranked",
   // fail-closed: senza rank valido rende Standard). Il layout
   // EFFETTIVO si decide sotto, DOPO la selezione del topBadge (il rank
@@ -1910,13 +1936,14 @@ export async function generatePosterBuffer(input: GenerationInput): Promise<Buff
     ? badgeCacheKey("rank", topBadge.type === "extra" ? topBadge.label : `${(topBadge as { rank: number }).rank}:${topBadge!.label}:${(topBadge as { ribbonLabel?: string }).ribbonLabel ?? ""}`, CW, topLight, topBadgeStyle, badgeFont, accentColorRank, ribbonSide, isAnimeRank, effTopBadgeScale, isRankDetached ? "detached" : undefined, rankingBadgeAccent ? "accent" : undefined)
     : null
   const formatsKey = (effectiveFormats && effectiveFormats.length > 0) ? effectiveFormats.join(",") : "none"
-  // L'età entra nella chiave (etichetta distinta = bitmap distinto); assente
-  // = sentinel stabile così le chiavi senza età restano distinte da ogni
-  // etichetta reale (mai collisione con "x": encodeURIComponent("x") === "x").
-  // La chiave usa l'EFFETTIVA (gated dal legacy toggle): con bq=0 il tier
-  // nascosto non entra nella chiave (stesso bitmap dell'age-only senza tier).
+  // L'età entra nella chiave (etichetta distinta = bitmap distinto) insieme
+  // allo stile (stessa etichetta in standard/knockout = bitmap diversi);
+  // assente = sentinel stabile così le chiavi senza età restano byte-identiche
+  // allo storico (lo stile da solo non invalida la cache: senza età non rende
+  // niente). La chiave usa l'EFFETTIVA (gated dal legacy toggle): con bq=0 il
+  // tier nascosto non entra nella chiave (stesso bitmap dell'age-only senza tier).
   const qualityBadgeKey = hasQualityGroup
-    ? badgeCacheKey("quality", effectiveQuality ?? "noquality", CW, topLight, badgeFont, qualityBadgeScale, qualityBadgeStyle ?? "standard", qualityIconPath ?? "std", formatsKey, ageText !== "" ? ageText : "noage")
+    ? badgeCacheKey("quality", effectiveQuality ?? "noquality", CW, topLight, badgeFont, qualityBadgeScale, qualityBadgeStyle ?? "standard", qualityIconPath ?? "std", formatsKey, ageText !== "" ? `${ageText}:${ageBadgeStyle}` : "noage")
     : null
   const comingSoonKey = showComingSoon
     ? badgeCacheKey("comingsoon", comingSoonLabel, CW, badgeFont, topLight, ribbonSide)
@@ -1963,7 +1990,8 @@ export async function generatePosterBuffer(input: GenerationInput): Promise<Buff
               if (topBadge!.type === "extra") {
                 // Extra badges render with the standalone style when set, else
                 // the legacy `rs` fallback (plus the no-ribbon accent rule).
-                return renderExtraBadge(topBadge!.label, topBadgePw, topLight, extraBadgeStyle ?? (rankingBadgeAccent ? "colored" : rankingBadgeStyle), accentColorRank, isRankDetached, badgeFont)
+                // The follow-rank sentinel normalizes to null (own-rank).
+                return renderExtraBadge(topBadge!.label, topBadgePw, topLight, normalizeExtraBadgeStyleForRender(extraBadgeStyle) ?? (rankingBadgeAccent ? "colored" : rankingBadgeStyle), accentColorRank, isRankDetached, badgeFont)
                   .then((r) => { const v = { ...r, isRank: false }; cacheSet(rankBadgeKey, v, ["badge"], BADGE_CACHE_TTL); return v })
               }
               return renderRankingBadge((topBadge as { rank: number }).rank, isRibbonRankingStyle(rankingBadgeStyle) ? badgePw : topBadgePw, topBadge!.label, topLight, rankingBadgeStyle, accentColorRank, ribbonSide, isAnimeRank, isRankDetached, rankingBadgeAccent, (topBadge as { ribbonLabel?: string }).ribbonLabel, badgeFont)
@@ -2018,9 +2046,9 @@ export async function generatePosterBuffer(input: GenerationInput): Promise<Buff
     qualityBadgeKey
       ? (cacheGet<{ png: Buffer; w: number; h: number }>(qualityBadgeKey)
           || coalesceBadgeRender(qualityBadgeKey, async () => {
-              // Gruppo con qualità/formati EFFETTIVI (legacy-gated): con
+              // Gruppo con qualità/formati/stile-età EFFETTIVI (legacy-gated): con
               // bq=0 l'age-only non resuscita il tech stack disabilitato.
-              const res = await renderQualityBadgeGroup(effectiveQuality ?? null, qualityBadgeStyle, effectiveFormats, badgePw, topLight, badgeFont, hasAgeBadge ? ageText : null)
+              const res = await renderQualityBadgeGroup(effectiveQuality ?? null, qualityBadgeStyle, effectiveFormats, badgePw, topLight, badgeFont, hasAgeBadge ? ageText : null, ageBadgeStyle)
               if (res) cacheSet(qualityBadgeKey, res, ["badge"], BADGE_CACHE_TTL)
               return res
             }))

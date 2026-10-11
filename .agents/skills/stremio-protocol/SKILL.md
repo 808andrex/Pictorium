@@ -38,11 +38,10 @@ external addons like AIOMetadata.
 
 Catalog `id` values are emitted so they resolve (now via Pictorium's own `/meta`,
 previously only via AIOMetadata). A bare number (`12345`) is NOT a portable id:
-use `tt...` (IMDb) or `provider:id` (e.g. `tmdb:12345`). Resolution order (helper
-`catalogMetaId` in `src/lib/catalog-handler.ts`):
-1. `imdbId` provided by the source (JustWatch already returns it);
-2. else TMDB `/{type}/{id}/external_ids` (`resolveImdbId`, passes the request key);
-3. else fallback `tmdb:<id>`.
+use `tt...` (IMDb) or `provider:id` (e.g. `tmdb:12345`). Pictorium's own
+catalogs currently emit `tmdb:<id>` unconditionally via `catalogMetaId` in
+`src/lib/catalog-handler.ts`; its `_imdbId` argument is intentionally ignored.
+Do not restore the historical IMDb-first flow.
 
 Never emit a bare numeric `id` as the catalog meta id.
 
@@ -90,12 +89,14 @@ Canonical IDs use the `pictorium-` prefix; legacy `posterium-*` IDs are accepted
 as route aliases (`normalizeCatalogId`) but never emitted.
 
 - `pictorium-jw-movies` / `pictorium-jw-series` — JustWatch StreamingCharts
-- `pictorium-netflix/prime/disney/apple/hbo/paramount-{movies,series}` — FlixPatrol Top 10
-- `pictorium-anime` — MDBList `mdblistAnime`
+- Platform catalogs — JustWatch package rankings with regional FlixPatrol fallback.
+- Anime movies/series — MDBList lists with public fallback.
+- Search/person catalogs — see `PICTORIUM_CATALOGS` for the full inventory.
 
-Warmup: `pictorium-jw-movies`, `pictorium-jw-series`, `pictorium-anime`
-(`WARMUP_CATALOG_IDS`); catalog responses are cached 1h from generation
-(empty catalog 60 s).
+Read `WARMUP_CATALOG_IDS` in `catalog-definitions.ts` for the current warmup set;
+do not duplicate it here. Catalog responses are cached 1h from generation
+(empty catalog 60 s). Scoped credentials follow `resolveUserApiKeys`, not a
+request-only resolver; see the `tmdb-api` skill and `.agents/catalog.md`.
 
 ## Do NOT
 

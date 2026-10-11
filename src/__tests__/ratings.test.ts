@@ -38,7 +38,7 @@ describe("fetchAggregatedRating (D4 — mdblist key nel cache key, D5 — niente
     await fetchAggregatedRating("tt1", "keyBBB")
 
     expect(keys).toHaveLength(2)
-    expect(keys[0]).toMatch(/^mdb:ratings:tt1:/)
+    expect(keys[0]).toMatch(/^mdb:ratings:v2:tt1:/)
     expect(keys[0]).not.toBe(keys[1])
     expect(keys[0]).not.toContain("keyAAA")
     expect(keys[1]).not.toContain("keyBBB")
@@ -118,20 +118,28 @@ describe("fetchAggregatedRating (D4 — mdblist key nel cache key, D5 — niente
     expect(calculateAverageRating(null)).toBeNull()
   })
 
-  it("tmdbFallbackVote riempie sources.tmdb solo se MDBList manca", async () => {
+  it("direct genuine TMDB vote overrides MDBList (precedence), gap-fills on outage, ignores invalid", async () => {
+    // MDBList ok con tmdb + voto diretto genuino → vince il DIRETTO (precedenza
+    // intenzionale: il nativo non è mai coperto dall'aggregatore).
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ ratings: [{ source: "tmdb", value: 8.2 }] }),
+    })))
+    const over = await fetchAggregatedRating("tt_fb2", "k", undefined, { tmdbFallbackVote: 7.0 })
+    expect(over?.sources.tmdb).toBe(7.0)
+    // L'overlay non muta l'oggetto cachato condiviso: senza voto diretto la
+    // stessa entry serve il valore MDBList (8.2), senza nuove fetch.
+    const fetchMock = vi.mocked(fetch)
+    const callsBefore = fetchMock.mock.calls.length
+    const base = await fetchAggregatedRating("tt_fb2", "k")
+    expect(base?.sources.tmdb).toBe(8.2)
+    expect(fetchMock.mock.calls.length).toBe(callsBefore)
+
     // MDBList down (503) + voto diretto → backfill tmdb
     vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 503, headers: { get: () => null } })))
     const down = await fetchAggregatedRating("tt_fb1", "k", undefined, { tmdbFallbackVote: 7.86 })
     expect(down?.sources.tmdb).toBe(7.9)
     expect(down?.sources.imdb).toBeUndefined()
-
-    // MDBList ok con tmdb → vince MDBList, mai sovrascrittura
-    vi.stubGlobal("fetch", vi.fn(async () => ({
-      ok: true,
-      json: async () => ({ ratings: [{ source: "tmdb", value: 8.2 }] }),
-    })))
-    const up = await fetchAggregatedRating("tt_fb2", "k", undefined, { tmdbFallbackVote: 7.0 })
-    expect(up?.sources.tmdb).toBe(8.2)
 
     // Fallback invalido → ignorato
     vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 503, headers: { get: () => null } })))

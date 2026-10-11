@@ -104,7 +104,8 @@ Rating wait is SHARED with the tmdb-details route (same knob).
   identity — without debounce each pixel of drag is a server render (storm).
 
 ### 10. Slot-bound upstream caps, second wave
-- MDBList internal fetch cap 8s; `resolveStreamQuality` → `getExternalIds`
+- MDBList aggregated-rating internal fetch cap is `MDBLIST_TIMEOUT_MS`
+  (1500ms default, see section 2 and `ratings.ts`); `resolveStreamQuality` → `getExternalIds`
   with caller signal + 8s cap. Same rationale as `POSTER_TMDB_TIMEOUT_MS`:
   no unbounded upstream hold on a render slot.
 - `getJWRankings`/`getJWTitles` cache EMPTY results 60s (backdated timestamp).
@@ -125,8 +126,10 @@ Rating wait is SHARED with the tmdb-details route (same knob).
   reintroduce per-format render keys — that triples cold renders and cache
   memory. `?fmt=` stays an explicit override in both directions.
 
-### 12. KV L2 policy (C1, opt-in)
-- L2 (Vercel KV) carries small JSON only (≤64KB, never Buffers — no base64
+### 12. KV L2 policy (C1)
+- L2 is enabled when a KV backend is configured unless `PICTORIUM_KV_CACHE`
+  is explicitly disabled (`0`/`false`/`off`/`no`). Read `cache.ts:isKvL2`.
+- L2 (native Redis or Vercel KV/Upstash) carries small JSON only (≤64KB, never Buffers — no base64
   bloat, no value-limit/cost surprises); writes are fire-and-forget, reads
   only on L1 miss. Keys are self-invalidating (epoch/versions inside), so no
   cross-instance tag invalidation is needed. Poster/badge PNGs stay local.
@@ -147,5 +150,7 @@ Rating wait is SHARED with the tmdb-details route (same knob).
    (negative cache), `catalog-handler.ts` (logo memo), `cache.ts` (KV L2),
    `warmup/route.ts`, `context.tsx` (debounce).
 2. Check each invariant above holds.
-3. Check RENDER_VERSION freshness: run the generator, confirm no diff.
+3. In read-only audits, inspect `RENDER_FILES` and the generated value without
+   running the generator (it writes). Regenerate only in an authorized
+   implementation workflow; do not claim freshness from inspection alone.
 4. Report regressions with `file:line`; propose the minimal fix.

@@ -26,10 +26,12 @@ export async function saveDefaults(ed: PosterEditorCtx): Promise<boolean> {
     badgeYear: ed.defaultBadgeYear,
     badgeRating: ed.defaultBadgeRating,
     badgeQuality: ed.defaultBadgeQuality,
-    // Badge età globale (default OFF, paese IT): persistito come gli altri
-    // default (PUT /api/defaults + localStorage via `d` sotto).
+    // Badge età portrait (default OFF, paese IT): persistito come gli altri
+    // default (PUT /api/defaults + localStorage via `d` sotto); il profilo
+    // landscape (con il suo trio età) viaggia in `landscape` sotto.
     ageBadge: ed.defaultAgeBadge,
     ageCountry: ed.defaultAgeCountry,
+    ageBadgeStyle: ed.defaultAgeBadgeStyle,
     customRatings: ed.defaultCustomRatings,    customRatingEndpoint: endpointForSave,
     customRatingApiKeyHeader: ed.defaultCustomRatingApiKeyHeader ?? "",
     ratingSources: ed.defaultRatingSources,

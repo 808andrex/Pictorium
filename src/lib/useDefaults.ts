@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback, useRef } from "react"
-import type { BadgeStyle, RankingBadgeStyle, ExtraBadgeStyle } from "./badge-styles"
+import type { BadgeStyle, RankingBadgeStyle, ExtraBadgeStyle, ExtraBadgeFollowRank } from "./badge-styles"
 import type { NetworkLogoPosition, PosterLayout, PosterFreshScope, PosterShape } from "./types"
 import { isNetworkLogoPosition, isPosterLayout, isPosterFreshScope, isPosterShape } from "./types"
 import type { LandscapeServerDefaults } from "./server-defaults"
@@ -14,10 +14,12 @@ import { USER_UNLOCK_EVENT, currentPathUuid } from "./user-token"
 import { t } from "./i18n"
 import { normalizeSashOrder, DEFAULT_SASH_ORDER, type SashBucket } from "./badge-priority"
 import { DEFAULT_QUALITY_BADGE_STYLE, type QualityBadgeStyle } from "./badge-styles"
+import { DEFAULT_AGE_BADGE_STYLE, isAgeBadgeStyle, type AgeBadgeStyle } from "./badge-styles"
 import { DEFAULT_BADGE_FONT, isBadgeFont, type BadgeFont } from "./badge-styles"
 import { DEFAULT_SEPARATE_RATINGS_STYLE, isSeparateRatingsStyle, getSeparateBadgeDefaultScale, type SeparateRatingsStyle } from "./badge-styles"
-import { isExtraBadgeStyle } from "./badge-styles"
-import { DEFAULT_QUALITY_BADGE_OFFSET_X, DEFAULT_QUALITY_BADGE_OFFSET_Y, DEFAULT_QUALITY_BADGE_OFFSET_X_LANDSCAPE, DEFAULT_QUALITY_BADGE_OFFSET_Y_LANDSCAPE } from "./badge-styles"
+import { SHAPE_FLAT_TO_LANDSCAPE, snapshotMissingLandscape, independentLandscapeDefaults } from "./visual-presets"
+import { isExtraBadgeStyle, isExtraFollowRank } from "./badge-styles"
+import { DEFAULT_QUALITY_BADGE_OFFSET_X, DEFAULT_QUALITY_BADGE_OFFSET_Y } from "./badge-styles"
 import { KNOWN_VIDEO_FORMATS, isVideoFormat, type VideoFormat } from "./av-specs"
 
 export type RibbonSide = "left" | "right"
@@ -38,7 +40,7 @@ export interface DefaultsState {
   defaultBadgeStyle: BadgeStyle
   defaultRankingBadgeStyle: RankingBadgeStyle
   /** Standalone extra-badge style default (null = legacy `rs` fallback). */
-  defaultExtraBadgeStyle: ExtraBadgeStyle | null
+  defaultExtraBadgeStyle: ExtraBadgeStyle | ExtraBadgeFollowRank | null
   /** Font dei testi badge di default ("inter" = resa storica). */
   defaultBadgeFont: BadgeFont
   /** Stile icone del badge qualità di default (default "standard"). */
@@ -83,10 +85,12 @@ export interface DefaultsState {
   defaultBadgeYear: boolean
   defaultBadgeRating: boolean
   defaultBadgeQuality: boolean
-  /** Badge età testuale di default (default OFF). */
+  /** Badge età testuale di default portrait (default OFF). */
   defaultAgeBadge: boolean
-  /** Paese classificazione età di default ("IT"). Globale, mai auto-cambiato. */
+  /** Paese classificazione età di default portrait ("IT"). Mai auto-cambiato. */
   defaultAgeCountry: string
+  /** Stile pill età di default portrait ("standard" = resa storica). */
+  defaultAgeBadgeStyle: AgeBadgeStyle
   /** Riga rating custom provider di default (default ON). */
   defaultCustomRatings: boolean
   /** Endpoint provider custom rating salvato via UI (non-segreto). */
@@ -200,8 +204,8 @@ export interface DefaultsState {
   topShade: number
   badgeStyle: BadgeStyle
   rankingBadgeStyle: RankingBadgeStyle
-  /** Standalone extra-badge style in editing (null = legacy `rs` fallback). */
-  extraBadgeStyle: ExtraBadgeStyle | null
+  /** Standalone extra-badge style in editing (null = legacy `rs` fallback; "follow-rank" = explicit own-rank). */
+  extraBadgeStyle: ExtraBadgeStyle | ExtraBadgeFollowRank | null
   /** Font dei testi badge del poster in editing. */
   badgeFont: BadgeFont
   /** Stile icone del badge qualità del poster in editing. */
@@ -221,7 +225,7 @@ export interface DefaultsState {
   landscape: LandscapeServerDefaults
 }
 
-const DEFAULTS: DefaultsState = {
+const DEFAULT_FLAT_DEFAULTS: Omit<DefaultsState, "landscape"> = {
   defaultBadgeStyle: "shadow",
   defaultRankingBadgeStyle: "default",
   defaultExtraBadgeStyle: null,
@@ -261,6 +265,7 @@ const DEFAULTS: DefaultsState = {
   defaultBadgeQuality: true,
   defaultAgeBadge: false,
   defaultAgeCountry: DEFAULT_AGE_COUNTRY,
+  defaultAgeBadgeStyle: DEFAULT_AGE_BADGE_STYLE,
   defaultCustomRatings: true,
   defaultRatingSources: ["imdb", "tmdb"],
   defaultSeparateRatings: false,
@@ -340,13 +345,18 @@ const DEFAULTS: DefaultsState = {
   defaultLogoScale: null,
   defaultLogoOffsetX: null,
   defaultLogoOffsetY: null,
-  // Profilo landscape per i nuovi settings: qualità a 0/0 storico (non segue
-  // il nuovo default verticale -10/+10); gli altri offset restano in follow
-  // dei flat. Vedi buildFromStored per gli stored esistenti.
-  landscape: {
-    qualityBadgeOffsetX: DEFAULT_QUALITY_BADGE_OFFSET_X_LANDSCAPE,
-    qualityBadgeOffsetY: DEFAULT_QUALITY_BADGE_OFFSET_Y_LANDSCAPE,
-  },
+}
+
+const DEFAULTS: DefaultsState = {
+  ...DEFAULT_FLAT_DEFAULTS,
+  // New settings start fully independent per shape (task 3B1): every mapped
+  // key explicit (factory portrait look frozen in), quality at the canonical
+  // landscape 0/0 (never the vertical -10/+15) and age at OFF/IT/standard.
+  // Legacy stored profiles keep following until their first portrait edit,
+  // which snapshots atomically in update() below (same pixels, no leak).
+  landscape: independentLandscapeDefaults(
+    DEFAULT_FLAT_DEFAULTS as unknown as Record<string, unknown>,
+  ),
 }
 
 interface StoredDefaults {
@@ -390,7 +400,7 @@ interface StoredDefaults {
   topShade?: number
   badgeStyle?: BadgeStyle
   rankingBadgeStyle?: RankingBadgeStyle
-  extraBadgeStyle?: ExtraBadgeStyle | null
+  extraBadgeStyle?: ExtraBadgeStyle | ExtraBadgeFollowRank | null
   qualityBadgeStyle?: QualityBadgeStyle
   badgeFont?: BadgeFont
   defaultBadgeStyle?: BadgeStyle
@@ -431,6 +441,10 @@ interface StoredDefaults {
   defaultBadgeQuality?: boolean
   defaultAgeBadge?: boolean
   defaultAgeCountry?: string
+  /** Stile pill età (grezzo dallo storage; validato in buildFromStored). */
+  defaultAgeBadgeStyle?: AgeBadgeStyle
+  /** Chiave flat (scritta da saveDefaults/auto-persist): fallback di lettura. */
+  ageBadgeStyle?: AgeBadgeStyle
   defaultCustomRatings?: boolean
   defaultCustomRatingEndpoint?: string
   defaultCustomRatingApiKeyHeader?: string
@@ -542,6 +556,17 @@ function numOrNull(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null
 }
 
+/** Structural equality for flat-edit change detection (arrays by value). */
+function flatValuesEqual(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true
+  if (Array.isArray(a) || Array.isArray(b)) return JSON.stringify(a) === JSON.stringify(b)
+  return false
+}
+
+function isPatchLandscapeRecord(v: unknown): v is Record<string, unknown> {
+  return v !== null && typeof v === "object" && !Array.isArray(v)
+}
+
 /**
  * Profilo landscape idratato con provenance dai dati RAW (vedi nota al sito
  * d'uso in buildFromStored). Ritorna sempre un plain object; non scrive mai
@@ -569,8 +594,55 @@ function seedLandscapeQualityOffsets(
   }
 }
 
+/**
+ * Snapshot esplicito del trio età landscape dai RAW (scelta di migrazione
+ * "preserve current appearance"): al PRIMO load con profilo età mai
+ * configurato, il landscape eredita i valori flat effettivi dello stored
+ * (un legacy ON resta ON in landscape; un legacy OFF resta OFF) così le
+ * modifiche portrait successive non leakkano. Solo assente/null/invalido
+ * viene congelato; `false` esplicito e valori validi non si toccano mai, né
+ * si ri-congelano dopo un update utente (l'auto-persist scrive il profilo
+ * seeded e le hydration successive lo ritrovano intatto — mai reseed dal
+ * portrait aggiornato). Nuovi settings: OFF/IT/standard indipendenti.
+ */
+function seedLandscapeAgeTrio(
+  rawLandscape: Record<string, unknown> | null | undefined,
+  rawFlatAgeBadge: unknown,
+  rawFlatAgeCountry: unknown,
+  rawFlatAgeBadgeStyle: unknown,
+): Pick<LandscapeServerDefaults, "ageBadge" | "ageCountry" | "ageBadgeStyle"> {
+  const land: Record<string, unknown> =
+    rawLandscape !== null && typeof rawLandscape === "object" && !Array.isArray(rawLandscape)
+      ? rawLandscape
+      : {}
+  const landBadge = land.ageBadge
+  const landStyle = typeof land.ageBadgeStyle === "string" ? land.ageBadgeStyle : undefined
+  const flatStyle = typeof rawFlatAgeBadgeStyle === "string" ? rawFlatAgeBadgeStyle : undefined
+  return {
+    ageBadge: typeof landBadge === "boolean"
+      ? landBadge
+      : (typeof rawFlatAgeBadge === "boolean" ? rawFlatAgeBadge : false),
+    ageCountry: normalizeCertificationCountry(land.ageCountry)
+      ?? normalizeCertificationCountry(rawFlatAgeCountry)
+      ?? DEFAULT_AGE_COUNTRY,
+    ageBadgeStyle: isAgeBadgeStyle(landStyle)
+      ? landStyle
+      : (isAgeBadgeStyle(flatStyle) ? flatStyle : DEFAULT_AGE_BADGE_STYLE),
+  }
+}
+
 function buildFromStored(d: StoredDefaults | null): DefaultsState {
-  if (!d) return { ...DEFAULTS }
+  // Empty object (fresh backend GET, ancient store) behaves like no store:
+  // full independent factory profile instead of a sparse follow-shell, so a
+  // first-visit hydration never downgrades the independent initial defaults.
+  if (!d || Object.keys(d).length === 0) {
+    return {
+      ...DEFAULTS,
+      landscape: independentLandscapeDefaults(
+        DEFAULT_FLAT_DEFAULTS as unknown as Record<string, unknown>,
+      ),
+    }
+  }
   // Lo storage è JSON non validato: solo shape noti, mai spazzatura.
   const storedDefaultShape = isPosterShape(d.defaultPosterShape)
     ? d.defaultPosterShape
@@ -587,12 +659,17 @@ function buildFromStored(d: StoredDefaults | null): DefaultsState {
   const storedStyle = isSeparateRatingsStyle(d.separateRatingsStyle)
     ? d.separateRatingsStyle
     : storedDefaultStyle
+  // Trio età flat grezzo (stessa risoluzione dei default sotto): alimenta sia
+  // i flat portrait sia lo snapshot landscape (mai reseed dopo l'update).
+  const flatAgeBadge = d.defaultAgeBadge ?? d.ageBadge
+  const flatAgeCountry = d.defaultAgeCountry ?? d.ageCountry
+  const flatAgeStyle = d.defaultAgeBadgeStyle ?? d.ageBadgeStyle
   return {
     defaultBadgeStyle: d.defaultBadgeStyle ?? d.badgeStyle ?? "shadow",
     defaultRankingBadgeStyle: d.defaultRankingBadgeStyle ?? d.rankingBadgeStyle ?? "default",
-    defaultExtraBadgeStyle: isExtraBadgeStyle(d.defaultExtraBadgeStyle)
-      ? d.defaultExtraBadgeStyle
-      : (isExtraBadgeStyle(d.extraBadgeStyle) ? d.extraBadgeStyle : null),
+    defaultExtraBadgeStyle: isExtraBadgeStyle(d.defaultExtraBadgeStyle) || isExtraFollowRank(d.defaultExtraBadgeStyle)
+      ? (d.defaultExtraBadgeStyle as ExtraBadgeStyle | ExtraBadgeFollowRank)
+      : (isExtraBadgeStyle(d.extraBadgeStyle) || isExtraFollowRank(d.extraBadgeStyle) ? (d.extraBadgeStyle as ExtraBadgeStyle | ExtraBadgeFollowRank) : null),
     defaultBadgeFont: isBadgeFont(d.defaultBadgeFont) ? d.defaultBadgeFont : (isBadgeFont(d.badgeFont) ? d.badgeFont : DEFAULT_BADGE_FONT),
     defaultQualityBadgeStyle: d.defaultQualityBadgeStyle ?? d.qualityBadgeStyle ?? DEFAULT_QUALITY_BADGE_STYLE,
     defaultVideoFormats: Array.isArray(d.defaultVideoFormats)
@@ -630,10 +707,14 @@ function buildFromStored(d: StoredDefaults | null): DefaultsState {
     defaultBadgeYear: d.defaultBadgeYear ?? d.badgeYear ?? true,
     defaultBadgeRating: d.defaultBadgeRating ?? d.badgeRating ?? true,
     defaultBadgeQuality: d.defaultBadgeQuality ?? d.badgeQuality ?? true,
-    // Badge età: default OFF; paese validato fail-closed su "IT" (mai
-    // auto-cambiato con lingua/regione — impostazione globale indipendente).
-    defaultAgeBadge: d.defaultAgeBadge ?? d.ageBadge ?? false,
-    defaultAgeCountry: normalizeCertificationCountry(d.defaultAgeCountry ?? d.ageCountry) ?? DEFAULT_AGE_COUNTRY,
+    // Badge età portrait: default OFF; paese validato fail-closed su "IT"
+    // (mai auto-cambiato con lingua/regione — flat indipendente dalla
+    // regione streaming); il landscape ha il suo profilo (vedi sotto).
+    defaultAgeBadge: typeof flatAgeBadge === "boolean" ? flatAgeBadge : false,
+    defaultAgeCountry: normalizeCertificationCountry(flatAgeCountry) ?? DEFAULT_AGE_COUNTRY,
+    // Stile pill età portrait: validato fail-closed su "standard" (mai
+    // spazzatura dallo storage — come il font badge).
+    defaultAgeBadgeStyle: isAgeBadgeStyle(flatAgeStyle) ? flatAgeStyle : DEFAULT_AGE_BADGE_STYLE,
     defaultCustomRatings: d.defaultCustomRatings ?? d.customRatings ?? true,
     defaultCustomRatingEndpoint: d.defaultCustomRatingEndpoint ?? d.customRatingEndpoint,
     defaultCustomRatingApiKeyHeader: d.defaultCustomRatingApiKeyHeader ?? d.customRatingApiKeyHeader,
@@ -729,9 +810,9 @@ function buildFromStored(d: StoredDefaults | null): DefaultsState {
     topShade: d.topShade ?? d.defaultTopShade ?? 50,
     badgeStyle: d.badgeStyle ?? d.defaultBadgeStyle ?? "shadow",
     rankingBadgeStyle: d.rankingBadgeStyle ?? d.defaultRankingBadgeStyle ?? "default",
-    extraBadgeStyle: isExtraBadgeStyle(d.extraBadgeStyle)
-      ? d.extraBadgeStyle
-      : (isExtraBadgeStyle(d.defaultExtraBadgeStyle) ? d.defaultExtraBadgeStyle : null),
+    extraBadgeStyle: isExtraBadgeStyle(d.extraBadgeStyle) || isExtraFollowRank(d.extraBadgeStyle)
+      ? (d.extraBadgeStyle as ExtraBadgeStyle | ExtraBadgeFollowRank)
+      : (isExtraBadgeStyle(d.defaultExtraBadgeStyle) || isExtraFollowRank(d.defaultExtraBadgeStyle) ? (d.defaultExtraBadgeStyle as ExtraBadgeStyle | ExtraBadgeFollowRank) : null),
     badgeFont: isBadgeFont(d.badgeFont) ? d.badgeFont : (isBadgeFont(d.defaultBadgeFont) ? d.defaultBadgeFont : DEFAULT_BADGE_FONT),
     qualityBadgeStyle: d.qualityBadgeStyle ?? d.defaultQualityBadgeStyle ?? DEFAULT_QUALITY_BADGE_STYLE,
     videoFormats: Array.isArray(d.videoFormats) ? d.videoFormats.filter(isVideoFormat) : null,
@@ -746,11 +827,17 @@ function buildFromStored(d: StoredDefaults | null): DefaultsState {
     // è implicito (nuovi settings) si fissa 0/0 storico, mentre il portrait
     // adotta il nuovo default. Chiave presente-ma-undefined si comporta come
     // assente (??) e non persiste in JSON — nessuna migrazione degli stored.
-    landscape: seedLandscapeQualityOffsets(
-      d.landscape,
-      d.defaultQualityBadgeOffsetX ?? d.qualityBadgeOffsetX,
-      d.defaultQualityBadgeOffsetY ?? d.qualityBadgeOffsetY,
-    ),
+    // Trio età seedato dai RAW (scelta "preserve current appearance"): un
+    // legacy ON resta ON in landscape, un legacy OFF resta OFF; i nuovi
+    // settings partono OFF/IT/standard indipendenti. Mai reseed dopo update.
+    landscape: {
+      ...seedLandscapeQualityOffsets(
+        d.landscape,
+        d.defaultQualityBadgeOffsetX ?? d.qualityBadgeOffsetX,
+        d.defaultQualityBadgeOffsetY ?? d.qualityBadgeOffsetY,
+      ),
+      ...seedLandscapeAgeTrio(d.landscape, flatAgeBadge, flatAgeCountry, flatAgeStyle),
+    },
   }
 }
 
@@ -798,6 +885,9 @@ function defaultsToPayload(d: DefaultsState): Record<string, unknown> {
     badgeYear: d.defaultBadgeYear,
     badgeRating: d.defaultBadgeRating,
     badgeQuality: d.defaultBadgeQuality,
+    ageBadge: d.defaultAgeBadge,
+    ageCountry: d.defaultAgeCountry,
+    ageBadgeStyle: d.defaultAgeBadgeStyle,
     customRatings: d.defaultCustomRatings,
     // Provider OFF = campo nascosto: un endpoint stale/invalido non deve far
     // fallire l'intero PUT 400 (stessa protezione del Salva manuale).
@@ -1030,9 +1120,24 @@ export function useDefaults() {
             return
           }
           const currentStored = readStoredDefaults()
+          const serverLand = isPatchLandscapeRecord(
+            (serverData as Record<string, unknown> | null)?.landscape,
+          )
+            ? ((serverData as Record<string, unknown>).landscape as Record<string, unknown>)
+            : null
+          const localLand = isPatchLandscapeRecord(currentStored?.landscape)
+            ? (currentStored as StoredDefaults & { landscape: Record<string, unknown> }).landscape
+            : null
           const merged: StoredDefaults = {
             ...(serverData || {}),
             ...(currentStored || {}),
+          }
+          // Landscape deep-merge (task 3B1): a shallow spread would drop the
+          // side the other payload doesn't carry (local snapshot keys vs
+          // server backfilled keys). Local wins per key; the seeded/snapshotted
+          // profile survives hydration instead of being rebased.
+          if (serverLand || localLand) {
+            merged.landscape = { ...(serverLand ?? {}), ...(localLand ?? {}) }
           }
           if (!currentStored?.episodeMetadataSource && !currentStored?.defaultEpisodeMetadataSource && serverData.episodeMetadataSource) {
             merged.defaultEpisodeMetadataSource = serverData.episodeMetadataSource
@@ -1153,7 +1258,43 @@ export function useDefaults() {
       for (const key of Object.keys(resolved)) {
         if (LIVE_DRAFT_KEYS.has(key)) touchedLiveRef.current.add(key)
       }
-      return { ...prev, ...resolved }
+      // Strict shape independence (task 3B1): a portrait (flat) edit freezes
+      // the PRE-EDIT effective value into the landscape profile for every
+      // changed key the profile still inherits — atomically with the edit, so
+      // there is no window where the landscape follows the new flat (the
+      // leak the old `land ?? flat` read had). Changed-only (surgical
+      // sparsity preserved: untouched keys keep inheriting, pixels identical
+      // either way); explicit profile keys (incl. logo/extra `null`s) are
+      // never overwritten, never rebased after the edit. Pure landscape
+      // patches (no flat change) snapshot nothing.
+      const changedFlatKeys = Object.keys(SHAPE_FLAT_TO_LANDSCAPE).filter(
+        (flatKey) =>
+          flatKey in resolved &&
+          !flatValuesEqual(
+            (resolved as unknown as Record<string, unknown>)[flatKey],
+            (prev as unknown as Record<string, unknown>)[flatKey],
+          ),
+      )
+      if (changedFlatKeys.length === 0) return { ...prev, ...resolved }
+      const prevLand = (
+        isPatchLandscapeRecord(prev.landscape)
+          ? prev.landscape
+          : {}
+      ) as unknown as Record<string, unknown>
+      const patchLand = isPatchLandscapeRecord(resolved.landscape)
+        ? (resolved.landscape as unknown as Record<string, unknown>)
+        : null
+      const adds = snapshotMissingLandscape(
+        prev as unknown as Record<string, unknown>,
+        patchLand ? { ...prevLand, ...patchLand } : prevLand,
+        changedFlatKeys,
+      )
+      if (Object.keys(adds).length === 0 && !patchLand) return { ...prev, ...resolved }
+      return {
+        ...prev,
+        ...resolved,
+        landscape: { ...prevLand, ...adds, ...(patchLand ?? {}) },
+      }
     })
   }, [])
 

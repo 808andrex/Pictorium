@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs"
 import path from "node:path"
 import { DATA_DIR } from "@/lib/data-dir"
 import { createLogger } from "@/lib/logger"
-import type { BadgeStyle, RankingBadgeStyle, QualityBadgeStyle, BadgeFont, SeparateRatingsStyle, ExtraBadgeStyle } from "@/lib/badge-styles"
+import type { BadgeStyle, RankingBadgeStyle, QualityBadgeStyle, BadgeFont, SeparateRatingsStyle, ExtraBadgeStyle, ExtraBadgeFollowRank, AgeBadgeStyle } from "@/lib/badge-styles"
 import type { StreamQuality } from "@/lib/quality-tiers"
 import type { SashBucket } from "@/lib/badge-priority"
 import type { VideoFormat } from "@/lib/av-specs"
@@ -21,9 +21,10 @@ const log = createLogger("server-defaults")
 /**
  * Landscape render defaults: same tunable fields as portrait plus the shared
  * visuals that may diverge per shape (styles, toggles, sash priority, A/V
- * formats, network placement, pre-release, ribbon). Always shared, never per
- * shape: vote sources (`ratingSources`), Top 20 source, region, date format,
- * API keys/catalogs, logo fit and rotations (already split elsewhere).
+ * formats, network placement, pre-release, ribbon, age certification).
+ * Always shared, never per shape: vote sources (`ratingSources`), Top 20
+ * source, region, date format, API keys/catalogs, logo fit and rotations
+ * (already split elsewhere).
  * Absent keys follow portrait flats; explicit `false`/`[]`/`0` win over
  * flats, `null` counts as absent (logo scale/offset keep their own
  * null-means-auto/zero contract below).
@@ -71,8 +72,8 @@ export interface LandscapeServerDefaults {
   badgeStyle?: BadgeStyle
   /** Rank badge style ("default" = auto-detect). */
   rankingBadgeStyle?: RankingBadgeStyle
-  /** Standalone extra-badge style (absent = legacy `rs`). */
-  extraBadgeStyle?: ExtraBadgeStyle | null
+  /** Standalone extra-badge style (absent/null = inherit the flat; "follow-rank" = explicit own-rank). */
+  extraBadgeStyle?: ExtraBadgeStyle | ExtraBadgeFollowRank | null
   /** Badge text font ("inter" historic default). */
   badgeFont?: BadgeFont | null
   /** Quality badge icon style (standard = text pill). */
@@ -85,6 +86,24 @@ export interface LandscapeServerDefaults {
   badgeYear?: boolean
   badgeRating?: boolean
   badgeQuality?: boolean
+  /**
+   * Badge età testuale per-shape (default OFF = flat portrait).
+   * Assente/null = segue il flat portrait; `false` esplicito vince sul flat
+   * (un portrait ON non attiva mai un landscape mai configurato).
+   */
+  ageBadge?: boolean
+  /**
+   * Paese della classificazione età per-shape (default = flat portrait, a sua
+   * volta "IT"). Assente/null/invalido = segue il flat; mai auto-cambiato con
+   * lingua UI o regione streaming.
+   */
+  ageCountry?: string
+  /**
+   * Stile della pill di classificazione per età per-shape (default = flat
+   * portrait, a sua volta "standard" = resa storica). Assente/null/invalido =
+   * segue il flat (fail-closed, mai spazzatura nel render).
+   */
+  ageBadgeStyle?: AgeBadgeStyle | null
   /** Minimum streaming quality tier (SD < HD < FHD < 4K). */
   minQuality?: StreamQuality
   /** Custom rating provider row (display). */
@@ -94,6 +113,12 @@ export interface LandscapeServerDefaults {
   networkLogo?: boolean
   /** Network logo placement ("auto" = dynamic mirror, "top" = ribbon-side corner). */
   networkLogoPosition?: import("@/lib/types").NetworkLogoPosition
+  /**
+   * Logo-block alignment override ("left"/"center"); absent/null = follow the
+   * flat (flat null = per-shape auto: portrait "center", landscape "left").
+   * Task 3B2: the last global-only visual default with a shape contract.
+   */
+  logoAlign?: "left" | "center" | null
   /** Pre-digital effect (darken + Coming Soon badge, movies only). */
   preRelease?: boolean
   ribbonSide?: "left" | "right"
@@ -129,8 +154,8 @@ export function effectiveDefaultsForShape(defaults: ServerDefaults, shape: "post
 export interface ServerDefaults {
   badgeStyle?: BadgeStyle
   rankingBadgeStyle?: RankingBadgeStyle
-  /** Standalone extra-badge style (flat-only): absent = legacy `rs` fallback. */
-  extraBadgeStyle?: ExtraBadgeStyle | null
+  /** Standalone extra-badge style (flat-only): absent/null = legacy `rs` fallback; flat "follow-rank" also resolves own-rank. */
+  extraBadgeStyle?: ExtraBadgeStyle | ExtraBadgeFollowRank | null
   /** Font dei testi badge ("inter" = resa storica). */
   badgeFont?: BadgeFont | null
   /** Stile icone del badge qualità (standard = pill testuale). */
@@ -153,11 +178,17 @@ export interface ServerDefaults {
   badgeYear?: boolean
   badgeRating?: boolean
   badgeQuality?: boolean
-  /** Badge testuale di classificazione per età (default OFF). Globale. */
+  /** Badge testuale di classificazione per età (default OFF). Flat portrait:
+   *  il profilo `landscape` sopra può divergere per forma (assente = segue). */
   ageBadge?: boolean
-  /** Paese della classificazione età (default "IT"). Globale, indipendente
-   *  da lingua UI e regione streaming. */
+  /** Paese della classificazione età (default "IT"). Flat portrait, profilo
+   *  `landscape` sopra per la forma orizzontale. Globale rispetto a lingua UI
+   *  e regione streaming (mai auto-cambiato). */
   ageCountry?: string
+  /** Stile della pill di classificazione per età (default "standard" = resa
+   *  storica). Flat portrait come il toggle età (profilo `landscape` sopra
+   *  per la forma orizzontale). */
+  ageBadgeStyle?: AgeBadgeStyle | null
   /** Soglia minima tier qualità streaming (SD < HD < FHD < 4K): sotto soglia niente badge. Default SD. */
   minQuality?: StreamQuality
   /** Riga rating custom provider (display). Default ON quando il provider è configurato. */
@@ -234,8 +265,10 @@ export interface ServerDefaults {
   posterLayout?: import("@/lib/types").PosterLayout
   /** Fresh apply scope globale ("ranked" = default: solo con rank; "all" = override esplicito). */
   posterFreshScope?: import("@/lib/types").PosterFreshScope
-  /** Allineamento blocco logo/metadati (default di formato se assente). */
-  logoAlign?: "left" | "center"
+  /** Allineamento blocco logo/metadati (null = default di formato: portrait
+   *  "center", landscape "left"). Flat portrait E fallback per il profilo
+   *  `landscape` assente/nullo. */
+  logoAlign?: "left" | "center" | null
   episodeMetadataSource?: "tmdb" | "tvdb"
   /** Regione classifiche JustWatch/FlixPatrol + lingua titoli (codice JW, es. "IT"). */
   region?: string
@@ -418,6 +451,17 @@ function defaultsFromEnv(): ServerDefaults {
   return d
 }
 const ENV_DEFAULTS: ServerDefaults = defaultsFromEnv()
+
+/**
+ * Instance env defaults (task 3B1): the PUT merge snapshots pre-edit
+ * effective values into the landscape profile, and the effective value
+ * includes these env defaults — otherwise an env-covered flat would freeze
+ * as `undefined` and lose the operator's instance default on first edit.
+ * Returns a copy (never the shared object).
+ */
+export function getInstanceEnvDefaults(): ServerDefaults {
+  return { ...ENV_DEFAULTS }
+}
 
 let cached: ServerDefaults | null = null
 // Revisione epoch vista insieme a `cached`: se l'epoch globale è avanzata,

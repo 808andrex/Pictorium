@@ -128,6 +128,19 @@ describe("cinemeta (voto IMDb gratis senza chiave)", () => {
     expect(seen.some((u) => u.includes("/meta/"))).toBe(false)
   })
 
+  it("waiter coalesced abortito: esce subito, il trasporto condiviso resta vivo", async () => {
+    let release!: (v: Response) => void
+    const gate = new Promise<Response>((resolve) => { release = resolve })
+    globalThis.fetch = vi.fn(async () => gate)
+    const owner = fetchCinemetaRating("tt_wait_abort", "movie")
+    const waiterCtrl = new AbortController()
+    const waiter = fetchCinemetaRating("tt_wait_abort", "movie", waiterCtrl.signal)
+    waiterCtrl.abort()
+    await expect(waiter).rejects.toSatisfy((e) => e instanceof DOMException || e instanceof Error)
+    release(jsonResponse({ meta: { imdbRating: "8.8" } }))
+    await expect(owner).resolves.toBe(8.8)
+  })
+
   it("senza wantImdb → Cinemeta mai chiamato", async () => {
     const seen: string[] = []
     globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {

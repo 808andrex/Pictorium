@@ -7,7 +7,8 @@
  *   stored value kept (Standard hides it).
  * - BadgeDefaultsSection (settings, portrait AND landscape): preset block,
  *   then layout card, then the remaining controls; scoped setters/inheritance
- *   intact (portrait=flat, landscape=profile override, reset clears override).
+ *   intact (portrait=flat, landscape=profile override; portrait edits snapshot
+ *   pre-edit into the profile, resets restore independent shape defaults).
  * Real-DOM order assertions (compareDocumentPosition / firstElementChild),
  * never string matching. No renderer/output behavior is touched.
  */
@@ -165,12 +166,14 @@ describe("settings defaults order: presets, then layout, then rest", () => {
     expect(screen.queryByTestId("fresh-scope-selector")).toBeNull()
     fireEvent.click(freshRadio)
     expect(ctx().defaultPosterLayout).toBe("fresh")
-    expect(ctx().landscape.posterLayout).toBeUndefined()
+    // 3B1: the inherited key freezes the pre-edit flat instead of following it.
+    expect(ctx().landscape.posterLayout).toBe("standard")
     const scopeSelect = screen.getByTestId("fresh-scope-select")
     expect(scopeSelect).toBeEnabled()
     fireEvent.change(scopeSelect, { target: { value: "all" } })
     expect(ctx().defaultPosterFreshScope).toBe("all")
-    expect(ctx().landscape.posterFreshScope).toBeUndefined()
+    // 3B1: the inherited key freezes the pre-edit flat instead of following it.
+    expect(ctx().landscape.posterFreshScope).toBe("ranked")
     // Card skins reuse the same scope control with generic wording.
     fireEvent.click(
       within(layoutGroup()).getByRole("radio", { name: "ui.posterLayoutStremio" }),
@@ -180,7 +183,7 @@ describe("settings defaults order: presets, then layout, then rest", () => {
     expect(screen.getByText("ui.posterLayoutScopeHint")).toBeTruthy()
   })
 
-  it("landscape writes only the profile override; reset restores flat inheritance", async () => {
+  it("landscape writes only the profile override; reset restores independent shape defaults", async () => {
     const { ctx } = renderBadge("landscape")
     await act(async () => {})
     const presetTitle = screen.getByText("ui.configPresetTitle")
@@ -200,8 +203,10 @@ describe("settings defaults order: presets, then layout, then rest", () => {
       name: "ui.reset · ui.posterShapeLandscape",
     })
     fireEvent.click(reset)
-    expect(ctx().landscape.posterLayout).toBeUndefined()
-    expect(ctx().landscape.posterFreshScope).toBeUndefined()
+    // 3B1: reset materializes the current portrait effective (independent),
+    // never clear-to-follow.
+    expect(ctx().landscape.posterLayout).toBe("standard")
+    expect(ctx().landscape.posterFreshScope).toBe("ranked")
     expect(ctx().defaultPosterLayout).toBe("standard")
   })
 })

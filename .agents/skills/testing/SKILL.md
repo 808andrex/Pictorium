@@ -1,8 +1,7 @@
 ---
 name: testing
 description: >
-  Test commands and workflow for Pictorium — Vitest unit suite (~771 tests,
-  92 files), Playwright E2E (pictorium-visual.spec.ts + pictorium-smoke.spec.ts + pictorium-catalog-meta.spec.ts),
+  Test commands and workflow for Pictorium — Vitest unit suite, Playwright E2E (pictorium-visual.spec.ts + pictorium-smoke.spec.ts + pictorium-catalog-meta.spec.ts),
   the deterministic mock server (e2e/mock-server.mjs), snapshot update policy,
   and the full `npm run verify` gate (tsc + eslint + vitest + next build).
   Trigger: "run tests", "vitest", "playwright", "snapshot", "e2e", "test fails",
@@ -20,8 +19,8 @@ npx vitest          # watch mode
 npx vitest run --coverage
 ```
 
-- ~771 tests / 92 files across store, API routes, React components, badge SVG,
-  poster-fit, utilities.
+- Tests cover store, API routes, React components, badge SVG, poster-fit and
+  utilities. Read the current runner output for counts; do not hardcode totals.
 - `pretest` auto-regenerates RENDER_VERSION (and app version) before running.
 - To run one file: `npx vitest run src/__tests__/poster-render-deadline.test.ts`.
 
@@ -29,7 +28,8 @@ npx vitest run --coverage
 
 ```bash
 npx playwright install chromium     # first time
-npx playwright test e2e/pictorium-visual.spec.ts    # visual regression (4 UI + 21 poster API)
+npx playwright test e2e/pictorium-visual.spec.ts    # UI and poster visual regression
+npx playwright test e2e/pictorium-parity.spec.ts    # preview vs mapped Stremio parity
 npx playwright test e2e/pictorium-smoke.spec.ts     # functional smoke
 npx playwright test e2e/            # everything
 npm run e2e:ui                      # Playwright UI runner
@@ -56,8 +56,8 @@ npm run e2e:ui                      # Playwright UI runner
 npm run verify    # tsc --noEmit && eslint . && vitest run && next build
 ```
 
-Run this once before the final commit that contains code changes. It is exactly what the
-`poster-render` agent's workflow ends with. During work, run only the narrow relevant
+Scheduling is defined ONLY by `AGENTS.md` → Verification Strategy: run the
+full batch before push/integration, not at intermediate commits or chat closure. During work, run only the narrow relevant
 tests; do not run the full gate for micro-tasks or intermediate refactors. For
 docs-only tasks (no code/render/deps/config changes), static read + `git diff` is
 sufficient. Do not repeat the full gate before push if the exact code/config/lock/render-asset
@@ -71,5 +71,9 @@ Implementation-ready without gate is `verification pending`, not verified.
 ## Rules
 
 - Never update snapshots to hide a real divergence — fix the code instead.
-- Render-affecting changes require a final visual pass (hard gate at the final commit, see `.agents/visual-testing.md` for cached-vs-fresh scheduling; not a clean run per edit).
+- Render-affecting changes require the final visual gate before push/integration.
+  Follow `AGENTS.md` for scheduling and `.agents/visual-testing.md` for commands.
+- URL, mapping or precedence changes also require the relevant URL unit tests and
+  `e2e/pictorium-parity.spec.ts` in the final batch; API screenshots alone do not
+  establish preview/final parity. The CI visual job runs only the visual spec.
 - Mock server is deterministic — don't rely on the live network in tests.

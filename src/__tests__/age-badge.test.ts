@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 import sharp from "sharp"
 import { DEFAULT_AGE_COUNTRY, sanitizeAgeLabel } from "@/lib/certification"
+import { AGE_BADGE_STYLES, DEFAULT_AGE_BADGE_STYLE, isAgeBadgeStyle } from "@/lib/badge-styles"
 import {
   resolveAgeBadgeRequest,
   resolvePosterRenderConfig,
@@ -9,11 +10,13 @@ import {
 import { buildStremioPosterSearchParams } from "@/lib/stremio-poster-params"
 import { normalizePosterCacheParams } from "@/lib/poster-runtime-cache"
 import { buildDefaultsPreviewUrl, buildPreviewUrl } from "@/lib/poster-url"
-import { generatePosterBuffer, renderQualityBadgeGroup, type GenerationInput } from "@/lib/poster-service"
+import { generatePosterBuffer, renderQualityBadgeGroup, renderQualityIconBadge, type GenerationInput } from "@/lib/poster-service"
+import { renderQualityBadge, renderQualityKnockoutBadge } from "@/lib/svg-badge"
 import { STD_W, STD_H } from "@/lib/poster-render-helpers"
+import { TOP_SHADOW_PAD } from "@/lib/badge-svg-shared"
 import type { WikidataResult } from "@/lib/awards"
 import type { ServerDefaults } from "@/lib/server-defaults"
-import type { VideoFormat } from "@/lib/av-specs"
+import { FORMAT_ICON_PATHS, type VideoFormat } from "@/lib/av-specs"
 
 function baseInput(overrides: Partial<PosterRenderConfigInput> = {}): PosterRenderConfigInput {
   return {
@@ -110,6 +113,62 @@ describe("resolveAgeBadgeRequest", () => {
   })
 })
 
+describe("resolveAgeBadgeRequest style (agebs)", () => {
+  it("accepts standard/knockout and rejects invalid values", () => {
+    expect(AGE_BADGE_STYLES).toEqual(["standard", "knockout"])
+    expect(DEFAULT_AGE_BADGE_STYLE).toBe("standard")
+    expect(isAgeBadgeStyle("standard")).toBe(true)
+    expect(isAgeBadgeStyle("knockout")).toBe(true)
+    expect(isAgeBadgeStyle("mono")).toBe(false)
+    expect(isAgeBadgeStyle("color")).toBe(false)
+    expect(isAgeBadgeStyle("")).toBe(false)
+    expect(isAgeBadgeStyle("KNOCKOUT")).toBe(false)
+    expect(isAgeBadgeStyle(null)).toBe(false)
+    expect(isAgeBadgeStyle(undefined)).toBe(false)
+  })
+
+  it("defaults to standard", () => {
+    expect(resolveAgeBadgeRequest(new URLSearchParams(), null, {}, null).ageBadgeStyle).toBe("standard")
+  })
+
+  it("query wins over token and defaults", () => {
+    const r = resolveAgeBadgeRequest(
+      new URLSearchParams({ agebs: "knockout" }),
+      { ageBadgeStyle: "standard" } as never,
+      { ageBadgeStyle: "standard" },
+      null,
+    )
+    expect(r.ageBadgeStyle).toBe("knockout")
+  })
+
+  it("present-but-invalid query collapses to standard (fail-closed, no inheritance)", () => {
+    const r = resolveAgeBadgeRequest(
+      new URLSearchParams({ agebs: "garbage" }),
+      { ageBadgeStyle: "knockout" } as never,
+      { ageBadgeStyle: "knockout" },
+      null,
+    )
+    expect(r.ageBadgeStyle).toBe("standard")
+  })
+
+  it("token participates between query and defaults", () => {
+    const r = resolveAgeBadgeRequest(
+      new URLSearchParams(),
+      { ageBadgeStyle: "knockout" } as never,
+      { ageBadgeStyle: "standard" },
+      null,
+    )
+    expect(r.ageBadgeStyle).toBe("knockout")
+  })
+
+  it("falls back through effective then flat defaults", () => {
+    expect(resolveAgeBadgeRequest(new URLSearchParams(), null, { ageBadgeStyle: "knockout" }, null).ageBadgeStyle).toBe("knockout")
+    expect(resolveAgeBadgeRequest(new URLSearchParams(), null, {}, { ageBadgeStyle: "knockout" }).ageBadgeStyle).toBe("knockout")
+    // Invalid stored values collapse to standard (never break the render).
+    expect(resolveAgeBadgeRequest(new URLSearchParams(), null, { ageBadgeStyle: "garbage" } as never, null).ageBadgeStyle).toBe("standard")
+  })
+})
+
 describe("resolvePosterRenderConfig age pair", () => {
   it("resolves ageBadge/ageCountry with global-only chain (no mapping)", () => {
     const r = resolvePosterRenderConfig(baseInput({
@@ -132,6 +191,20 @@ describe("resolvePosterRenderConfig age pair", () => {
     const r = resolvePosterRenderConfig(baseInput())
     expect(r.ageBadge).toBe(false)
     expect(r.ageCountry).toBe("IT")
+  })
+
+  it("threads the global-only age style (query > token > defaults > standard)", () => {
+    expect(resolvePosterRenderConfig(baseInput()).ageBadgeStyle).toBe("standard")
+    expect(resolvePosterRenderConfig(baseInput({
+      searchParams: new URLSearchParams({ agebs: "knockout" }),
+    })).ageBadgeStyle).toBe("knockout")
+    expect(resolvePosterRenderConfig(baseInput({
+      searchParams: new URLSearchParams({ agebs: "garbage" }),
+      sd: { ageBadgeStyle: "knockout" },
+    })).ageBadgeStyle).toBe("standard")
+    expect(resolvePosterRenderConfig(baseInput({
+      sd: { ageBadgeStyle: "knockout" },
+    })).ageBadgeStyle).toBe("knockout")
   })
 })
 
@@ -194,6 +267,31 @@ describe("poster cache key age handling", () => {
     const us = normalizePosterCacheParams(new URLSearchParams("age=1&agecountry=US")).toString()
     const it = normalizePosterCacheParams(new URLSearchParams("age=1&agecountry=IT")).toString()
     expect(us).not.toBe(it)
+  })
+})
+
+describe("poster cache key age-style handling (agebs)", () => {
+  it("keeps agebs in the allowlist", () => {
+    expect(normalizePosterCacheParams(new URLSearchParams("agebs=knockout")).get("agebs")).toBe("knockout")
+    expect(normalizePosterCacheParams(new URLSearchParams("agebs=standard")).get("agebs")).toBe("standard")
+  })
+
+  it("keeps distinct styles on distinct keys", () => {
+    const ko = normalizePosterCacheParams(new URLSearchParams("agebs=knockout")).toString()
+    const std = normalizePosterCacheParams(new URLSearchParams("agebs=standard")).toString()
+    expect(ko).not.toBe(std)
+  })
+
+  it("collapses invalid values onto the default key", () => {
+    const garbage = normalizePosterCacheParams(new URLSearchParams("agebs=garbage")).toString()
+    const explicit = normalizePosterCacheParams(new URLSearchParams("agebs=standard")).toString()
+    expect(garbage).toBe(explicit)
+  })
+
+  it("keeps absence distinct from explicit standard (absence may inherit knockout)", () => {
+    const absent = normalizePosterCacheParams(new URLSearchParams("age=1")).toString()
+    const explicit = normalizePosterCacheParams(new URLSearchParams("age=1&agebs=standard")).toString()
+    expect(absent).not.toBe(explicit)
   })
 })
 
@@ -429,5 +527,98 @@ describe("generatePosterBuffer age + disabled quality (production regression)", 
       ageLabel: null,
     }))
     expect(absent.equals(explicit)).toBe(true)
+  })
+})
+
+describe("renderQualityBadgeGroup age style + order (quality, age, formats)", () => {
+  const PW = 380
+  const GAP = Math.round(5 * PW / 380)
+
+  async function rowBrightness(png: Buffer): Promise<number[]> {
+    const { data, info } = await sharp(png).raw().toBuffer({ resolveWithObject: true })
+    const channels = info.channels
+    const rows: number[] = []
+    for (let y = 0; y < info.height; y++) {
+      let sum = 0
+      let n = 0
+      for (let x = 0; x < info.width; x++) {
+        const i = (y * info.width + x) * channels
+        const a = channels >= 4 ? data[i + 3] : 255
+        if (a > 128) {
+          sum += (data[i] + data[i + 1] + data[i + 2]) / 3
+          n++
+        }
+      }
+      rows.push(n > 0 ? sum / n : 0)
+    }
+    return rows
+  }
+
+  function bandMean(rows: number[], from: number, to: number): number {
+    const slice = rows.slice(from, to)
+    return slice.reduce((s, v) => s + v, 0) / slice.length
+  }
+
+  it("renders knockout age alone (white tag, distinct from standard)", async () => {
+    const std = await renderQualityBadgeGroup(null, "standard", null, PW, false, "inter", "VM14", "standard")
+    const ko = await renderQualityBadgeGroup(null, "standard", null, PW, false, "inter", "VM14", "knockout")
+    expect(std).not.toBeNull()
+    expect(ko).not.toBeNull()
+    expect(ko!.png.equals(std!.png)).toBe(false)
+    // Knockout tag body is opaque white: middle rows average near-white.
+    const rows = await rowBrightness(ko!.png)
+    const mid = Math.floor(rows.length / 2)
+    expect(bandMean(rows, mid - 2, mid + 3)).toBeGreaterThan(180)
+  })
+
+  it("defaults to standard when the style is absent or invalid", async () => {
+    const omitted = await renderQualityBadgeGroup(null, "standard", null, PW, false, "inter", "VM14")
+    const explicit = await renderQualityBadgeGroup(null, "standard", null, PW, false, "inter", "VM14", "standard")
+    const garbage = await renderQualityBadgeGroup(null, "standard", null, PW, false, "inter", "VM14", "garbage" as never)
+    expect(omitted).not.toBeNull()
+    expect(omitted!.png.equals(explicit!.png)).toBe(true)
+    expect(garbage!.png.equals(explicit!.png)).toBe(true)
+  })
+
+  it("stacks quality, knockout age, then formats top-to-bottom", async () => {
+    const q = await renderQualityBadge("4K", PW, true, "inter")
+    const ko = await renderQualityKnockoutBadge("VM14", PW, "inter")
+    const icon = await renderQualityIconBadge(FORMAT_ICON_PATHS["imax"], PW, true)
+    expect(icon).not.toBeNull()
+    const group = await renderQualityBadgeGroup("4K", "standard", ["imax"], PW, true, "inter", "VM14", "knockout")
+    expect(group).not.toBeNull()
+    const vq = q.h - TOP_SHADOW_PAD * 2
+    const va = ko.h - TOP_SHADOW_PAD * 2
+    const vf = icon!.h - TOP_SHADOW_PAD * 2
+    // Structural: all three bands plus gaps (order-independent sum).
+    expect(group!.h).toBe(TOP_SHADOW_PAD * 2 + vq + GAP + va + GAP + vf)
+    const rows = await rowBrightness(group!.png)
+    // Quality first (dark pill on light tops), age second (white tag).
+    expect(bandMean(rows, TOP_SHADOW_PAD, TOP_SHADOW_PAD + vq)).toBeLessThan(120)
+    expect(bandMean(rows, TOP_SHADOW_PAD + vq + GAP, TOP_SHADOW_PAD + vq + GAP + va)).toBeGreaterThan(180)
+    // The bottom band is the format icon, not the age tag.
+    expect(bandMean(rows, group!.h - TOP_SHADOW_PAD - vf, group!.h - TOP_SHADOW_PAD)).toBeLessThan(150)
+  })
+
+  it("keeps quality-then-formats stacking without age (style alone invents nothing)", async () => {
+    const group = await renderQualityBadgeGroup("4K", "standard", ["imax"], PW, true, "inter", null, "knockout")
+    const q = await renderQualityBadge("4K", PW, true, "inter")
+    const icon = await renderQualityIconBadge(FORMAT_ICON_PATHS["imax"], PW, true)
+    expect(group).not.toBeNull()
+    expect(icon).not.toBeNull()
+    expect(group!.h).toBe(TOP_SHADOW_PAD * 2 + (q.h - TOP_SHADOW_PAD * 2) + GAP + (icon!.h - TOP_SHADOW_PAD * 2))
+  })
+
+  it("renders age between quality and formats without a tier (missing quality)", async () => {
+    const group = await renderQualityBadgeGroup(null, "standard", ["imax"], PW, true, "inter", "VM14", "knockout")
+    const ko = await renderQualityKnockoutBadge("VM14", PW, "inter")
+    const icon = await renderQualityIconBadge(FORMAT_ICON_PATHS["imax"], PW, true)
+    expect(group).not.toBeNull()
+    expect(icon).not.toBeNull()
+    const va = ko.h - TOP_SHADOW_PAD * 2
+    expect(group!.h).toBe(TOP_SHADOW_PAD * 2 + va + GAP + (icon!.h - TOP_SHADOW_PAD * 2))
+    const rows = await rowBrightness(group!.png)
+    // Age on top (white tag), formats below.
+    expect(bandMean(rows, TOP_SHADOW_PAD, TOP_SHADOW_PAD + va)).toBeGreaterThan(180)
   })
 })

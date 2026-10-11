@@ -84,8 +84,17 @@ function seedLandscapeConcrete() {
   }))
 }
 
-function expectSparseNullHereditary(c: PosterEditorCtx) {
-  expect(c.landscape.badgeFont).toBeNull()
+/**
+ * Recovery 3B1: the FIRST portrait edit (here: customize() below) freezes the
+ * pre-edit effective value into inheriting profile keys — a stored `null` on
+ * an inherit key is "follow the flat", not an explicit choice, so the
+ * boundary materializes what the renderer showed (factory "inter" for the
+ * font, whose flat customize() then moves to "oswald"). Later portrait
+ * presets never rebase it. Keys no portrait edit ever touches (formats,
+ * quality style here) stay sparse-null and keep following.
+ */
+function expectFrozenInheritBoundary(c: PosterEditorCtx) {
+  expect(c.landscape.badgeFont).toBe("inter")
   expect(c.landscape.videoFormats).toBeNull()
 }
 
@@ -227,8 +236,8 @@ describe("quick presets natural+transform isolated", () => {
     expectPortraitNatural(c)
     // Altro formato: full URL landscape reale invariato (freeze eredità, non output mosso).
     expect(previewUrl(c, "landscape")).toBe(landBefore)
-    // Profilo sparse: null ereditari + override concreti + extra raw preservati.
-    expectSparseNullHereditary(c)
+    // Profilo sparse: frozen inherit boundary + override concreti + extra raw preservati.
+    expectFrozenInheritBoundary(c)
     expect(c.landscape.qualityBadgeStyle).toBeNull()
     expectConcreteOverridesPreserved(c)
     expect(c.landscape.gradientHeight).toBe(45)
@@ -311,7 +320,7 @@ describe("quick presets natural+transform isolated", () => {
     expectUnrelatedPreserved(c)
     // qualityBadgeStyle esplicito nel preset: flat standard, profilo null-ereditario intatto.
     expect(c.landscape.qualityBadgeStyle).toBeNull()
-    expectSparseNullHereditary(c)
+    expectFrozenInheritBoundary(c)
     expectConcreteOverridesPreserved(c)
     expect(isActive(presetButton("ui.configPresetRatings"))).toBe(true)
     await act(async () => {
@@ -375,7 +384,7 @@ describe("quick presets natural+transform isolated", () => {
     expect(c.defaultRatingSources).toEqual(["imdb", "letterboxd"])
     expectGlobalsUnchanged(c)
     expectUnrelatedPreserved(c)
-    expectSparseNullHereditary(c)
+    expectFrozenInheritBoundary(c)
     expectConcreteOverridesPreserved(c)
     expect(isActive(presetButton("ui.configPresetFull"))).toBe(true)
     await act(async () => {
@@ -431,8 +440,9 @@ describe("quick presets natural+transform isolated", () => {
     expect(JSON.stringify(portraitPresetPatch(captureVisualPreset(c)))).toBe(flatsBefore)
     expect(previewUrl(c, "portrait")).toBe(portBefore)
     expectLandscapeNatural(c)
-    // Null ereditari non toccati dal preset: restano null nel profilo.
-    expect(c.landscape.badgeFont).toBeNull()
+    // Inherit boundary frozen at customize(): the font shows the pre-edit
+    // factory effective ("inter"), untouched keys keep following (null).
+    expect(c.landscape.badgeFont).toBe("inter")
     expect(c.landscape.qualityBadgeStyle).toBeNull()
     expect(c.landscape.videoFormats).toBeNull()
     expectConcreteOverridesPreserved(c)
@@ -440,9 +450,10 @@ describe("quick presets natural+transform isolated", () => {
     expect(isActive(presetButton("ui.configPresetEssential"))).toBe(true)
     fireEvent.click(presetButton("ui.configPresetRatings"))
     c = ctx()
-    // qualityBadgeStyle esplicito nel preset: profilo concreto, altri null intatti.
+    // qualityBadgeStyle esplicito nel preset: profilo concreto, altri inherit
+    // boundary intatti (font congelato al pre-edit, formats ancora ereditario).
     expect(c.landscape.qualityBadgeStyle).toBe("standard")
-    expect(c.landscape.badgeFont).toBeNull()
+    expect(c.landscape.badgeFont).toBe("inter")
     expect(c.landscape.videoFormats).toBeNull()
     expect(JSON.stringify(portraitPresetPatch(captureVisualPreset(c)))).toBe(flatsBefore)
     expect(previewUrl(c, "portrait")).toBe(portBefore)

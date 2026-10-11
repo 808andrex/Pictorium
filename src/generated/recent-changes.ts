@@ -11,4 +11,5 @@ export interface RecentChange {
 }
 
 export const RECENT_CHANGES: RecentChange[] = [
+  { type: "feature", text: "Add age ratings, Trakt discovery and clearer poster controls", sha: "bd38a5a", date: "2026-10-11" },
 ]

@@ -59,10 +59,13 @@ type LandKey = keyof LandscapeServerDefaults
  * sfumatura completa (altezza/intensità/fade/darkness/tinta/ombra) + scale e
  * offset dei badge — gli stessi parametri del Verticale. Stili, toggle, tinta
  * no: quelli restano condivisi (flat). Ogni riga mostra il valore effettivo
- * (override landscape ?? flat portrait): modificare imposta l'override, il
- * reset ✕ (o doppio click) torna a seguire il portrait. Nessun parametro
- * URL/chiave cache: il server risolve dal profilo salvato (già coperto da
- * firma defaults e sd-hash).
+ * (override landscape ?? flat portrait): modificare imposta l'override; il
+ * reset ✕ di gruppo e il doppio click tornano a seguire il portrait
+ * (opt-in esplicito al follow, mai leak involontario: un edit portrait
+ * congela prima il pre-edit nel profilo). Il reset completo in fondo
+ * ripristina default indipendenti di formato (mai clear-to-follow).
+ * Nessun parametro URL/chiave cache: il server risolve dal profilo salvato
+ * (già coperto da firma defaults e sd-hash).
  */
 export function LandscapeDefaultsSection({ editVal, editTxt, setEditVal, setEditTxt, onPreviewFamilyChange, demoMedia, previewFamily, controlsVisible }: Props) {
   const { t, lang } = useT()

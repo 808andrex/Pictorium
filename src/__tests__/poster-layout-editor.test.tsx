@@ -460,12 +460,13 @@ describe("global layout defaults scoped per edit target", () => {
     return screen.getByRole("radiogroup", { name: "ui.posterLayout" })
   }
 
-  it("portrait writes the flat default; profile stays empty", async () => {
+  it("portrait writes the flat default; profile snapshots the pre-edit (no leak)", async () => {
     const { ctx } = renderBadge("portrait")
     await act(async () => {})
     fireEvent.click(within(layoutGroup()).getByRole("radio", { name: "ui.posterLayoutFresh" }))
     expect(ctx().defaultPosterLayout).toBe("fresh")
-    expect(ctx().landscape.posterLayout).toBeUndefined()
+    // 3B1: the inherited key freezes the pre-edit flat instead of following it.
+    expect(ctx().landscape.posterLayout).toBe("standard")
     await act(async () => {
       await vi.advanceTimersByTimeAsync(600)
     })

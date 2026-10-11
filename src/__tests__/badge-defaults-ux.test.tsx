@@ -234,7 +234,8 @@ describe("landscape scope + priorities", () => {
     expect(ctx().landscape.sashOrder ?? []).not.toContain("rank")
     expect(ctx().defaultSashOrder).toContain("rank")
     expect(ctx().defaultPosterShape).toBe("poster")
-    expect(ctx().landscape.rankingBadgeStyle).toBeUndefined()
+    // 3B1: fresh states materialize the factory look per shape, decoupled.
+    expect(ctx().landscape.rankingBadgeStyle).toBe("default")
   })
 
   it("master OFF/ON preserves the global priority order", async () => {

@@ -49,6 +49,20 @@ function findLastParams(
   return out
 }
 
+function findLastUrl(
+  urls: string[],
+  from: number,
+  match: (u: URL) => boolean,
+  pred: (u: URL) => boolean,
+): URL | null {
+  let out: URL | null = null
+  for (const raw of urls.slice(from)) {
+    const u = isPosterRequest(raw)
+    if (u && match(u) && pred(u)) out = u
+  }
+  return out
+}
+
 async function nextPreview(
   seen: Seen,
   action: () => Promise<unknown>,
@@ -197,11 +211,23 @@ test.afterEach(async ({ page }) => {
   // request volume under the defaults rate limiter (30 burst, 3/sec refill).
   if (!defaultsDirty) return
   defaultsDirty = false
-  // Settle trailing debounced UI autosaves (500ms debounce in useDefaults)
-  // so they land BEFORE the restore PUT, never after it.
-  await page.waitForTimeout(1200)
+  // Settle trailing debounced UI autosaves BEFORE the restore PUT: poll for
+  // server-state stability (600ms steps, bounded) instead of a fixed sleep —
+  // the 500ms debounce flush is observed, never guessed. Navigation then
+  // unmounts the editor so pending timers are cleared and can never fire
+  // after the restore.
+  try {
+    let prev = JSON.stringify(await getDefaults(page))
+    for (let i = 0; i < 6; i++) {
+      await page.waitForTimeout(600)
+      const cur = JSON.stringify(await getDefaults(page))
+      if (cur === prev) break
+      prev = cur
+    }
+  } catch {}
   await page.goto("/")
   await putDefaultsWithRetry(page, "restore defaults", FACTORY_RESTORE)
+  await page.goto("/")
   // Verify the full canonical surface — a mismatch is a real leak
   // (merge-only PUT cannot delete keys, so every autosaved key must be
   // covered above with its factory value).
@@ -249,12 +275,15 @@ const SEED_PAYLOAD = {
   landscape: {
     rankingBadgeStyle: "pill",
     ribbonEnabled: true,
+    extraBadgeStyle: null,
+    badgeQuality: true,
   },
 }
 
 test.describe("Badge Verticale/Orizzontale: isolation + persistence", () => {
   test("desktop: landscape edits Numero/Angolo/quality-off keep portrait + delivery, survive tab switch + reload", async ({
     page,
+    request,
   }) => {
     await seed(page, DEMO_PROFILE)
     await page.setViewportSize({ width: 1280, height: 900 })
@@ -283,6 +312,23 @@ test.describe("Badge Verticale/Orizzontale: isolation + persistence", () => {
     expect(p.get("xbs")).toBeNull()
     expect(p.get("bq")).toBe("1")
     expect(p.get("qbs")).toBe("standard")
+
+    // Resolved-style proof BEFORE any portrait edit: the legacy portrait
+    // (no xbs = no independence boundary) omits xbs on the wire and renders
+    // its own rank look. Record the server-resolved settings + computed
+    // badge so the AFTER state below must match exactly (same own-rank
+    // style, not a substituted transport value).
+    const beforeUrl = findLastUrl(seen.urls, 0, isDefaultsPreviewUrl, (u) => u.searchParams.get("shape") === "poster")
+    expect(beforeUrl).not.toBeNull()
+    const beforeDebugUrl = new URL(beforeUrl!.toString())
+    beforeDebugUrl.searchParams.set("debug", "1")
+    const beforeDebugRes = await request.get(beforeDebugUrl.toString())
+    expect(beforeDebugRes.ok()).toBeTruthy()
+    const beforeDebug = (await beforeDebugRes.json()) as {
+      badge: { settings: { rankingBadgeStyle: unknown }; computed: { badge: unknown } }
+    }
+    const beforeRs = beforeDebug.badge.settings.rankingBadgeStyle
+    const beforeBadge = JSON.stringify(beforeDebug.badge.computed.badge)
 
     await expect(dialog).toBeVisible()
     const badgePanel = dialog.getByRole("tabpanel", { name: "Badge" })
@@ -419,6 +465,22 @@ test.describe("Badge Verticale/Orizzontale: isolation + persistence", () => {
     expect(p.get("rs")).toBe("pill")
     expect(p.get("xbs")).toBeNull()
     expect(p.get("bq")).toBe("1")
+
+    // Resolved-style proof AFTER: same own-rank resolution as BEFORE (the
+    // landscape Angolo/corner profile never leaks into the portrait render;
+    // the legacy NULL still omits xbs with no boundary, and a concrete pill
+    // flat still inherits unchanged).
+    const afterUrl = findLastUrl(seen.urls, 0, isDefaultsPreviewUrl, (u) => u.searchParams.get("shape") === "poster" && u.searchParams.get("xbs") === null)
+    expect(afterUrl).not.toBeNull()
+    const afterDebugUrl = new URL(afterUrl!.toString())
+    afterDebugUrl.searchParams.set("debug", "1")
+    const afterDebugRes = await request.get(afterDebugUrl.toString())
+    expect(afterDebugRes.ok()).toBeTruthy()
+    const afterDebug = (await afterDebugRes.json()) as {
+      badge: { settings: { rankingBadgeStyle: unknown }; computed: { badge: unknown } }
+    }
+    expect(afterDebug.badge.settings.rankingBadgeStyle).toBe(beforeRs)
+    expect(JSON.stringify(afterDebug.badge.computed.badge)).toBe(beforeBadge)
 
     // Reload: backend profile persists; Orizzontale replays it.
     await page.reload()

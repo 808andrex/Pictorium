@@ -253,7 +253,8 @@ describe("defaults per shape: portrait provider-glass, landscape stremio", () =>
       within(layoutGroup()).getByRole("radio", { name: "ui.posterLayoutProviderGlass" }),
     )
     expect(portrait.ctx().defaultPosterLayout).toBe("provider-glass")
-    expect(portrait.ctx().landscape.posterLayout).toBeUndefined()
+    // 3B1: the inherited key freezes the pre-edit flat instead of following it.
+    expect(portrait.ctx().landscape.posterLayout).toBe("standard")
     await act(async () => {
       await vi.advanceTimersByTimeAsync(600)
     })

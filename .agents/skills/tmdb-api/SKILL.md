@@ -2,33 +2,39 @@
 name: tmdb-api
 description: >
   TMDB API usage in Pictorium. Covers the v3 endpoints used (find, external_ids,
-  details, images), API key resolution (x-api-key header / api_key query / opt-in
-  PICTORIUM_TMDB_KEY instance fallback), caching (5 min in-memory, URL without api_key), inflight
+  details, images), API key resolution (request > user namespace > permitted
+  instance fallback), caching (5 min in-memory, URL without api_key), inflight
   coalescing, health checks, and image URL construction (TMDB_IMG_URL, w500/original).
   Trigger: "tmdb", "api key", "external_ids", "resolveImdbId", "getDetails",
   "poster path", "image.tmdb.org", "chiamata TMDB", "chiave api", "mock server".
 ---
 
-Pictorium has NO instance-level TMDB key by default. Every TMDB call carries the
-key from the request (`x-api-key` header, fallback `api_key` query param) or from
-the opt-in instance fallback. `TMDB_API_KEY` env var is intentionally NOT read
-by the app. There is NO profile key store: `?u=` is identity/tracking only and
-never provides API keys.
+Pictorium has no bundled TMDB key. Scoped routes use `resolveUserApiKeys`:
+explicit request credentials > encrypted user namespace > permitted instance
+fallback. `?u=` or `/u/<uuid>/` can select a namespace when multi-user scoping
+is enabled; read `user-auth.ts` for eligibility and `user-keys.ts` for storage.
+Never replace this with the legacy synchronous request-only resolver.
 
 An **opt-in instance fallback** exists for personal single-user deploys (e.g. a
 Vercel instance used by one person): `PICTORIUM_TMDB_KEY` (and
 `PICTORIUM_MDBLIST_KEY` for MDBList) are read as a LAST-RESORT when the request
 carries no key. Header/query always win. Do NOT set these on public
-multi-user instances (HF Spaces, shared VPS) — a shared instance key would burn
-one quota for everyone.
+multi-user instances without understanding the quota policy. With multi-user
+ON, scoped requests disable the instance fallback unless
+`PICTORIUM_MULTI_USER_ALLOW_ENV_FALLBACK=1`; global requests retain it.
 
 ## Key resolution
 
-`resolveRequestApiKey(req)` in `src/lib/tmdb.ts`:
-1. Header `x-api-key`
-2. Query param `api_key`
-3. Env `PICTORIUM_TMDB_KEY` (fallback d'istanza, opt-in)
-4. Otherwise `undefined` → TMDB calls fail (poster 404, empty catalogs)
+`resolveUserApiKeys(req, scopedUser)` in `src/lib/tmdb.ts`:
+1. Header `x-api-key`, then query `api_key` for TMDB.
+2. Stored namespace key, if a scoped user exists.
+3. Permitted env fallback: `PICTORIUM_TMDB_KEY` (legacy `POSTERIUM_TMDB_KEY`),
+   then `TMDB_KEY` / `TMDB_API_KEY`.
+4. Otherwise key-missing behavior; never manufacture credentials.
+
+`resolveRouteApiKey` applies scoping for upstream proxy routes.
+`resolveRequestApiKey` remains a synchronous request > env resolver for legacy
+consumers; it does NOT read the namespace. Preserve each consumer's contract.
 
 `resolveImdbId`/`resolveImdbToTmdb` MUST receive the request key explicitly. Never
 reintroduce a default key in the fetch layer itself.
@@ -50,8 +56,8 @@ reintroduce a default key in the fetch layer itself.
   (`e2e/mock-server.mjs`).
 - Cache key = URL WITHOUT `api_key` (shared across users, key never in memory/Map).
 - In-memory cache 5 min, max 500 entries, LRU eviction (promote on hit).
-- Inflight coalescing: concurrent identical requests share one promise. The
-  AbortSignal applies to the first request only — the render deadline is the bound.
+- Inflight coalescing: identical requests share the transport; each waiter races
+  its own caller signal. Inspect `tmdbFetch` before changing cancellation.
 - Per-request timeout 30 s; `checkTmdbEndpoint` 8 s.
 
 ## Images
@@ -64,7 +70,7 @@ image.tmdb.org at render time) and validates paths start with `https://image.tmd
 
 ## Do NOT
 
-- Do NOT read `TMDB_API_KEY`/`MDBLIST_API_KEY` env vars (catalog.md rule).
+- Do NOT bypass the unified resolver, namespace eligibility, or scoped env-fallback policy.
 - Do NOT log or cache URLs containing the api_key.
 - Do NOT put the key in Map keys, cache keys, or error messages.
 - Do NOT add extra TMDB calls for imdbId where the source (JustWatch) already

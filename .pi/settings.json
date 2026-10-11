@@ -1,0 +1,6 @@
+{
+  "defaultProvider": "openai",
+  "defaultModel": "gpt-6.1-sol",
+  "defaultThinkingLevel": "medium",
+  "defaultTools": ["read", "grep", "find", "ls", "pictorium_delegate", "pictorium_status"]
+}

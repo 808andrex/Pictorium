@@ -105,6 +105,18 @@ describe("encodeConfig / decodeConfig round-trip", () => {
     expect(decodeConfig(encodeConfig(config))).toEqual(config)
   })
 
+  it("round-trips the knockout ageBadgeStyle", async () => {
+    const { encodeConfig, decodeConfig } = await importConfigToken()
+    const config: PictoriumUserConfig = { ...SAMPLE_CONFIG, ageBadgeStyle: "knockout" }
+    expect(decodeConfig(encodeConfig(config))).toEqual(config)
+  })
+
+  it("round-trips an explicit null ageBadgeStyle (absent contract)", async () => {
+    const { encodeConfig, decodeConfig } = await importConfigToken()
+    const config: PictoriumUserConfig = { ...SAMPLE_CONFIG, ageBadgeStyle: null }
+    expect(decodeConfig(encodeConfig(config))).toEqual(config)
+  })
+
   it("degrades legacy rankingBadgeStyle 'bar' to 'default' instead of rejecting the token", async () => {
     const { decodeConfig } = await importConfigToken()
     // Token firmato prima della rimozione della barra: bypassa i tipi con un
@@ -134,6 +146,12 @@ describe("decodeConfig invalid tokens", () => {
     const { decodeConfig } = await importConfigToken()
     const b64 = Buffer.from(JSON.stringify({ foo: "bar" }), "utf-8").toString("base64url")
     expect(decodeConfig(b64)).toBeNull()
+  })
+
+  it("returns null for an invalid ageBadgeStyle (fail-closed token)", async () => {
+    const { decodeConfig } = await importConfigToken()
+    const raw = Buffer.from(JSON.stringify({ ...SAMPLE_CONFIG, ageBadgeStyle: "mono" }), "utf-8").toString("base64url")
+    expect(decodeConfig(raw)).toBeNull()
   })
 
   it("returns null for oversized tokens without decoding (C5)", async () => {

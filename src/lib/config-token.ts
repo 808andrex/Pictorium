@@ -10,7 +10,7 @@ import { z } from "zod"
 // Batch B: clamp condiviso da image-utils.ts (semantica standard, senza round)
 import { clamp } from "@/lib/image-utils"
 import { envWithFallback } from "@/lib/env-compat"
-import { BADGE_STYLES, RANKING_BADGE_STYLES, QUALITY_BADGE_STYLES, BADGE_FONTS, SEPARATE_RATINGS_STYLES, EXTRA_BADGE_STYLES } from "@/lib/badge-styles"
+import { BADGE_STYLES, RANKING_BADGE_STYLES, QUALITY_BADGE_STYLES, AGE_BADGE_STYLES, BADGE_FONTS, SEPARATE_RATINGS_STYLES, EXTRA_BADGE_STYLES, EXTRA_BADGE_FOLLOW_RANK } from "@/lib/badge-styles"
 import { POSTER_LAYOUTS, POSTER_FRESH_SCOPES } from "@/lib/types"
 
 // ---- Zod schema (Batch C: sostituisce validazione manuale) ----
@@ -60,6 +60,9 @@ export const configTokenSchema = z.object({
    *  proposito come `region` — la normalizzazione fail-closed avviene in
    *  risoluzione (poster-config). */
   ageCountry: z.string().max(8).optional(),
+  /** Stile pill età: opzionale per back-compat token vecchi (come
+   *  qualityBadgeStyle: assente = cascata verso i defaults). */
+  ageBadgeStyle: z.enum(AGE_BADGE_STYLES).nullable().optional(),
   customRatings: z.boolean().optional(),
   ratingSources: z.array(z.string().max(20)).optional(),
   separateRatings: z.boolean().optional(),
@@ -69,8 +72,8 @@ export const configTokenSchema = z.object({
   separateRatingsStyle: z.enum(SEPARATE_RATINGS_STYLES).optional(),
   badgeStyle: badgeStyleSchema,
   rankingBadgeStyle: rankingBadgeStyleSchema,
-  /** Standalone extra-badge style (flat-only): absent = legacy `rs` fallback. */
-  extraBadgeStyle: z.enum(EXTRA_BADGE_STYLES).nullable().optional(),
+  /** Standalone extra-badge style (flat-only): absent = legacy `rs` fallback; "follow-rank" = explicit own-rank. */
+  extraBadgeStyle: z.union([z.enum(EXTRA_BADGE_STYLES), z.literal(EXTRA_BADGE_FOLLOW_RANK)]).nullable().optional(),
   /** Font dei testi badge: opzionale (token vecchi senza campo restano validi). */
   badgeFont: z.enum(BADGE_FONTS).nullable().optional(),
   // Stile icone qualità: opzionale+nullable (token vecchi senza campo restano validi).

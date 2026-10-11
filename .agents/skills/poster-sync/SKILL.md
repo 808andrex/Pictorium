@@ -49,10 +49,11 @@ paddings/gaps, accent color extraction, ribbon side, overflow protection formula
    add it, then regenerate. The `predev`/`prebuild`/`pretest` scripts already do
    this automatically — the manual run is for immediate verification.
 
-4. **Update `rv` in AGENTS.md.** Keep the "App version ... — RENDER_VERSION: X — rv: X"
-   header line in sync with the regenerated value.
+4. **Keep generated values out of documentation.** Read the generated files;
+   never copy `rv` or app-version values into `AGENTS.md` or skill files.
 
-5. **Run the visual regression suite** to confirm client/server coherence:
+5. **Run the visual regression suite at the final batch before push/integration**
+   according to `AGENTS.md` → Verification Strategy:
    ```
    npx playwright test e2e/pictorium-visual.spec.ts
    ```
@@ -81,7 +82,8 @@ server anymore. Do not reintroduce them.
 - Never edit `src/lib/render-version.ts` by hand.
 - Never duplicate a shared geometry formula in client and server.
 - Never change one side of a param pair without the other.
-- After ANY render-affecting change, the final visual pass (step 5) is required.
-  This is a hard gate at the final commit, not optional. For during-work vs
-  fresh-clean scheduling, follow `AGENTS.md Verification Strategy` and
-  `.agents/visual-testing.md` (cached in iteration, no clean per edit).
+- After any render-affecting change, the final visual pass is required before
+  push/integration. Scheduling is defined by `AGENTS.md Verification Strategy`;
+  visual during work is only for requested diagnosis or demonstrated need.
+- For URL/mapping/precedence changes, include the relevant URL unit tests and
+  `e2e/pictorium-parity.spec.ts` in the final batch. No duplicated renderer.

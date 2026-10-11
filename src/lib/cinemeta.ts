@@ -3,7 +3,7 @@ import { timedFetch } from "./outbound-stats"
 import { createLogger } from "@/lib/logger"
 import { envWithFallback } from "@/lib/env-compat"
 import { createCircuitBreaker, parseRetryAfterMs } from "@/lib/circuit-breaker"
-import { combineAbortSignals } from "@/lib/abort-signal"
+import { combineAbortSignals, raceWithAbort } from "@/lib/abort-signal"
 
 const log = createLogger("cinemeta")
 
@@ -82,7 +82,10 @@ async function fetchCinemetaType(
   if (cinemetaBreaker.isOpen()) return { status: "error", rating: null }
 
   const existing = cinemetaInflight.get(cacheKey)
-  if (existing) return existing
+  // Coalescing preservato (stesso trasporto condiviso), ma ogni waiter
+  // gareggia col proprio signal: un fetch lento condiviso non deve tenere
+  // in ostaggio il budget di fallback del chiamante.
+  if (existing) return raceWithAbort(existing, signal)
 
   const promise: Promise<CinemetaOutcome> = (async (): Promise<CinemetaOutcome> => {
     try {

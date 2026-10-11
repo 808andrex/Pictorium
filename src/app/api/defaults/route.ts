@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server"
-import { getServerDefaultsChecked, setServerDefaults, getServerDefaultsForUser, getStoredUserDefaults, setServerDefaultsForUser, type ServerDefaults } from "@/lib/server-defaults"
+import { getServerDefaultsChecked, setServerDefaults, getServerDefaultsForUser, getStoredUserDefaults, setServerDefaultsForUser, getInstanceEnvDefaults, type ServerDefaults } from "@/lib/server-defaults"
 import { cacheInvalidatePosterData } from "@/lib/cache"
 import { bumpCatalogEpoch } from "@/lib/catalog-epoch"
 import { checkAdminToken, requireAdminToken, isSameOrigin, adminAuthResponse, originMismatchResponse } from "@/lib/auth"
@@ -8,10 +8,11 @@ import { rateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit"
 import { getWarmupCatalogs } from "@/lib/catalog-definitions"
 import { createLogger } from "@/lib/logger"
 import { z } from "zod"
-import { BADGE_STYLES, RANKING_BADGE_STYLES, QUALITY_BADGE_STYLES, BADGE_FONTS, SEPARATE_RATINGS_STYLES, EXTRA_BADGE_STYLES } from "@/lib/badge-styles"
+import { BADGE_STYLES, RANKING_BADGE_STYLES, QUALITY_BADGE_STYLES, AGE_BADGE_STYLES, BADGE_FONTS, SEPARATE_RATINGS_STYLES, EXTRA_BADGE_STYLES, EXTRA_BADGE_FOLLOW_RANK } from "@/lib/badge-styles"
 import { POSTER_LAYOUTS, POSTER_FRESH_SCOPES } from "@/lib/types"
 import { readJsonBody, BodyTooLargeError, DEFAULT_MAX_BODY_BYTES } from "@/lib/read-body"
 import { envWithFallback } from "@/lib/env-compat"
+import { SHAPE_FLAT_TO_LANDSCAPE, snapshotMissingLandscape } from "@/lib/visual-presets"
 
 const log = createLogger("defaults")
 
@@ -44,8 +45,8 @@ const customCatalogSchema = z.object({
 const defaultsSchema = z.object({
   badgeStyle: z.enum(BADGE_STYLES).optional(),
   rankingBadgeStyle: z.enum(RANKING_BADGE_STYLES).optional(),
-  /** Standalone extra-badge style (flat-only): absent = legacy `rs` fallback. */
-  extraBadgeStyle: z.enum(EXTRA_BADGE_STYLES).nullable().optional(),
+  /** Standalone extra-badge style (flat-only): absent/null = legacy `rs` fallback; "follow-rank" = explicit own-rank. */
+  extraBadgeStyle: z.union([z.enum(EXTRA_BADGE_STYLES), z.literal(EXTRA_BADGE_FOLLOW_RANK)]).nullable().optional(),
   badgeFont: z.enum(BADGE_FONTS).optional(),
   qualityBadgeStyle: z.enum(QUALITY_BADGE_STYLES).nullable().optional(),
   videoFormats: z.array(z.enum(["dv", "hdr", "hdr10plus", "atmos", "imax"])).nullable().optional(),
@@ -82,11 +83,15 @@ const defaultsSchema = z.object({
   badgeYear: z.boolean().optional(),
   badgeRating: z.boolean().optional(),
   badgeQuality: z.boolean().optional(),
-  /** Badge età testuale (default OFF). Globale, nessun profilo landscape. */
+  /** Badge età testuale (default OFF). Flat portrait (il profilo
+   *  `landscape` sotto può divergere per forma). */
   ageBadge: z.boolean().optional(),
   /** Paese classificazione età (default "IT"): validazione lasca, la
    *  normalizzazione fail-closed avviene in risoluzione (poster-config). */
   ageCountry: z.string().max(8).optional(),
+  /** Stile pill età (default "standard" = resa storica). Flat portrait come
+   *  il toggle età (profilo `landscape` sotto per la forma orizzontale). */
+  ageBadgeStyle: z.enum(AGE_BADGE_STYLES).nullable().optional(),
   customRatings: z.boolean().optional(),
   // Endpoint provider custom rating (non-segreto; la chiave resta solo env).
   // Stessi vincoli del fetch: placeholder {imdbId}, http/https, no credenziali.
@@ -168,7 +173,7 @@ const defaultsSchema = z.object({
     networkLogoOffsetY: z.number().optional(),
     badgeStyle: z.enum(BADGE_STYLES).optional(),
     rankingBadgeStyle: z.enum(RANKING_BADGE_STYLES).optional(),
-    extraBadgeStyle: z.enum(EXTRA_BADGE_STYLES).nullable().optional(),
+    extraBadgeStyle: z.union([z.enum(EXTRA_BADGE_STYLES), z.literal(EXTRA_BADGE_FOLLOW_RANK)]).nullable().optional(),
     badgeFont: z.enum(BADGE_FONTS).optional(),
     qualityBadgeStyle: z.enum(QUALITY_BADGE_STYLES).nullable().optional(),
     videoFormats: z.array(z.enum(["dv", "hdr", "hdr10plus", "atmos", "imax"])).nullable().optional(),
@@ -178,12 +183,27 @@ const defaultsSchema = z.object({
     badgeYear: z.boolean().optional(),
     badgeRating: z.boolean().optional(),
     badgeQuality: z.boolean().optional(),
+    /**
+     * Badge età testuale per-shape (default = flat portrait): assente/null =
+     * segue il flat, `false` esplicito vince (un portrait ON non attiva mai un
+     * landscape mai configurato).
+     */
+    ageBadge: z.boolean().optional(),
+    /** Paese classificazione età per-shape (assente/null/invalido = flat). */
+    ageCountry: z.string().max(8).optional(),
+    /** Stile pill età per-shape (assente/null/invalido = flat). */
+    ageBadgeStyle: z.enum(AGE_BADGE_STYLES).nullable().optional(),
     minQuality: z.enum(["SD", "HD", "FHD", "4K"]).optional(),
     customRatings: z.boolean().optional(),
     separateRatings: z.boolean().optional(),
     networkLogo: z.boolean().optional(),
     networkLogoPosition: z.enum(["auto", "top"]).optional(),
     networkLogoFollowTitle: z.boolean().nullable().optional(),
+    /**
+     * Logo-block alignment override ("left"/"center"); absent/null = follow
+     * the flat (flat null = per-shape auto). Task 3B2 shape independence.
+     */
+    logoAlign: z.enum(["left", "center"]).nullable().optional(),
     preRelease: z.boolean().optional(),
     ribbonSide: z.enum(["left", "right"]).optional(),
     ribbonEnabled: z.boolean().optional(),
@@ -197,6 +217,46 @@ const defaultsSchema = z.object({
   catalogOrder: z.array(z.string().max(80)).optional(),
   catalogRenames: z.record(z.string().max(80), z.string().max(100)).optional(),
 })
+
+function isPlainLandscapeRecord(v: unknown): v is Record<string, unknown> {
+  return v !== null && typeof v === "object" && !Array.isArray(v)
+}
+
+/**
+ * Strict shape-independence backfill for direct API edits (task 3B1,
+ * generalization of the age-trio snapshot): a partial PUT that touches flat
+ * (portrait) keys without providing the matching `landscape` keys freezes
+ * the PRE-merge effective flat values into the profile, so later portrait
+ * edits can't leak into a never-configured landscape. Per key: only keys
+ * present in the body AND missing both in the body profile and in the stored
+ * profile are frozen; explicit stored values (incl. `false`/`0`/`[]` and the
+ * explicit logo/extra `null`s) are never touched nor rebased. Arrays are
+ * cloned. `storedBase` is the persisted profile (merge base, never env);
+ * `effectiveFlats` is the pre-merge effective flat namespace (stored + env,
+ * so operator instance defaults survive in the snapshot).
+ */
+function backfillLandscapeOnFlatEdit(
+  storedBase: Record<string, unknown>,
+  effectiveFlats: Record<string, unknown>,
+  data: Record<string, unknown>,
+): void {
+  const landPatch = isPlainLandscapeRecord(data.landscape)
+    ? (data.landscape as Record<string, unknown>)
+    : null
+  const presence = { ...storedBase, ...(landPatch ?? {}) }
+  const changedFlatKeys: string[] = []
+  const flatsRecord: Record<string, unknown> = {}
+  for (const [flatKey] of Object.entries(SHAPE_FLAT_TO_LANDSCAPE)) {
+    const bareKey = flatKey.charAt(7).toLowerCase() + flatKey.slice(8)
+    flatsRecord[flatKey] = effectiveFlats[bareKey]
+    if (bareKey in data) changedFlatKeys.push(flatKey)
+  }
+  const adds = snapshotMissingLandscape(flatsRecord, presence, changedFlatKeys) as Record<string, unknown>
+  // Deep-merge the profile (never a wholesale replace): a partial `landscape`
+  // patch must not discard unrelated stored profile fields. Stored base
+  // first, snapshot fills gaps, the explicit body patch wins.
+  data.landscape = { ...storedBase, ...adds, ...(landPatch ?? {}) }
+}
 
 export async function GET(req: NextRequest) {
   const rawUser = extractUserParam(req)
@@ -269,8 +329,18 @@ export async function PUT(req: NextRequest) {
   try {
     if (scoped) {
       // Merge sullo STORATO (mai sull'effettivo ENV+storato): l'env resta
-      // dinamica, nel file finiscono solo scelte dell'utente.
+      // dinamica, nel file finiscono solo scelte dell'utente. Lo snapshot
+      // landscape usa l'effettivo (storato + env d'istanza) come sorgente
+      // così i default d'istanza dell'operatore sopravvivono al freeze.
       const stored = await getStoredUserDefaults(scoped)
+      const storedLand = isPlainLandscapeRecord(stored.landscape)
+        ? (stored.landscape as unknown as Record<string, unknown>)
+        : {}
+      backfillLandscapeOnFlatEdit(
+        storedLand,
+        { ...getInstanceEnvDefaults(), ...stored } as unknown as Record<string, unknown>,
+        parsed.data as unknown as Record<string, unknown>,
+      )
       const next: Record<string, unknown> = { ...stored, ...parsed.data }
       await setServerDefaultsForUser(scoped, next as ServerDefaults)
       // Il cambio defaults ruota le chiavi catalogo/meta del namespace via
@@ -281,6 +351,17 @@ export async function PUT(req: NextRequest) {
     const current = await getServerDefaultsChecked()
     // Merge invece di replace: un payload parziale NON deve azzerare i default
     // già salvati (altrimenti salvare un solo campo cancellerebbe gli altri).
+    // Snapshot landscape prima del merge (vedi backfill sopra); `current` è
+    // già l'effettivo (storato + env) quindi la sorgente include i default
+    // d'istanza. Il profilo `landscape` fonde per-chiave (mai replace).
+    const currentLand = isPlainLandscapeRecord(current.landscape)
+      ? (current.landscape as unknown as Record<string, unknown>)
+      : {}
+    backfillLandscapeOnFlatEdit(
+      currentLand,
+      current as unknown as Record<string, unknown>,
+      parsed.data as unknown as Record<string, unknown>,
+    )
     const next: Record<string, unknown> = { ...current, ...parsed.data }
     // Await: la 200 arriva solo a persistenza completata (altrimenti una GET
     // successiva può leggere ancora i vecchi default).

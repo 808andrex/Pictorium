@@ -25,6 +25,8 @@ import { resetGuestGuardForTests } from "@/lib/guest-guard"
 // `extraBadge*` nulli espliciti: dal split classifica/extra il payload li
 // include sempre (null = fallback legacy, serve anche a propagare il reset
 // al server via merge) — mai spazzatura, mai factory numerici.
+// Trio età + profilo età landscape seedato OFF/IT/standard (task3A per-shape:
+// il load materializza il profilo indipendente dai flat, mai reseed dopo).
 const USER_SAVED = {
   badgeStyle: "shadow",
   rankingBadgeStyle: "default",
@@ -63,6 +65,9 @@ const USER_SAVED = {
   badgeYear: false,
   badgeRating: true,
   badgeQuality: true,
+  ageBadge: false,
+  ageCountry: "IT",
+  ageBadgeStyle: "standard",
   customRatings: true,
   customRatingEndpoint: "",
   customRatingApiKeyHeader: "",
@@ -91,7 +96,11 @@ const USER_SAVED = {
   logoScale: null,
   logoOffsetX: null,
   logoOffsetY: null,
-  landscape: {},
+  landscape: {
+    ageBadge: false,
+    ageCountry: "IT",
+    ageBadgeStyle: "standard",
+  },
 }
 
 function strictWrapper({ children }: { children: ReactNode }) {

@@ -12,6 +12,7 @@ import { z } from "zod";
 import {
   MAX_VISUAL_PRESETS,
   captureVisualPreset,
+  stripRemovedFreshFontKeys,
   visualPresetInputSchema,
   visualPresetShapeSchema,
   type VisualPresetShape,
@@ -148,8 +149,10 @@ export function parsePresetFileData(data: unknown): ParsePresetFileResult {
 
   for (const item of visualRaw) {
     // Absent shape defaults to portrait (legacy v1); invalid shape fails
-    // the strict schema and counts as skipped, like bad values.
-    const parsed = visualPresetInputSchema.safeParse(pickNameValuesShape(item));
+    // the strict schema and counts as skipped, like bad values. Snapshots
+    // saved while the dropped Fresh numeral-font selector existed may still
+    // carry its obsolete keys: strip them so they import instead of skipping.
+    const parsed = visualPresetInputSchema.safeParse(stripRemovedFreshFontKeys(pickNameValuesShape(item)));
     if (!parsed.success) {
       skipped.visual += 1;
       continue;

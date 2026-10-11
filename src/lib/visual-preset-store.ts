@@ -5,7 +5,7 @@ import { DATA_DIR } from "./data-dir"
 import { atomicWriteFile } from "./atomic-write"
 import { getKv, getStorageMode } from "./kv"
 import { sanitizeUserId } from "./user-auth"
-import { MAX_VISUAL_PRESETS, visualPresetDeleteSchema, visualPresetInputSchema, visualPresetSchema, type VisualPreset, type VisualPresetShape } from "./visual-presets"
+import { MAX_VISUAL_PRESETS, visualPresetDeleteSchema, visualPresetInputSchema, visualPresetSchema, stripRemovedFreshFontKeys, type VisualPreset, type VisualPresetShape } from "./visual-presets"
 
 function location(userId: string | null) {
   if (userId !== null && sanitizeUserId(userId) !== userId) throw new Error("Invalid user")
@@ -34,7 +34,12 @@ async function loadAllPresets(userId: string | null): Promise<VisualPreset[]> {
     }
   }
   // Legacy entries without `shape` default to portrait via the schema.
-  return visualPresetSchema.array().parse(raw)
+  // Snapshots saved while the dropped Fresh numeral-font selector existed
+  // may still carry its obsolete keys: strip them before strict validation
+  // so one stale key cannot reject the whole stored preset (render ignores it).
+  return visualPresetSchema.array().parse(
+    Array.isArray(raw) ? raw.map(stripRemovedFreshFontKeys) : raw,
+  )
 }
 
 const queues = new Map<string, Promise<unknown>>()
@@ -50,7 +55,7 @@ export async function mutateVisualPreset(userId: string | null, operation: "save
   const run = (queues.get(key) ?? Promise.resolve()).catch(() => {}).then(async () => {
     const all = await loadAllPresets(userId)
     if (operation === "save") {
-      const input = visualPresetInputSchema.parse(body)
+      const input = visualPresetInputSchema.parse(stripRemovedFreshFontKeys(body))
       const shape = input.shape ?? "portrait"
       const scope = all.filter((preset) => preset.shape === shape)
       const id = scope.find((preset) => preset.name === input.name)?.id ?? randomUUID()

@@ -548,13 +548,13 @@ export function BadgeControls() {
         <div className="pt-2 border-t border-surface2/50 space-y-1.5">
           <span className="text-[11px] text-muted font-medium block">{t("ui.titleInfoFamily")}</span>
           <span className="text-[11px] text-muted font-medium block">{t("ui.extraBadgeStyle")}</span>
-          {ed.extraBadgeStyle == null && (
+          {(ed.extraBadgeStyle == null || ed.extraBadgeStyle === "follow-rank") && (
             <p className="text-[10px] text-muted italic leading-tight">
               {t("ui.inherited")}: {t(EXTRA_STYLE_LABELS[legacyExtraStyleForRank(ed.rankingBadgeStyle)])}
             </p>
           )}
           <BadgeStyleSelector
-            value={ed.extraBadgeStyle ?? legacyExtraStyleForRank(ed.rankingBadgeStyle)}
+            value={ed.extraBadgeStyle === "follow-rank" ? legacyExtraStyleForRank(ed.rankingBadgeStyle) : (ed.extraBadgeStyle ?? legacyExtraStyleForRank(ed.rankingBadgeStyle))}
             options={extraOptions}
             onChange={(v) => ed.setExtraBadgeStyle(v)}
             t={t}

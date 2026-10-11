@@ -2,7 +2,7 @@ import type { NextRequest } from "next/server"
 import { cacheGet, cacheGetStale, cacheSet } from "@/lib/cache"
 import { createLogger } from "@/lib/logger"
 import { envWithFallback } from "@/lib/env-compat"
-import { isBadgeStyle, isRankingBadgeStyle, isExtraBadgeStyle, isBadgeFont, isSeparateRatingsStyle } from "@/lib/badge-styles"
+import { isBadgeStyle, isRankingBadgeStyle, isExtraBadgeStyle, isExtraFollowRank, isBadgeFont, isSeparateRatingsStyle, isAgeBadgeStyle } from "@/lib/badge-styles"
 import { isPosterLayout, isPosterFreshScope, DEFAULT_POSTER_FRESH_SCOPE } from "@/lib/types"
 import { POSTER_CACHE_ALLOWLIST } from "./poster-params-hardening"
 
@@ -135,9 +135,11 @@ export function normalizePosterCacheParams(searchParams: URLSearchParams): URLSe
     params.delete("rs")
   }
   // xbs: present-but-invalid behaves as absent (the resolver falls through
-  // the chain), so drop it from the key — same render, one key.
+  // the chain), so drop it from the key — same render, one key. The explicit
+  // "follow-rank" sentinel is a distinct render (own-rank vs inherited flat)
+  // and keeps its own key (never collapsed with absent/invalid).
   const xbs = params.get("xbs")
-  if (xbs !== null && !isExtraBadgeStyle(xbs)) {
+  if (xbs !== null && !isExtraBadgeStyle(xbs) && !isExtraFollowRank(xbs)) {
     params.delete("xbs")
   }
   // sepstyle: fail-closed con distinzione dall'assenza (come bfont sopra):
@@ -197,6 +199,14 @@ export function normalizePosterCacheParams(searchParams: URLSearchParams): URLSe
     const v = agecountry.trim().toUpperCase()
     if (/^[A-Z]{2}$/.test(v) && v !== "GLOBAL") params.set("agecountry", v)
     else params.delete("agecountry")
+  }
+  // agebs: stile pill età ("standard" resa storica / "knockout" tag bianco).
+  // Presente-ma-invalido → "standard" esplicito (fail-closed, come bfont):
+  // l'assenza può ereditare knockout da token/defaults, il garbage rende
+  // standard — cancellarlo collasserebbe le chiavi avvelenando i render.
+  const agebs = params.get("agebs")
+  if (agebs !== null) {
+    params.set("agebs", isAgeBadgeStyle(agebs) ? agebs : "standard")
   }
 
   return params

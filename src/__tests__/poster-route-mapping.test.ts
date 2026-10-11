@@ -640,7 +640,15 @@ describe("GET /api/poster/[type]/[id] with saved mappings", () => {
     const res = await GET(req, { params: Promise.resolve({ type: "movie", id: "42" }) })
 
     expect(res.status).toBe(200)
-    expect(mockedAggregatedRating).toHaveBeenCalledWith("tt1234567", undefined, expect.any(AbortSignal), expect.anything())
+    expect(mockedAggregatedRating).toHaveBeenCalledWith(
+      "tt1234567",
+      undefined,
+      expect.any(AbortSignal),
+      expect.objectContaining({
+        requestedSources: expect.any(Array),
+        ratingWaitMs: expect.any(Number),
+      }),
+    )
   })
 
   it("honors single-source rsrc and falls back to default average on garbage rsrc (Fix A/D)", async () => {

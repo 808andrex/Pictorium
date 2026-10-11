@@ -1,7 +1,7 @@
 import crypto from "node:crypto"
 import { NextRequest } from "next/server"
 import { getDetails, getExternalIds, resolveRouteApiKey } from "@/lib/tmdb"
-import { fetchAggregatedRating, parseRatingSources } from "@/lib/ratings"
+import { fetchAggregatedRating, resolveRatingSources } from "@/lib/ratings"
 import { computeVote } from "@/lib/rating-weights"
 import { rateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit"
 import { cacheGet, cacheSet } from "@/lib/cache"
@@ -26,8 +26,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const apiKey = await resolveRouteApiKey(req)
   const mdblistKey = await resolveRouteApiKey(req, "mdblist")
   const simklKey = await resolveRouteApiKey(req, "simkl")
-  // Stesso parser della poster route (Fix D): whitelist identica ovunque.
-  const ratingSources = parseRatingSources(req.nextUrl.searchParams.get("rsrc")) ?? undefined
+  // Stesso default della poster route: assente/vuota/invalida imdb+tmdb,
+  // mai legacy all-source. Solo default locale, nessun mapping o token.
+  const ratingSources = resolveRatingSources(req.nextUrl.searchParams.get("rsrc"))
   const mediaType = type === "tv" || type === "series" ? "tv" : "movie"
   const tmdbId = Number(id)
   if (!Number.isInteger(tmdbId) || tmdbId <= 0) {
@@ -44,11 +45,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   // Le fonti anime non hanno chiavi (endpoint pubblici): rsrcKey le copre.
   const mdblistHash = mdblistKey ? crypto.createHash("sha1").update(mdblistKey).digest("hex").slice(0, 8) : ""
   const simklHash = simklKey ? crypto.createHash("sha1").update(simklKey).digest("hex").slice(0, 8) : ""
-  const rsrcKey = ratingSources ? ratingSources.slice().sort().join(",") : ""
-  // v14: le fonti anime (anilist/kitsu) entrano negli aggregated via rsrcKey
-  const cacheKey = rsrcKey
-    ? `details:v14:${type}:${tmdbId}:${language}:${mdblistHash || "nomk"}:${simklHash || "nosk"}:${rsrcKey}`
-    : `details:v14:${type}:${tmdbId}:${language}:${mdblistHash || "nomk"}:${simklHash || "nosk"}`
+  const rsrcKey = ratingSources.slice().sort().join(",")
+  // v15: default esplicito imdb+tmdb, mai all-source; nuova precedenza direct.
+  const cacheKey = `details:v15:${type}:${tmdbId}:${language}:${mdblistHash || "nomk"}:${simklHash || "nosk"}:${rsrcKey}`
   interface Genre { id: number; name: string }
   interface Episode { id: number; name: string; air_date: string | null; episode_number: number; season_number: number }
 
@@ -65,31 +64,40 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     const rating = imdbId
       ? (await (async () => {
           // Fix L19: timer della race cancellato se vince il fetch del rating.
+          // Il signal dedicato abortisce l'upstream residuo in finally (niente
+          // zombie oltre la race: prima la route non passava alcun signal).
+          const ratingCtrl = new AbortController()
           let ratingTimer: ReturnType<typeof setTimeout> | undefined
           const ratingTimeout = new Promise<Awaited<ReturnType<typeof fetchAggregatedRating>>>((resolve) => {
             ratingTimer = setTimeout(() => resolve(null), RATING_WAIT_MS)
           })
-          const wantSimkl = !!(ratingSources?.includes("simkl") && simklKey)
-          const wantAnilist = !!ratingSources?.includes("anilist")
-          const wantKitsu = !!ratingSources?.includes("kitsu")
-          const wantImdb = !ratingSources || ratingSources.includes("imdb")
-          const aggregated = await Promise.race([
-            fetchAggregatedRating(imdbId, mdblistKey, undefined, {
-              simklKey,
-              tmdbId,
-              mediaType,
-              wantSimkl,
-              wantAnilist,
-              wantKitsu,
-              wantImdb,
-              tmdbFallbackVote: data.vote_average ?? undefined,
-            }).catch(() => null),
-            ratingTimeout,
-          ])
-          if (ratingTimer) clearTimeout(ratingTimer)
-          aggregatedData = aggregated
-          const avgVote = computeVote(aggregated, ratingSources)
-          return avgVote ?? data.vote_average ?? 0
+          try {
+            const wantSimkl = !!(ratingSources.includes("simkl") && simklKey)
+            const wantAnilist = !!ratingSources.includes("anilist")
+            const wantKitsu = !!ratingSources.includes("kitsu")
+            const wantImdb = ratingSources.includes("imdb")
+            const aggregated = await Promise.race([
+              fetchAggregatedRating(imdbId, mdblistKey, ratingCtrl.signal, {
+                simklKey,
+                tmdbId,
+                mediaType,
+                wantSimkl,
+                wantAnilist,
+                wantKitsu,
+                wantImdb,
+                requestedSources: ratingSources,
+                ratingWaitMs: RATING_WAIT_MS,
+                tmdbFallbackVote: data.vote_average ?? undefined,
+              }).catch(() => null),
+              ratingTimeout,
+            ])
+            aggregatedData = aggregated
+            const avgVote = computeVote(aggregated, ratingSources)
+            return avgVote ?? data.vote_average ?? 0
+          } finally {
+            if (ratingTimer) clearTimeout(ratingTimer)
+            ratingCtrl.abort()
+          }
         })())
       : data.vote_average ?? 0
     // wikidata_id: già fetchato qui sopra via getExternalIds (zero RTT extra) —

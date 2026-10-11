@@ -1,5 +1,6 @@
 import { effectiveMappingForShape, isPosterLayout, isPosterFreshScope, DEFAULT_POSTER_FRESH_SCOPE, type Mapping, type PosterLayout, type PosterFreshScope, type PosterShape } from "./types"
 import type { LandscapeServerDefaults } from "./server-defaults"
+import type { AgeBadgeStyle } from "./badge-styles"
 
 /**
  * Effective shape default for the graphical poster layout (`land ?? flat`).
@@ -72,4 +73,29 @@ export function resolveOpenPosterFreshScope(
   const eff = effectiveMappingForShape(mapping, shape)
   if (isPosterFreshScope(eff?.posterFreshScope)) return eff.posterFreshScope
   return effectiveShapeDefaultFreshScope(defaultPosterFreshScope, landscape, shape)
+}
+
+/**
+ * Effective shape default for the age certification trio (`land ?? flat`).
+ * Matches the server `effectiveDefaultsForShape` rule for `ageBadge` /
+ * `ageCountry` / `ageBadgeStyle`: in landscape a defined profile value wins,
+ * absent/null keys follow the portrait flat. Open-title preview and template
+ * (no per-title age state) resolve through here per editing shape; the
+ * emitted query values are normalized downstream by the production builders
+ * (`buildPreviewUrl` / `buildUrlPattern`) and the server
+ * (`resolveAgeBadgeRequest`) exactly like the defaults preview.
+ */
+export function effectiveShapeDefaultAge(
+  defaultAgeBadge: boolean,
+  defaultAgeCountry: string,
+  defaultAgeBadgeStyle: AgeBadgeStyle,
+  landscape: LandscapeServerDefaults | null | undefined,
+  shape: PosterShape,
+): { ageBadge: boolean; ageCountry: string; ageBadgeStyle: AgeBadgeStyle } {
+  if (shape !== "landscape") return { ageBadge: defaultAgeBadge, ageCountry: defaultAgeCountry, ageBadgeStyle: defaultAgeBadgeStyle }
+  return {
+    ageBadge: landscape?.ageBadge ?? defaultAgeBadge,
+    ageCountry: landscape?.ageCountry ?? defaultAgeCountry,
+    ageBadgeStyle: landscape?.ageBadgeStyle ?? defaultAgeBadgeStyle,
+  }
 }

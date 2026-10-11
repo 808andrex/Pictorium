@@ -1,6 +1,6 @@
 import { buildPosterPublicUrl } from "@/lib/poster-public-url"
 import { buildStremioPosterSearchParams } from "@/lib/stremio-poster-params"
-import { getQualityBadgeOffsetDefault } from "@/lib/badge-styles"
+import { getQualityBadgeOffsetDefault, isExtraBadgeStyle, isExtraFollowRank } from "@/lib/badge-styles"
 import { isRankKey } from "@/lib/i18n"
 import type { ServerDefaults } from "@/lib/server-defaults"
 import { effectiveDefaultsForShape } from "@/lib/server-defaults"
@@ -93,6 +93,26 @@ export function buildStremioPosterUrl(input: BuildStremioPosterUrlInput): URL {
   const netLandOffsets = effShape === "landscape"
     ? resolveLandscapeNetworkOffsets(new URLSearchParams(), mapping, null, input.defaults)
     : null
+  // Shape-local extra legacy marker (task 3B2): with an owned landscape key —
+  // including explicit `null` (follow own rank) — the portrait flat must not
+  // travel into the landscape URL (these builders emit per shape, so omission
+  // resolves own-rank server-side, pixels intact, legacy URLs byte-identical
+  // while the profile stays absent). Per-title mapping precedence is unchanged
+  // (the mapping has no landscape style key: it stays flat for both shapes).
+  // Shape-local extra follow marker: owned follow-rank shadows the flat;
+  // legacy null/absent/invalid inherits (byte-identical).
+  const rawLandForXbs = effShape === "landscape" ? input.defaults.landscape : null
+  let shapeExtraStyle: import("@/lib/badge-styles").ExtraBadgeStyle | import("@/lib/badge-styles").ExtraBadgeFollowRank | null | undefined
+  if (rawLandForXbs != null && "extraBadgeStyle" in rawLandForXbs) {
+    const v = (rawLandForXbs as { extraBadgeStyle?: unknown }).extraBadgeStyle
+    if (isExtraFollowRank(v) || isExtraBadgeStyle(typeof v === "string" ? v : null)) {
+      shapeExtraStyle = v as import("@/lib/badge-styles").ExtraBadgeStyle | import("@/lib/badge-styles").ExtraBadgeFollowRank
+    } else {
+      shapeExtraStyle = input.defaults.extraBadgeStyle ?? undefined
+    }
+  } else {
+    shapeExtraStyle = sd.extraBadgeStyle ?? input.defaults.extraBadgeStyle ?? undefined
+  }
   const params = buildStremioPosterSearchParams({
     config: input.config,
     animerank: input.animerank,
@@ -116,9 +136,13 @@ export function buildStremioPosterUrl(input: BuildStremioPosterUrlInput): URL {
     badgeYear: input.mapping?.badgeYear ?? sd.badgeYear,
     badgeRating: input.mapping?.badgeRating ?? sd.badgeRating,
     badgeQuality: input.mapping?.badgeQuality ?? sd.badgeQuality,
-    // Badge età globale (nessun per-titolo): default di spazio + paese.
+    // Badge età per-shape (nessun per-titolo): default effettivi della forma
+    // (`sd` è già landscape-aware) + paese + stile. Con `config` viaggiano
+    // espliciti così la query vince sul token condiviso (stesso contratto
+    // config/age degli altri visual).
     ageBadge: sd.ageBadge,
     ageCountry: sd.ageCountry ?? undefined,
+    ageBadgeStyle: sd.ageBadgeStyle ?? undefined,
     minQuality: sd.minQuality ?? undefined,
     customRatings: mapping?.customRatings ?? sd.customRatings,
     ratingSources: mapping?.ratingSources ?? sd.ratingSources,
@@ -130,7 +154,7 @@ export function buildStremioPosterUrl(input: BuildStremioPosterUrlInput): URL {
     sashOrder: sd.sashOrder ?? undefined,
     badgeStyle: mapping?.badgeStyle ?? sd.badgeStyle,
     rankingBadgeStyle: mapping?.rankingBadgeStyle ?? sd.rankingBadgeStyle,
-    extraBadgeStyle: mapping?.extraBadgeStyle ?? sd.extraBadgeStyle ?? input.defaults.extraBadgeStyle ?? undefined,
+    extraBadgeStyle: mapping?.extraBadgeStyle ?? shapeExtraStyle ?? undefined,
     badgeFont: mapping?.badgeFont ?? sd.badgeFont ?? input.defaults.badgeFont ?? undefined,
     qualityBadgeStyle: mapping?.qualityBadgeStyle ?? sd.qualityBadgeStyle,
     videoFormats: mapping?.videoFormats ?? sd.videoFormats ?? input.defaults.videoFormats,
@@ -210,10 +234,13 @@ export function buildStremioPosterUrl(input: BuildStremioPosterUrlInput): URL {
     // an explicit `all` travels as `freshScope=all` so it overrides an
     // inherited ranked for unsaved/template consumers.
     posterFreshScope: eff?.posterFreshScope ?? sd.posterFreshScope,
-    // Allineamento: solo globale (il mapping non ha il campo) e solo
-    // landscape — i portrait non portano mai `align` (sempre centrati).
+    // Allineamento: per-shape nei default (`sd` è già landscape-aware:
+    // override del profilo, poi flat, poi auto di formato) e solo landscape
+    // — i portrait non portano mai `align` (sempre centrati). Il mapping non
+    // ha il campo (resta globale rispetto al per-titolo). Il `?? undefined`
+    // normalizza il flat null (auto) per il builder tipizzato.
     logoAlign: effShape === "landscape"
-      ? sd.logoAlign
+      ? (sd.logoAlign ?? undefined)
       : undefined,
   })
 

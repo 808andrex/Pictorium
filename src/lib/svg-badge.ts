@@ -1,6 +1,6 @@
 import { textColorForBg } from "./accent-color"
 import { FONT_FILES } from "./fonts"
-import { estimateTextWidth, fontFamilyFor, buildExtraPillSvg, buildExtraGlassSvg, buildExtraBorderedSvg, buildExtraDefaultSvg, buildRankingCornerSvg, buildQualityBadgeSvg, buildQualityKnockoutSvg, buildCustomBadgeSvg, escSvg, buildHouseGenreSvg, buildHouseRankingSvg, buildHousePresetSvg, TRANSLUCENT_BADGE_TEXT } from "./badge-svg-shared"
+import { estimateTextWidth, fontFamilyFor, buildExtraPillSvg, buildExtraGlassSvg, buildExtraBorderedSvg, buildExtraDefaultSvg, buildRankingCornerSvg, buildQualityBadgeSvg, buildQualityTierBadgeSvg, buildQualityKnockoutSvg, buildCustomBadgeSvg, escSvg, buildHouseGenreSvg, buildHouseRankingSvg, buildHousePresetSvg, TRANSLUCENT_BADGE_TEXT } from "./badge-svg-shared"
 export { buildNetflixRankBadgeSVG } from "./badge-svg-shared"
 import type { GenreParts, HousePresetScene } from "./badge-svg-shared"
 import { normalizeBadgeFont } from "./badge-svg-shared"
@@ -270,6 +270,27 @@ export async function renderQualityBadge(
   const bg = topLight ? "rgba(0,0,0,0.80)" : "rgba(255,255,255,0.80)"
   const fg = topLight ? "rgba(255,255,255,0.80)" : "rgba(0,0,0,0.80)"
   const result = buildQualityBadgeSvg(quality, fs, fg, bg, !!topLight, normalizeBadgeFont(font))
+  const png = await renderSVG(result.svg, result.w)
+  return { png, w: result.w, h: result.h }
+}
+
+/**
+ * Renders the streaming-quality tier tag (4K/FHD/...) for the `standard`
+ * style: wider, less-rounded box than the neutral pill (see
+ * `buildQualityTierBadgeSvg`). Same 17px base and box height as
+ * `renderQualityBadge`, so scale/offset/anchor math downstream is unchanged.
+ * The age pill keeps `renderQualityBadge` (historic neutral geometry).
+ */
+export async function renderQualityTierBadge(
+  quality: string,
+  pw: number,
+  topLight?: boolean,
+  /** Font del testo (default "inter" = resa storica). */
+  font: BadgeFont = "inter",
+): Promise<{ png: Buffer; w: number; h: number }> {
+  // Stessa base della pill neutra (17px su griglia 380, `qscale` da 100).
+  const fs = Math.round(Math.max(17 * pw / 380, 10))
+  const result = buildQualityTierBadgeSvg(quality, fs, !!topLight, normalizeBadgeFont(font))
   const png = await renderSVG(result.svg, result.w)
   return { png, w: result.w, h: result.h }
 }

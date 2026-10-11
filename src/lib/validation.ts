@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { BADGE_STYLES, RANKING_BADGE_STYLES, QUALITY_BADGE_STYLES, BADGE_FONTS, SEPARATE_RATINGS_STYLES, EXTRA_BADGE_STYLES } from "./badge-styles"
+import { BADGE_STYLES, RANKING_BADGE_STYLES, QUALITY_BADGE_STYLES, BADGE_FONTS, SEPARATE_RATINGS_STYLES, EXTRA_BADGE_STYLES, EXTRA_BADGE_FOLLOW_RANK } from "./badge-styles"
 import { POSTER_LAYOUTS, POSTER_FRESH_SCOPES } from "./types"
 import { BADGE_PRESET_ID_RE, BADGE_PRESET_REV_RE } from "./badge-preset"
 
@@ -93,8 +93,8 @@ export const mappingSchema = z.object({
   gradientHeight: z.number().nullable().optional(),
   badgeStyle: z.enum(BADGE_STYLES).nullable().optional(),
   rankingBadgeStyle: z.enum(RANKING_BADGE_STYLES).nullable().optional(),
-  /** Standalone extra-badge style (flat-only): absent = legacy `rs` fallback. */
-  extraBadgeStyle: z.enum(EXTRA_BADGE_STYLES).nullable().optional(),
+  /** Standalone extra-badge style (flat-only): absent = legacy `rs` fallback; "follow-rank" = explicit own-rank. */
+  extraBadgeStyle: z.union([z.enum(EXTRA_BADGE_STYLES), z.literal(EXTRA_BADGE_FOLLOW_RANK)]).nullable().optional(),
   badgeFont: z.enum(BADGE_FONTS).nullable().optional(),
   qualityBadgeStyle: z.enum(QUALITY_BADGE_STYLES).nullable().optional(),
   videoFormats: z.array(z.enum(["dv", "hdr", "hdr10plus", "atmos", "imax"])).nullable().optional(),
@@ -158,7 +158,7 @@ export const mappingSchema = z.object({
   networkLogoName: z.string().nullable().optional(),
   defaultBadgeStyle: z.enum(BADGE_STYLES).nullable().optional(),
   defaultRankingBadgeStyle: z.enum(RANKING_BADGE_STYLES).nullable().optional(),
-  defaultExtraBadgeStyle: z.enum(EXTRA_BADGE_STYLES).nullable().optional(),
+  defaultExtraBadgeStyle: z.union([z.enum(EXTRA_BADGE_STYLES), z.literal(EXTRA_BADGE_FOLLOW_RANK)]).nullable().optional(),
   episodeGroupId: z.string().max(80).nullable().optional(),
 })
 

@@ -4,6 +4,7 @@ import sharp from "sharp"
 import { cornerAnchoredLeft } from "../src/lib/poster-service"
 import { NUMBER_BADGE_BASE_OFFSET_X } from "../src/lib/badge-styles"
 import { buildRankingNumberSvg } from "../src/lib/badge-svg-shared"
+import { snapshotMissingLandscape, SHAPE_FLAT_TO_LANDSCAPE } from "../src/lib/visual-presets"
 
 // U4 final verification (U1/U2/U3, no new product behavior):
 // - U1 Nastro Standard/Colorato: default + per-title send rs netflix/colored
@@ -133,20 +134,61 @@ async function getDefaults(page: Page): Promise<Record<string, unknown>> {
 /**
  * Single-instance defaults namespace (MULTI_USER is off in E2E: no ?user=
  * scoping, the seeded profile id never reaches the API). PUT shallow-merges
- * the root and replaces `landscape` wholesale, so restore re-PUTs the full
- * surface below (explicit nulls included): omitted root keys can never be
- * deleted, and retry loops would only trip the defaults rate limiter.
- * Single PUT + single verify GET, no pollution outside this surface.
+ * the root and deep-merges `landscape` per key, with a strict shape-
+ * independence backfill: a flat edit without matching profile keys freezes
+ * the pre-merge effective flat values into the profile. Restore therefore
+ * re-PUTs the sparse RESET surface below AND asserts the exact server merge
+ * (never a weakened subset match): the expected landscape is derived from
+ * the pre-restore stored profile + the backfill snapshot + the RESET patch.
+ * Settle is debounce-aware (poll for stability, no fixed sleeps); the editor
+ * is unmounted via navigation so pending timers are cleared, never firing
+ * after the restore PUT. No pollution outside this surface.
  */
 test.afterEach(async ({ page }) => {
   if (!defaultsDirty) return
   defaultsDirty = false
-  // Settle trailing debounced UI autosaves (500ms in useDefaults) BEFORE the
-  // restore PUT, never after it.
-  await page.waitForTimeout(1200)
+  // Settle trailing debounced UI autosaves BEFORE the restore PUT: poll the
+  // server state until two consecutive reads are identical (600ms apart), so
+  // a pending 500ms-debounce flush lands before we overwrite it. Bounded and
+  // effect-observed — never an arbitrary fixed sleep.
+  let pre: Record<string, unknown> | null = null
+  try {
+    let prev = JSON.stringify(await getDefaults(page))
+    for (let i = 0; i < 6; i++) {
+      await page.waitForTimeout(600)
+      const cur = JSON.stringify(await getDefaults(page))
+      if (cur === prev) break
+      prev = cur
+    }
+    pre = JSON.parse(prev) as Record<string, unknown>
+  } catch {
+    pre = null
+  }
   await page.goto("/")
+  if (!pre) pre = await getDefaults(page)
+  const preLand = ((pre.landscape ?? {}) as Record<string, unknown>) ?? {}
+  // Model the precise server merge for the RESET PUT below (mirrors
+  // backfillLandscapeOnFlatEdit in the defaults route, reusing the shared
+  // snapshot helper — no forked math): only keys present in the RESET body
+  // AND missing in stored+patch freeze the pre-merge effective flats.
+  const resetRec = RESET_PAYLOAD as unknown as Record<string, unknown>
+  const resetLandPatch = ((resetRec.landscape ?? {}) as Record<string, unknown>) ?? {}
+  const presence = { ...preLand, ...resetLandPatch }
+  const flatsRecord: Record<string, unknown> = {}
+  const changedFlatKeys: string[] = []
+  for (const [flatKey] of Object.entries(SHAPE_FLAT_TO_LANDSCAPE)) {
+    const bareKey = flatKey.charAt(7).toLowerCase() + flatKey.slice(8)
+    flatsRecord[flatKey] = (pre as Record<string, unknown>)[bareKey]
+    if (bareKey in resetRec) changedFlatKeys.push(flatKey)
+  }
+  const adds = snapshotMissingLandscape(flatsRecord, presence, changedFlatKeys) as Record<string, unknown>
+  const expectedLandscape = { ...preLand, ...adds, ...resetLandPatch }
   await putDefaultsWithRetry(page, "restore defaults", RESET_PAYLOAD)
+  // Unmount the editor (navigation clears the debounce timer + aborts
+  // inflight sends, so nothing fires after the restore).
+  await page.goto("/")
   const got = await getDefaults(page)
+  // Managed flats reset exactly.
   expect(got.posterShape).toBe(RESET_PAYLOAD.posterShape)
   expect(got.rankingBadgeStyle).toBe(RESET_PAYLOAD.rankingBadgeStyle)
   expect(got.ribbonEnabled).toBe(RESET_PAYLOAD.ribbonEnabled)
@@ -154,7 +196,12 @@ test.afterEach(async ({ page }) => {
   expect(got.extraBadgeStyle).toBe(RESET_PAYLOAD.extraBadgeStyle)
   expect(got.topBadgeOffsetX).toBe(RESET_PAYLOAD.topBadgeOffsetX)
   expect(got.sashOrder).toEqual(RESET_PAYLOAD.sashOrder)
-  expect(got.landscape).toEqual(RESET_PAYLOAD.landscape)
+  // Exact deep equality on the profile: the full expected server merge, no
+  // arbitrary later keys, extraneous pre-existing profile keys preserved.
+  expect(got.landscape).toEqual(expectedLandscape)
+  expect(Object.keys(((got.landscape ?? {}) as Record<string, unknown>)).sort()).toEqual(
+    Object.keys(expectedLandscape).sort(),
+  )
 })
 
 async function waitDefaults(page: Page, pred: (d: Record<string, unknown>) => boolean) {

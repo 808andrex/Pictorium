@@ -46,8 +46,9 @@ Read the guide that matches what you are about to write BEFORE writing code.
    matching 02-pages/03-architecture section).
 3. Note the exact API shape and any deprecation notices for THIS version.
 4. Write or modify the code to match. Do not "modernize" past the installed version.
-5. Verify with `npm run build` (or `npm run dev`), fixing any deprecation warnings
-   it reports.
+5. Run relevant narrow verification during work; defer `npm run build` to the
+   final batch before push/integration per AGENTS.md Verification Strategy.
+   Resolve relevant deprecations reported by authorized build/dev runs.
 
 ## Rules
 

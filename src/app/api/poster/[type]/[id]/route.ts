@@ -1161,6 +1161,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
             wantAnilist,
             wantKitsu,
             wantImdb,
+            requestedSources: reqRatingSources,
+            ratingWaitMs: RATING_WAIT_MS,
             // Voto TMDB diretto come backfill di sources.tmdb (MDBList down).
             tmdbFallbackVote: details.vote_average ?? undefined,
           }).catch(() => null)
@@ -1573,7 +1575,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
     // Segnali grezzi del rilevamento pre-digitale (solo debug=1).
     let preJw: boolean | null = null
     let preDigital: string | null = null
-    // Badge età (default OFF): stessa catena globale del render finale
+    // Badge età (default OFF): stessa catena per-shape del render finale
     // (resolveAgeBadgeRequest — mai catene duplicate). Spento = nessun fetch
     // TMDB extra in Block B (zero rete, zero byte diversi).
     const ageEarly = resolveAgeBadgeRequest(req.nextUrl.searchParams, configOverride, earlyEffSd, sd)
@@ -1815,6 +1817,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
                 wantAnilist,
                 wantKitsu,
                 wantImdb,
+                requestedSources: reqRatingSources,
+                ratingWaitMs: RATING_WAIT_MS,
                 tmdbFallbackVote: genuineTmdbVote,
               },
             ).catch(() => null)
@@ -2027,7 +2031,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
     extraBadgeStyle,
       blurEnabled, blurHeight, blurIntensity, blurFade, blurDarkness, tintStrength, topShade,
       badgesEnabled, rankingEnabled,
-      badgeGenre, badgeYear, badgeRating, badgeQuality, ageBadge, ageCountry, minQuality, sashOrder,
+      badgeGenre, badgeYear, badgeRating, badgeQuality, ageBadge, ageCountry, ageBadgeStyle, minQuality, sashOrder,
       separateRatings, separateRatingsStyle,
       logoScale, logoOffsetX, logoOffsetY,
       topBadgeScale, topBadgeOffsetX, topBadgeOffsetY,
@@ -2275,6 +2279,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
         age: {
           enabled: ageBadge,
           country: ageCountry,
+          style: ageBadgeStyle,
           label: ageLabel,
           degraded: ageEphemeral,
         },
@@ -2318,6 +2323,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
             badgeQuality,
             ageBadge,
             ageCountry,
+            ageBadgeStyle,
             separateRatings: useSeparate,
             separateRatingsStyle,
             bottomActive,
@@ -2409,6 +2415,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
       sashOrder,
       quality: finalQuality,
       ageLabel,
+      ageBadgeStyle,
       topLight, bottomLight, logoBadgeVisibility, targetCenter, ribbonSide, ribbonEnabled, rankingBadgeAccent,
       logoScale, logoOffsetX, logoOffsetY,
       topBadgeScale, topBadgeOffsetX, topBadgeOffsetY,

@@ -5,11 +5,13 @@ import type { TMDBImage, NetworkLogoPosition, PosterLayout, PosterFreshScope, Po
 import { useDefaults, type DefaultSyncStatus, type DefaultsState } from "@/lib/useDefaults"
 import type { LandscapeServerDefaults } from "@/lib/server-defaults"
 import type { DateFormat } from "@/lib/release-badge"
-import type { BadgeStyle, RankingBadgeStyle, ExtraBadgeStyle, QualityBadgeStyle, BadgeFont, SeparateRatingsStyle } from "@/lib/badge-styles"
+import type { BadgeStyle, RankingBadgeStyle, ExtraBadgeStyle, ExtraBadgeFollowRank, QualityBadgeStyle, BadgeFont, SeparateRatingsStyle } from "@/lib/badge-styles"
+import type { AgeBadgeStyle } from "@/lib/badge-styles"
 import { getSeparateBadgeDefaultScale } from "@/lib/badge-styles"
 import type { SashBucket } from "@/lib/badge-priority"
 import type { VideoFormat } from "@/lib/av-specs"
 import type { VisualPresetValues } from "@/lib/visual-presets"
+import { independentLandscapeDefaults } from "@/lib/visual-presets"
 import { materializeExtraTuning, clearedExtraForPresetApply } from "@/lib/extra-materialize"
 import { projectPerTitleVisualPreset } from "@/lib/per-title-preset"
 import { logoEffectiveAutoScale } from "@/lib/logo-selection"
@@ -119,9 +121,9 @@ export interface PosterEditorCtx {
   setBadgeStyle: (v: BadgeStyle | ((prev: BadgeStyle) => BadgeStyle)) => void
   rankingBadgeStyle: RankingBadgeStyle
   setRankingBadgeStyle: (v: RankingBadgeStyle | ((prev: RankingBadgeStyle) => RankingBadgeStyle)) => void
-  /** Standalone extra-badge style in editing (null = legacy `rs` fallback). */
-  extraBadgeStyle: ExtraBadgeStyle | null
-  setExtraBadgeStyle: (v: ExtraBadgeStyle | null | ((prev: ExtraBadgeStyle | null) => ExtraBadgeStyle | null)) => void
+  /** Standalone extra-badge style in editing (null = legacy `rs` fallback; "follow-rank" = explicit own-rank). */
+  extraBadgeStyle: ExtraBadgeStyle | ExtraBadgeFollowRank | null
+  setExtraBadgeStyle: (v: ExtraBadgeStyle | ExtraBadgeFollowRank | null | ((prev: ExtraBadgeStyle | ExtraBadgeFollowRank | null) => ExtraBadgeStyle | ExtraBadgeFollowRank | null)) => void
   /** Font dei testi badge del poster in editing ("inter" = resa storica). */
   badgeFont: BadgeFont
   setBadgeFont: (v: BadgeFont | ((prev: BadgeFont) => BadgeFont)) => void
@@ -167,9 +169,9 @@ export interface PosterEditorCtx {
   setDefaultBadgeStyle: (v: BadgeStyle | ((prev: BadgeStyle) => BadgeStyle)) => void
   defaultRankingBadgeStyle: RankingBadgeStyle
   setDefaultRankingBadgeStyle: (v: RankingBadgeStyle | ((prev: RankingBadgeStyle) => RankingBadgeStyle)) => void
-  /** Standalone extra-badge style default (null = legacy `rs` fallback). */
-  defaultExtraBadgeStyle: ExtraBadgeStyle | null
-  setDefaultExtraBadgeStyle: (v: ExtraBadgeStyle | null | ((prev: ExtraBadgeStyle | null) => ExtraBadgeStyle | null)) => void
+  /** Standalone extra-badge style default (null = legacy `rs` fallback; "follow-rank" = explicit own-rank). */
+  defaultExtraBadgeStyle: ExtraBadgeStyle | ExtraBadgeFollowRank | null
+  setDefaultExtraBadgeStyle: (v: ExtraBadgeStyle | ExtraBadgeFollowRank | null | ((prev: ExtraBadgeStyle | ExtraBadgeFollowRank | null) => ExtraBadgeStyle | ExtraBadgeFollowRank | null)) => void
   /** Font dei testi badge di default ("inter" = resa storica). */
   defaultBadgeFont: BadgeFont
   setDefaultBadgeFont: (v: BadgeFont | ((prev: BadgeFont) => BadgeFont)) => void
@@ -259,6 +261,9 @@ export interface PosterEditorCtx {
   /** Paese classificazione età di default ("IT"). Globale, mai auto-cambiato. */
   defaultAgeCountry: string
   setDefaultAgeCountry: (v: string | ((prev: string) => string)) => void
+  /** Stile pill età di default ("standard" = resa storica). Globale, mai auto-cambiato. */
+  defaultAgeBadgeStyle: AgeBadgeStyle
+  setDefaultAgeBadgeStyle: (v: AgeBadgeStyle | ((prev: AgeBadgeStyle) => AgeBadgeStyle)) => void
   defaultCustomRatings: boolean
   setDefaultCustomRatings: (v: boolean | ((prev: boolean) => boolean)) => void
   /** Endpoint provider custom rating (non-segreto; chiave solo env). */
@@ -551,7 +556,7 @@ export function PosterEditorProvider({
     defaultSeparateBadgeOffsetX, defaultSeparateBadgeOffsetY,
     defaultGenreBadgeOffsetX, defaultGenreBadgeOffsetY, defaultQualityBadgeOffsetX, defaultQualityBadgeOffsetY,
     defaultNetworkLogoOffsetX, defaultNetworkLogoOffsetY,
-    defaultBadgeGenre, defaultBadgeYear, defaultBadgeRating, defaultBadgeQuality, defaultAgeBadge, defaultAgeCountry, defaultCustomRatings, defaultCustomRatingEndpoint, defaultCustomRatingApiKeyHeader, defaultRatingSources, defaultSeparateRatings, defaultSeparateRatingsStyle, defaultPosterLayout, defaultPosterFreshScope, defaultSashOrder,
+    defaultBadgeGenre, defaultBadgeYear, defaultBadgeRating, defaultBadgeQuality, defaultAgeBadge, defaultAgeCountry, defaultAgeBadgeStyle, defaultCustomRatings, defaultCustomRatingEndpoint, defaultCustomRatingApiKeyHeader, defaultRatingSources, defaultSeparateRatings, defaultSeparateRatingsStyle, defaultPosterLayout, defaultPosterFreshScope, defaultSashOrder,
     defaultAutoRotateClean, defaultAutoRotateBackdrop, defaultPortraitFitEnabled, defaultLandscapeFitEnabled, defaultNetworkLogo, defaultNetworkLogoPosition, defaultNetworkLogoFollowTitle, defaultPreRelease, defaultRibbonSide, defaultRibbonEnabled, defaultPosterShape, defaultLogoAlign,
     defaultDisableCleanPosters,
     landscape: landscapeDefaults,
@@ -666,12 +671,14 @@ export function PosterEditorProvider({
       const next = typeof v === "function" ? v(posterShape) : v
       // Solo allineamento: i valori sfumatura sono profili dedicati per
       // formato (flat = portrait, landscapeBlur = landscape) e non si
-      // toccano al cambio formato.
+      // toccano al cambio formato. Task 3B2: in landscape vince l'override
+      // del profilo Orizzontale (`land ?? flat`, flat null = sinistra auto);
+      // i portrait restano sempre centrati per contratto.
       update({
         posterShape: next,
-        logoAlign: next === "landscape" ? (defaultLogoAlign ?? "left") : "center",
+        logoAlign: next === "landscape" ? (landscapeDefaults?.logoAlign ?? defaultLogoAlign ?? "left") : "center",
       })
-    }, [posterShape, update, defaultLogoAlign])
+    }, [posterShape, update, defaultLogoAlign, landscapeDefaults])
   // Regola di split corrente/default (vale per TUTTI i setter di questo file):
   // i setter dell'editor (setX) scrivono solo il valore corrente del poster
   // aperto, i setter delle Impostazioni (setDefaultX) solo il default globale.
@@ -864,7 +871,7 @@ export function PosterEditorProvider({
       update({ rankingBadgeStyle: next })
     }, [rankingBadgeStyle, update])
   const setExtraBadgeStyle = useCallback(
-    (v: ExtraBadgeStyle | null | ((prev: ExtraBadgeStyle | null) => ExtraBadgeStyle | null)) => {
+    (v: ExtraBadgeStyle | ExtraBadgeFollowRank | null | ((prev: ExtraBadgeStyle | ExtraBadgeFollowRank | null) => ExtraBadgeStyle | ExtraBadgeFollowRank | null)) => {
       const next = typeof v === "function" ? v(extraBadgeStyle) : v
       update({ extraBadgeStyle: next })
     }, [extraBadgeStyle, update])
@@ -894,7 +901,7 @@ export function PosterEditorProvider({
       update({ defaultRankingBadgeStyle: next })
     }, [defaultRankingBadgeStyle, update])
   const setDefaultExtraBadgeStyle = useCallback(
-    (v: ExtraBadgeStyle | null | ((prev: ExtraBadgeStyle | null) => ExtraBadgeStyle | null)) => {
+    (v: ExtraBadgeStyle | ExtraBadgeFollowRank | null | ((prev: ExtraBadgeStyle | ExtraBadgeFollowRank | null) => ExtraBadgeStyle | ExtraBadgeFollowRank | null)) => {
       const next = typeof v === "function" ? v(defaultExtraBadgeStyle) : v
       update({ defaultExtraBadgeStyle: next })
     }, [defaultExtraBadgeStyle, update])
@@ -1099,16 +1106,31 @@ export function PosterEditorProvider({
       const next = typeof v === "function" ? v(defaultBadgeQuality) : v
       update({ defaultBadgeQuality: next })
     }, [defaultBadgeQuality, update])
+  // Setter età portrait: prima della PRIMA modifica congelano nel profilo
+  // landscape il valore flat corrente (snapshot esplicito, mai reseed dopo
+  // l'update) così un portrait ON non attiva un landscape mai configurato. Il
+  // profilo già esplicito (incluso `false`) non si tocca mai.
   const setDefaultAgeBadge = useCallback(
     (v: boolean | ((prev: boolean) => boolean)) => {
       const next = typeof v === "function" ? v(defaultAgeBadge) : v
-      update({ defaultAgeBadge: next })
+      update((prev) => prev.landscape.ageBadge === undefined
+        ? { defaultAgeBadge: next, landscape: { ...prev.landscape, ageBadge: prev.defaultAgeBadge } }
+        : { defaultAgeBadge: next })
     }, [defaultAgeBadge, update])
   const setDefaultAgeCountry = useCallback(
     (v: string | ((prev: string) => string)) => {
       const next = typeof v === "function" ? v(defaultAgeCountry) : v
-      update({ defaultAgeCountry: next })
+      update((prev) => prev.landscape.ageCountry === undefined
+        ? { defaultAgeCountry: next, landscape: { ...prev.landscape, ageCountry: prev.defaultAgeCountry } }
+        : { defaultAgeCountry: next })
     }, [defaultAgeCountry, update])
+  const setDefaultAgeBadgeStyle = useCallback(
+    (v: AgeBadgeStyle | ((prev: AgeBadgeStyle) => AgeBadgeStyle)) => {
+      const next = typeof v === "function" ? v(defaultAgeBadgeStyle) : v
+      update((prev) => prev.landscape.ageBadgeStyle === undefined
+        ? { defaultAgeBadgeStyle: next, landscape: { ...prev.landscape, ageBadgeStyle: prev.defaultAgeBadgeStyle } }
+        : { defaultAgeBadgeStyle: next })
+    }, [defaultAgeBadgeStyle, update])
   const setDefaultCustomRatings = useCallback(
     (v: boolean | ((prev: boolean) => boolean)) => {
       const next = typeof v === "function" ? v(defaultCustomRatings) : v
@@ -1271,7 +1293,16 @@ export function PosterEditorProvider({
     }, [update])
   const resetLandscape = useCallback(
     () => {
-      update({ landscape: {} })
+      // Reset per-shape (task 3B1): indipendente e shape-appropriate, mai
+      // clear-to-follow. Congela l'effettivo portrait corrente per ogni chiave
+      // (stessi pixel del follow, poi scollegato), qualità ai canonici 0/0
+      // landscape e trio età ai default originali OFF/IT/standard (un flat ON
+      // non riattiva mai il landscape resettato). Singolo update atomico.
+      update((prev) => ({
+        landscape: independentLandscapeDefaults(
+          prev as unknown as Record<string, unknown>,
+        ),
+      }))
     }, [update])
   const setLogoAlign = useCallback(
     (v: "left" | "center" | ((prev: "left" | "center") => "left" | "center")) => {
@@ -1676,6 +1707,8 @@ export function PosterEditorProvider({
       setDefaultAgeBadge,
       defaultAgeCountry,
       setDefaultAgeCountry,
+      defaultAgeBadgeStyle,
+      setDefaultAgeBadgeStyle,
       defaultCustomRatings,
       setDefaultCustomRatings,
       defaultCustomRatingEndpoint,
@@ -1933,6 +1966,7 @@ export function PosterEditorProvider({
       defaultBadgeQuality, setDefaultBadgeQuality,
       defaultAgeBadge, setDefaultAgeBadge,
       defaultAgeCountry, setDefaultAgeCountry,
+      defaultAgeBadgeStyle, setDefaultAgeBadgeStyle,
       defaultCustomRatings, setDefaultCustomRatings,
       defaultCustomRatingEndpoint, setDefaultCustomRatingEndpoint,
       defaultCustomRatingApiKeyHeader, setDefaultCustomRatingApiKeyHeader,

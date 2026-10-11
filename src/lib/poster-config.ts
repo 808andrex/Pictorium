@@ -17,7 +17,10 @@ import {
   isBadgeStyle,
   isRankingBadgeStyle,
   isExtraBadgeStyle,
+  isExtraFollowRank,
+  normalizeExtraBadgeStyleForRender,
   isQualityBadgeStyle,
+  isAgeBadgeStyle,
   isBadgeFont,
   isSeparateRatingsStyle,
   isBottomSeparateRatingsStyle,
@@ -28,12 +31,14 @@ import {
   DEFAULT_BADGE_STYLE,
   DEFAULT_RANKING_BADGE_STYLE,
   DEFAULT_QUALITY_BADGE_STYLE,
+  DEFAULT_AGE_BADGE_STYLE,
   DEFAULT_BADGE_FONT,
   DEFAULT_SEPARATE_RATINGS_STYLE,
   type BadgeStyle,
   type RankingBadgeStyle,
   type ExtraBadgeStyle,
   type QualityBadgeStyle,
+  type AgeBadgeStyle,
   type BadgeFont,
   type SeparateRatingsStyle,
 } from "./badge-styles"
@@ -332,16 +337,22 @@ export interface PosterRenderConfig {
   badgeYear: boolean
   badgeRating: boolean
   badgeQuality: boolean
-  /** Badge testuale di classificazione per età (default OFF). Globale
-   *  (nessun per-titolo, come minQuality/sashOrder): query `age` >
-   *  config token > server defaults > false. */
+  /** Badge testuale di classificazione per età (default OFF). Per-shape:
+   *  query `age` > config token > defaults effettivi per forma > flat > false
+   *  (nessun per-titolo, come minQuality/sashOrder). */
   ageBadge: boolean
-  /** Paese della classificazione età (default "IT", impostazione globale
+  /** Paese della classificazione età (default "IT", impostazione
    *  indipendente da lingua UI/regione streaming, mai auto-cambiata).
-   *  Catena: query `agecountry` > config token > server defaults > "IT"
-   *  (fail-closed: valori ignoti/GLOBAL/confini cadono sul livello
-   *  successivo, mai su fetch arbitrari). */
+   *  Per-shape come il toggle: query `agecountry` > config token > defaults
+   *  effettivi per forma > flat > "IT" (fail-closed: valori ignoti/GLOBAL/
+   *  confini cadono sul livello successivo, mai su fetch arbitrari). */
   ageCountry: string
+  /** Stile della pill di classificazione per età (default "standard" = resa
+   *  storica). Per-shape come il toggle età (nessun per-titolo): query
+   *  `agebs` > config token > defaults effettivi per forma > flat >
+   *  "standard" (query presente-ma-invalida = "standard" esplicito,
+   *  fail-closed). */
+  ageBadgeStyle: AgeBadgeStyle
   /** Soglia minima tier qualità streaming — catena: query `qmin` > server defaults > "SD". Globale (nessun per-titolo). */
   minQuality: StreamQuality
   /** Ordine/priorità sash — catena: query `sash` > server defaults > default. Globale (nessun per-titolo). */
@@ -451,9 +462,11 @@ export interface PosterRenderConfig {
    */
   hideLogo: boolean
   /**
-   * Allineamento blocco logo/metadati — precedenza: query `align` > server
-   * defaults > default di formato (landscape "left", poster "center").
-   * Globale: nessun override per-titolo (il mapping non ha il campo).
+   * Allineamento blocco logo/metadati — precedenza: query `align` >
+   * landscape profile override (concreto vince, null/assente = flat) >
+   * server defaults > default di formato (landscape "left", poster "center").
+   * Globale rispetto al per-titolo (il mapping non ha il campo); per-shape
+   * rispetto ai default (il profilo Orizzontale può divergere).
    */
   logoAlign: "left" | "center"
 }
@@ -461,13 +474,17 @@ export interface PosterRenderConfig {
 /**
  * Age-badge request flags — UNICO punto di verità per route (early gating
  * del fetch) e resolvePosterRenderConfig (valori finali): mai catene `age`
- * duplicate che divergono. Catena globale senza per-titolo (come
- * minQuality/sashOrder): query `age`/`agecountry` > config token >
- * effective per-shape defaults > flat > OFF/"IT".
+ * duplicate che divergono. Per-shape senza per-titolo (come
+ * minQuality/sashOrder): query `age`/`agecountry`/`agebs` > config token >
+ * effective per-shape defaults > flat > OFF/"IT"/"standard". Il token resta
+ * trasporto condiviso (flat): un override esplicito del profilo della forma
+ * selezionata viaggia in query e vince sul token (stesso contratto degli
+ * altri visual scoped).
  */
 export interface AgeBadgeRequest {
   ageBadge: boolean
   ageCountry: string
+  ageBadgeStyle: AgeBadgeStyle
 }
 
 export function resolveAgeBadgeRequest(
@@ -484,7 +501,18 @@ export function resolveAgeBadgeRequest(
     ?? normalizeCertificationCountry(configOverride?.ageCountry)
     ?? normalizeCertificationCountry(sd.ageCountry ?? flatSd?.ageCountry)
     ?? DEFAULT_AGE_COUNTRY
-  return { ageBadge, ageCountry }
+  // Stile pill età — stessa catena per-shape: query `agebs` presente-ma-invalida
+  // = "standard" esplicito (fail-closed, mai ereditare un knockout da
+  // token/defaults con la stessa chiave — come `bfont` invalido = Inter);
+  // assente = cascata token > defaults effettivi per forma > "standard".
+  const qAgeStyle = searchParams.get("agebs")
+  const sdAgeStyle = sd.ageBadgeStyle ?? flatSd?.ageBadgeStyle
+  const ageBadgeStyle: AgeBadgeStyle = qAgeStyle !== null
+    ? (isAgeBadgeStyle(qAgeStyle) ? qAgeStyle : DEFAULT_AGE_BADGE_STYLE)
+    : (isAgeBadgeStyle(configOverride?.ageBadgeStyle)
+      ? configOverride.ageBadgeStyle
+      : (isAgeBadgeStyle(sdAgeStyle) ? sdAgeStyle : DEFAULT_AGE_BADGE_STYLE))
+  return { ageBadge, ageCountry, ageBadgeStyle }
 }
 
 export function resolvePosterRenderConfig(input: PosterRenderConfigInput): PosterRenderConfig {
@@ -549,25 +577,58 @@ export function resolvePosterRenderConfig(input: PosterRenderConfigInput): Poste
   // chain) so it stays consistent with the cache normalization, which drops
   // it from the key. Stored values are re-validated (legacy garbage passes
   // through to the `rs` fallback instead of breaking the render).
+  // Explicit "follow-rank" transport sentinel (user-authorized additive
+  // contract): each layer parses to "follow" (explicit own-rank, resolves
+  // `null` downstream) | concrete style | undefined (absent/invalid/null =
+  // fall through). Old landscape `null` ALWAYS inherits (never shadows);
+  // only "follow-rank" shadows the flat. Mapping/token follow obey the same
+  // precedence independently; query follow beats everything per contract.
+  const parseExtraLayer = (raw: unknown): "follow" | ExtraBadgeStyle | undefined => {
+    if (isExtraFollowRank(raw)) return "follow"
+    return isExtraBadgeStyle(typeof raw === "string" ? raw : null) ? (raw as ExtraBadgeStyle) : undefined
+  }
   const qXbsRaw = q.get("xbs")
-  const qXbs = qXbsRaw !== null && isExtraBadgeStyle(qXbsRaw) ? qXbsRaw : undefined
-  const mXbsRaw = mapping?.extraBadgeStyle
-  const mXbs = isExtraBadgeStyle(mXbsRaw) ? mXbsRaw : undefined
-  const cXbsRaw = configOverride?.extraBadgeStyle
-  const cXbs = isExtraBadgeStyle(cXbsRaw) ? cXbsRaw : undefined
-  const sXbsRaw = esd.extraBadgeStyle ?? sd.extraBadgeStyle
-  const sXbs = isExtraBadgeStyle(sXbsRaw) ? sXbsRaw : undefined
-  const extraBadgeStyle: ExtraBadgeStyle | null = qXbs ?? mXbs ?? cXbs ?? sXbs ?? null
+  const qXbs = qXbsRaw !== null ? parseExtraLayer(qXbsRaw) : undefined
+  const mXbsRaw = mapping?.extraBadgeStyle as unknown
+  const mXbs = mXbsRaw !== undefined ? parseExtraLayer(mXbsRaw) : undefined
+  const cXbsRaw = configOverride?.extraBadgeStyle as unknown
+  const cXbs = cXbsRaw !== undefined ? parseExtraLayer(cXbsRaw) : undefined
+  const landProfile = posterShape === "landscape" ? sd.landscape : null
+  let sXbs: "follow" | ExtraBadgeStyle | undefined
+  if (landProfile != null && "extraBadgeStyle" in landProfile) {
+    const v = (landProfile as { extraBadgeStyle?: unknown }).extraBadgeStyle
+    if (isExtraFollowRank(v) || isExtraBadgeStyle(typeof v === "string" ? v : null)) {
+      sXbs = parseExtraLayer(v)
+    } else {
+      // Legacy landscape null/absent/invalid = inherit the flat (byte-identical).
+      sXbs = parseExtraLayer(esd.extraBadgeStyle ?? sd.extraBadgeStyle)
+    }
+  } else {
+    sXbs = parseExtraLayer(esd.extraBadgeStyle ?? sd.extraBadgeStyle)
+  }
+  const resolveExtraWin = (v: "follow" | ExtraBadgeStyle | undefined): ExtraBadgeStyle | "follow" | undefined =>
+    v === "follow" ? "follow" : v
+  const extraWin = resolveExtraWin(qXbs) ?? resolveExtraWin(mXbs) ?? resolveExtraWin(cXbs) ?? resolveExtraWin(sXbs)
+  const extraBadgeStyle: ExtraBadgeStyle | null = extraWin === "follow"
+    ? null
+    : (normalizeExtraBadgeStyleForRender(extraWin) ?? null)
 
   // Allineamento Cinematic: vale SOLO in landscape (i portrait restano
   // rigorosamente centrati per contratto — nessun parametro query o default
   // globale deve mai spostarli a sinistra).
-  // In landscape: query `align=left|center` > server defaults > default "left".
+  // In landscape: query `align=left|center` > landscape profile override
+  // (concrete wins; null/absent = follow the flat) > flat server defaults >
+  // "left" (landscape auto). Un flat "center" con profilo assente resta
+  // "center" (mai "left" inventato); un flat null (auto) resta "left".
+  // Entrambi i rami portrait invariati byte-identici.
   const qAlign = (q.get("align") || "").toLowerCase()
+  const rawLandAlign = landProfile != null && "logoAlign" in landProfile
+    ? landProfile.logoAlign
+    : undefined
+  const flatAlign = sd.logoAlign === "left" || sd.logoAlign === "center" ? sd.logoAlign : undefined
+  const effAlign = rawLandAlign ?? flatAlign ?? "left"
   const logoAlign: "left" | "center" = posterShape === "landscape"
-    ? (qAlign === "left" || qAlign === "center"
-        ? qAlign
-        : (sd.logoAlign === "left" || sd.logoAlign === "center" ? sd.logoAlign : "left"))
+    ? (qAlign === "left" || qAlign === "center" ? qAlign : effAlign)
     : "center"
 
   // Fix M3: includere i campi blur salvati nel mapping nella catena di fallback
@@ -677,11 +738,11 @@ export function resolvePosterRenderConfig(input: PosterRenderConfigInput): Poste
   const badgeRating = qBr !== null ? qBr !== "0" : (mapping?.badgeRating ?? configOverride?.badgeRating ?? esd.badgeRating ?? sd.badgeRating ?? true)
   const badgeQuality = qBq !== null ? qBq !== "0" : (mapping?.badgeQuality ?? configOverride?.badgeQuality ?? esd.badgeQuality ?? sd.badgeQuality ?? true)
 
-  // Badge età (classificazione regionale testuale) — catena globale senza
+  // Badge età (classificazione regionale testuale) — per-shape senza
   // per-titolo via resolveAgeBadgeRequest (unico punto di verità con la
   // route, che lo riusa per il gating del fetch): default OFF = nessun
   // fetch TMDB extra e nessun cambio di resa finché non abilitato.
-  const { ageBadge, ageCountry } = resolveAgeBadgeRequest(q, configOverride, esd, sd)
+  const { ageBadge, ageCountry, ageBadgeStyle } = resolveAgeBadgeRequest(q, configOverride, esd, sd)
 
   // Minimum streaming quality tier — chain: query `qmin` > effective
   // per-shape defaults > "SD" (show all). Invalid values → default. No
@@ -1028,6 +1089,7 @@ export function resolvePosterRenderConfig(input: PosterRenderConfigInput): Poste
     badgeQuality,
     ageBadge,
     ageCountry,
+    ageBadgeStyle,
     minQuality,
     sashOrder,
     customRatings,

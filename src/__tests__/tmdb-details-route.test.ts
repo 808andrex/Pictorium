@@ -123,6 +123,68 @@ describe("GET /api/tmdb/[id]/details (voto medio TMDB+IMDb)", () => {
     expect(body.voteAverage).toBe(7.65)
   })
 
+  it("passes requestedSources, ratingWaitMs and an abortable signal to fetchAggregatedRating", async () => {
+    ;(getDetails as ReturnType<typeof vi.fn>).mockResolvedValue(BASE_DETAILS)
+    ;(getExternalIds as ReturnType<typeof vi.fn>).mockResolvedValue({ imdb_id: "tt999" })
+    // Mock implementation leaks across tests (clearAllMocks non la rimuove):
+    // qui serve l'assenza di aggregato per il fallback TMDB.
+    ;(fetchAggregatedRating as ReturnType<typeof vi.fn>).mockResolvedValue(null)
+
+    const req = new NextRequest("http://localhost:3000/api/tmdb/124/details?type=movie&language=it-IT&api_key=k&rsrc=imdb,tmdb")
+    const res = await GET(req, { params: Promise.resolve({ id: "124" }) })
+    const body = await res.json()
+    expect(res.status).toBe(200)
+    expect(body.voteAverage).toBe(7.3)
+    expect(fetchAggregatedRating).toHaveBeenCalledWith(
+      "tt999",
+      undefined,
+      expect.any(AbortSignal),
+      expect.objectContaining({
+        requestedSources: ["imdb", "tmdb"],
+        ratingWaitMs: expect.any(Number),
+        tmdbFallbackVote: 7.3,
+      }),
+    )
+    // La route abortisce l'upstream residuo in finally dopo la race.
+    const passedSignal = vi.mocked(fetchAggregatedRating).mock.calls[0][2] as AbortSignal | undefined
+    expect(passedSignal).toBeInstanceOf(AbortSignal)
+    expect(passedSignal?.aborted).toBe(true)
+  })
+
+  it("absent-empty-invalid rsrc resolve to explicit default imdb+tmdb", async () => {
+    ;(getDetails as ReturnType<typeof vi.fn>).mockResolvedValue(BASE_DETAILS)
+    ;(getExternalIds as ReturnType<typeof vi.fn>).mockResolvedValue({ imdb_id: "tt997" })
+    ;(fetchAggregatedRating as ReturnType<typeof vi.fn>).mockResolvedValue(null)
+    for (const q of ["", "&rsrc=", "&rsrc=xyz", "&rsrc=xyz,abc"]) {
+      vi.mocked(fetchAggregatedRating).mockClear()
+      cacheClear()
+      const req = new NextRequest(`http://localhost:3000/api/tmdb/127/details?type=movie&language=it-IT&api_key=k${q}`)
+      const res = await GET(req, { params: Promise.resolve({ id: "127" }) })
+      expect(res.status).toBe(200)
+      expect(fetchAggregatedRating).toHaveBeenCalledWith(
+        "tt997",
+        undefined,
+        expect.any(AbortSignal),
+        expect.objectContaining({ requestedSources: ["imdb", "tmdb"] }),
+      )
+    }
+  })
+
+  it("propagates single-source rsrc to the rating fetch", async () => {
+    ;(getDetails as ReturnType<typeof vi.fn>).mockResolvedValue(BASE_DETAILS)
+    ;(getExternalIds as ReturnType<typeof vi.fn>).mockResolvedValue({ imdb_id: "tt998" })
+
+    const req = new NextRequest("http://localhost:3000/api/tmdb/125/details?type=movie&language=it-IT&api_key=k&rsrc=tmdb")
+    const res = await GET(req, { params: Promise.resolve({ id: "125" }) })
+    expect(res.status).toBe(200)
+    expect(fetchAggregatedRating).toHaveBeenCalledWith(
+      "tt998",
+      undefined,
+      expect.any(AbortSignal),
+      expect.objectContaining({ requestedSources: ["tmdb"] }),
+    )
+  })
+
   it("uses distinct cache keys for different mdblist_key values (hash, not plaintext)", async () => {
     ;(getDetails as ReturnType<typeof vi.fn>).mockResolvedValue(BASE_DETAILS)
     ;(getExternalIds as ReturnType<typeof vi.fn>).mockResolvedValue({ imdb_id: "tt123" })
@@ -142,8 +204,8 @@ describe("GET /api/tmdb/[id]/details (voto medio TMDB+IMDb)", () => {
       expect(keys).toHaveLength(2)
       // Chiavi diverse → non c'è cache hit incrociato con un'altra chiave mdblist.
       expect(keys[0]).not.toBe(keys[1])
-      // Prefisso standard details:v14 (fonti anime via rsrcKey).
-      expect(keys[0]).toMatch(/^details:v14:movie:123:it-IT:/)
+      // Prefisso standard details:v15 (default esplicito via rsrcKey).
+      expect(keys[0]).toMatch(/^details:v15:movie:123:it-IT:/)
       // La chiave API non deve apparire in chiaro nel cache key (hash sha1 a 8 hex).
       expect(keys[0]).not.toContain("keyAAA")
       expect(keys[1]).not.toContain("keyBBB")

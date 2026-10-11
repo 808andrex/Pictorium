@@ -335,9 +335,10 @@ describe("TransformPanel portrait defaults offset ranges", () => {
     expect(ctx().defaultLogoOffsetX).toBe(250)
     fireEvent.change(within(card).getByRole("slider", { name: "Y" }), { target: { value: "-300" } })
     expect(ctx().defaultLogoOffsetY).toBe(-300)
-    // The landscape profile is never written by portrait edits.
-    expect(ctx().landscape.logoOffsetX).toBeUndefined()
-    expect(ctx().landscape.logoOffsetY).toBeUndefined()
+    // 3B1: the portrait edit freezes the pre-edit effective (auto = null)
+    // into the profile instead of leaking the new flat into landscape.
+    expect(ctx().landscape.logoOffsetX).toBeNull()
+    expect(ctx().landscape.logoOffsetY).toBeNull()
   })
 
   it("number baseline: shifted range, edit stores the adjustment, numeric clamps to contract", () => {

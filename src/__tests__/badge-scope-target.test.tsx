@@ -105,12 +105,13 @@ describe("badge target scope", () => {
     expect(p.get("badges")).toBe("0")
   })
 
-  it("portrait toggle writes the flat; profile stays empty", async () => {
+  it("portrait toggle writes the flat; profile snapshots the pre-edit (no leak)", async () => {
     const { ctx } = renderBadge("portrait")
     await act(async () => {})
     fireEvent.click(badgeSwitch("ui.genreRatingBadge"))
     expect(ctx().defaultGlobalBadges).toBe(false)
-    expect(ctx().landscape.globalBadges).toBeUndefined()
+    // 3B1: the inherited key freezes the pre-edit flat instead of following it.
+    expect(ctx().landscape.globalBadges).toBe(true)
   })
 
   it("back to portrait restores flat values; profile edits survive", async () => {
@@ -179,7 +180,8 @@ describe("badge target scope", () => {
     }
     fireEvent.click(screen.getByText(label))
     expect(ctx().defaultSeparateRatingsStyle).toBe(id)
-    expect(ctx().landscape.separateRatingsStyle).toBeUndefined()
+    // 3B1: the inherited key freezes the pre-edit flat instead of following it.
+    expect(ctx().landscape.separateRatingsStyle).toBe("column")
     expect(screen.getByText(label).getAttribute("aria-pressed")).toBe("true")
   })
 
@@ -254,7 +256,7 @@ describe("badge target scope", () => {
     expect(ctx().landscape).not.toHaveProperty("customRatingEndpoint")
   })
 
-  it("scoped reset clears only Badge visual overrides", async () => {
+  it("scoped reset restores Badge shape defaults (Transform numerics intact)", async () => {
     localStorage.setItem("badgeDefaults", JSON.stringify({ landscape: { topBadgeScale: 130 } }))
     const { ctx } = renderSettings()
     await act(async () => {
@@ -265,7 +267,9 @@ describe("badge target scope", () => {
     const badgePanel = screen.getByRole("tabpanel", { name: "ui.badgeSection" })
     const reset = within(badgePanel).getByRole("button", { name: "ui.reset · ui.posterShapeLandscape" })
     fireEvent.click(reset)
-    expect(ctx().landscape.networkLogo).toBeUndefined()
+    // 3B1: reset materializes the current portrait effective (independent),
+    // never clear-to-follow.
+    expect(ctx().landscape.networkLogo).toBe(true)
     expect(ctx().landscape.topBadgeScale).toBe(130)
     expect(ctx().defaultNetworkLogo).toBe(true)
   })
@@ -329,7 +333,7 @@ describe("snapshot presets respect the edit target", () => {
     expect(ctx().defaultRatingSources).toHaveLength(16)
   })
 
-  it("portrait RPDB with landscape delivery keeps land byte-identical", async () => {
+  it("portrait RPDB snapshots the pre-edit landscape (no leak, no reseed)", async () => {
     localStorage.setItem("badgeDefaults", JSON.stringify({
       defaultPosterShape: "landscape",
       defaultBadgeStyle: "shadow",
@@ -342,8 +346,21 @@ describe("snapshot presets respect the edit target", () => {
     const landBefore = JSON.stringify(ctx().landscape)
     fireEvent.click(screen.getByText("Stile RPDB"))
     expect(ctx().defaultPosterShape).toBe("landscape")
-    expect(JSON.stringify(ctx().landscape)).toBe(landBefore)
     expect(ctx().defaultBadgeStyle).toBe("minimal")
     expect(ctx().landscape.extraBadgeStyle).toBe("vetro")
+    // 3B1: flats the preset changes freeze their pre-edit effective values
+    // into the profile (same pixels, then decoupled) — the profile grows
+    // instead of leaking. Untouched keys (badgeStyle, gradientHeight) keep
+    // their explicit values byte-identical.
+    expect(ctx().landscape.badgeStyle).toBe("pill")
+    expect(ctx().landscape.gradientHeight).toBe(45)
+    expect(ctx().landscape.rankingBadges).toBe(true)
+    // Pre-edit factory order frozen (the RPDB preset itself empties the flat).
+    expect(JSON.stringify(ctx().landscape.sashOrder)).toBe(
+      '["upcoming","rank","new","award","extra"]',
+    )
+    expect(JSON.stringify(ctx().landscape)).not.toBe(landBefore)
+    // A second portrait change does not rebase the frozen profile.
+    expect(ctx().landscape.rankingBadges).toBe(true)
   })
 })

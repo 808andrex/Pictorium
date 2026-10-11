@@ -2,8 +2,7 @@
 name: poster-visual
 description: >
   Visual regression and screenshot verification workflow for Pictorium. The project
-  ships a Playwright suite (`e2e/pictorium-visual.spec.ts`) with 4 fixed UI screenshots
-  plus 21 poster API tests (10 functional + 11 visual) that run against a deterministic
+  ships UI/poster visual and preview-vs-Stremio parity suites against a deterministic
   local mock server — no TMDB_API_KEY needed. Use to verify the WYSIWYG preview matches
   the server poster, to confirm a render change looks right, to inspect screenshot diffs,
   and to update snapshots only when a change intentionally alters the look. Trigger:
@@ -32,9 +31,10 @@ Commands, test inventory and snapshot policy are the canonical reference in
 
 ## Workflow
 
-1. **Baseline check** — after ANY render-affecting change, run the visual suite
-   (command in `.agents/visual-testing.md`). Failure means the client and server
-   diverged, OR the look intentionally changed.
+1. **Baseline check** — include the visual suite in the final batch before
+   push/integration. During work, run it only for requested diagnosis or
+   demonstrated need (`AGENTS.md` → Verification Strategy). Failure requires
+   diagnosis; a pixel change alone does not identify a client/server divergence.
 
 2. **Diagnose the diff.** For pixel-diff failures, locate the failing spec, read the
    diff image paths from the test output, and compare expected vs actual. Determine
@@ -46,8 +46,8 @@ Commands, test inventory and snapshot policy are the canonical reference in
 
 4. **Intentional change only** → update baselines (`--update-snapshots`, command in
    `.agents/visual-testing.md`). Inspect the new `.png` files before committing them,
-   and remember RENDER_VERSION must be regenerated and `rv` updated in AGENTS.md
-   (steps 3-4 of the `poster-sync` skill).
+   and regenerate RENDER_VERSION through its script when required. Never copy
+   generated version values into AGENTS.md (see `poster-sync`).
 
 ## Live inspection (Playwright MCP)
 
@@ -66,5 +66,6 @@ When a poster looks wrong but tests pass (or to eyeball a new feature):
 
 The rules (failure = blocking, review snapshots before committing, snapshots in git
 as the regression contract) live in `.agents/visual-testing.md` — follow those.
-For scheduling, follow `AGENTS.md Verification Strategy` (cached visual during
-iteration, fresh pass once at the final gate); do not run visual after every edit.
+For scheduling, follow `AGENTS.md Verification Strategy` exclusively. The final
+visual run must use current sources; during-work runs require diagnostic need.
+URL/mapping/precedence changes also need the parity spec, not screenshots alone.

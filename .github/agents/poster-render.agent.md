@@ -37,10 +37,10 @@ the server-rendered Stremio poster MUST stay visually identical (WYSIWYG).
 1. Read the relevant rendering files and identify the exact parameter definition.
 2. Make the minimal change on the server side, then mirror it on the client side
    (or vice versa, whichever is the source).
-3. During work, run the narrowest relevant test first (unit), then cached visual only when needed in iteration (`npm run e2e:visual`); the fresh visual pass belongs to the final gate (see `AGENTS.md Verification Strategy`).
+3. During work, run the narrowest relevant unit test. Follow only `AGENTS.md Verification Strategy` for full/E2E/visual scheduling; early visual requires requested diagnosis or demonstrated need.
 4. If snapshots changed, inspect the diff; update only if the change is intentional.
 5. If RENDER_VERSION must change, run `node scripts/write-render-version.mjs`.
-6. Finish with a single `npm run verify` before the final code-changing commit (no repeat pre-push on identical verified state; CI never replaces local gates).
+6. Run the final batch before push/integration, not intermediate commits or chat closure. For URL/mapping/precedence changes include URL unit tests and the parity spec. Until then report gate pending; CI never replaces local gates.
 
 ## Output Format
 

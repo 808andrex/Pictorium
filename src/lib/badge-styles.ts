@@ -20,6 +20,22 @@ export type RankingBadgeStyle = (typeof RANKING_BADGE_STYLES)[number]
 export const EXTRA_BADGE_STYLES = ["default", "pill", "colored", "bordo", "vetro", "corner"] as const
 export type ExtraBadgeStyle = (typeof EXTRA_BADGE_STYLES)[number]
 
+/**
+ * Explicit landscape "follow my own rank" transport sentinel (user-authorized
+ * additive contract): the landscape profile stores `extraBadgeStyle:
+ * "follow-rank"` to shadow the portrait flat and render the landscape's own
+ * rank look (ribbon/numeral included, no subset approximation). Legacy
+ * `null`/absent keeps meaning "inherit the flat" on BOTH shapes (old URLs and
+ * configs byte-identical); the renderer subset above is unchanged and the
+ * resolved renderer value for the sentinel is `null` (own-rank fallback via
+ * `rs`), so there is still a single renderer. Client-safe (pure const).
+ */
+export const EXTRA_BADGE_FOLLOW_RANK = "follow-rank" as const
+export type ExtraBadgeFollowRank = typeof EXTRA_BADGE_FOLLOW_RANK
+/** Transport values accepted for `xbs`/profile/token/mapping (renderer subset + sentinel). */
+export const EXTRA_BADGE_STYLE_TRANSPORT = [...EXTRA_BADGE_STYLES, EXTRA_BADGE_FOLLOW_RANK] as const
+export type ExtraBadgeStyleTransport = (typeof EXTRA_BADGE_STYLE_TRANSPORT)[number]
+
 export const DEFAULT_BADGE_STYLE: BadgeStyle = "shadow"
 export const DEFAULT_RANKING_BADGE_STYLE: RankingBadgeStyle = "default"
 
@@ -36,6 +52,22 @@ export type QualityBadgeStyle = (typeof QUALITY_BADGE_STYLES)[number]
 
 export const DEFAULT_QUALITY_BADGE_STYLE: QualityBadgeStyle = "standard"
 
+/**
+ * Age certification badge style: "standard" (neutral satin text pill, the
+ * historic age look) or "knockout" (opaque white tag with cut-out
+ * transparent glyphs, reusing the shared quality knockout builder).
+ * Per-shape chain like the age toggle itself: `agebs` query > config
+ * token > effective per-shape server defaults > flat > "standard".
+ */
+export const AGE_BADGE_STYLES = ["standard", "knockout"] as const
+export type AgeBadgeStyle = (typeof AGE_BADGE_STYLES)[number]
+
+export const DEFAULT_AGE_BADGE_STYLE: AgeBadgeStyle = "standard"
+
+export function isAgeBadgeStyle(v: string | null | undefined): v is AgeBadgeStyle {
+  return !!v && (AGE_BADGE_STYLES as readonly string[]).includes(v)
+}
+
 export function isBadgeStyle(v: string | null | undefined): v is BadgeStyle {
   return !!v && (BADGE_STYLES as readonly string[]).includes(v)
 }
@@ -46,6 +78,28 @@ export function isRankingBadgeStyle(v: string | null | undefined): v is RankingB
 
 export function isExtraBadgeStyle(v: string | null | undefined): v is ExtraBadgeStyle {
   return !!v && (EXTRA_BADGE_STYLES as readonly string[]).includes(v)
+}
+
+/** True only for the explicit "follow my own rank" transport sentinel. */
+export function isExtraFollowRank(v: unknown): v is ExtraBadgeFollowRank {
+  return v === EXTRA_BADGE_FOLLOW_RANK
+}
+
+/** True for any transport value (renderer subset + follow-rank sentinel). */
+export function isExtraBadgeStyleTransport(v: unknown): v is ExtraBadgeStyleTransport {
+  return v === EXTRA_BADGE_FOLLOW_RANK || (typeof v === "string" && (EXTRA_BADGE_STYLES as readonly string[]).includes(v))
+}
+
+/**
+ * Renderer normalization for transport values: concrete subset styles pass
+ * through, the follow-rank sentinel / null / absent / garbage all resolve to
+ * `null` (legacy `rs` fallback). Single source for the wrapper separation —
+ * the renderer never sees the sentinel.
+ */
+export function normalizeExtraBadgeStyleForRender(v: unknown): ExtraBadgeStyle | null {
+  return typeof v === "string" && (EXTRA_BADGE_STYLES as readonly string[]).includes(v)
+    ? (v as ExtraBadgeStyle)
+    : null
 }
 
 export function isQualityBadgeStyle(v: string | null | undefined): v is QualityBadgeStyle {

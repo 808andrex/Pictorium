@@ -16,7 +16,10 @@ import { hexLuminance, computeBottomLight } from "./accent-color"
 import { normalizeGenreName } from "./genre-normalize"
 import type { SearchResult, TMDBImage } from "./types"
 import type { EnrichedAnimeItem } from "./validation"
-import type { BadgeStyle, RankingBadgeStyle, QualityBadgeStyle, BadgeFont, SeparateRatingsStyle, ExtraBadgeStyle } from "./badge-styles"
+import type { BadgeStyle, RankingBadgeStyle, QualityBadgeStyle, BadgeFont, SeparateRatingsStyle, ExtraBadgeStyle, ExtraBadgeFollowRank } from "./badge-styles"
+import type { AgeBadgeStyle } from "./badge-styles"
+import { isAgeBadgeStyle } from "./badge-styles"
+import { isExtraBadgeStyle, isExtraFollowRank } from "./badge-styles"
 import { getSeparateBadgeDefaultScale, getSeparateRatingsStyleForShape, getQualityBadgeOffsetDefault } from "./badge-styles"
 import type { LandscapeServerDefaults } from "./server-defaults"
 import { DEFAULT_SASH_ORDER, type SashBucket } from "./badge-priority"
@@ -31,8 +34,8 @@ interface BadgeParams {
   rankingBadges: boolean
   badgeStyle: BadgeStyle
   rankingBadgeStyle: RankingBadgeStyle
-  /** Standalone extra-badge style: emitted as `xbs` only when defined. */
-  extraBadgeStyle?: ExtraBadgeStyle | null
+  /** Standalone extra-badge style: emitted as `xbs` only when defined (incl. "follow-rank" sentinel). */
+  extraBadgeStyle?: ExtraBadgeStyle | ExtraBadgeFollowRank | null
   /** Font dei testi badge (default "inter" = resa storica). */
   badgeFont?: BadgeFont | null
   /** Stile icone del badge qualità (default "standard"). */
@@ -48,6 +51,8 @@ interface BadgeParams {
   ageBadge?: boolean
   /** Paese classificazione età: emesso come `agecountry=XX` (default "IT"). */
   ageCountry?: string | null
+  /** Stile pill età: sempre esplicito in preview (`agebs=…`, default "standard"). */
+  ageBadgeStyle?: AgeBadgeStyle | null
   /** Riga rating custom provider (display). `false` emette `cr=0`. */
   customRatings?: boolean
   ratingSources?: string[]
@@ -257,6 +262,9 @@ export function buildUrlPattern(bp: BadgeParams & {
     badgeQuality: bp.badgeQuality,
     ageBadge: bp.ageBadge ?? undefined,
     ageCountry: bp.ageCountry ?? undefined,
+    // Stile pill età globale (nessun per-titolo): sempre il default, a titolo
+    // aperto come senza (il server risolverebbe comunque lo stesso valore).
+    ageBadgeStyle: bp.ageBadgeStyle ?? undefined,
     customRatings: bp.customRatings,
     ratingSources: bp.ratingSources,
     separateRatings: bp.separateRatings,
@@ -346,6 +354,10 @@ export function buildPreviewUrl(ps: PosterState, bp: BadgeParams, configToken?: 
   params.push(`age=${bp.ageBadge ? "1" : "0"}`)
   const ageCountry = (bp.ageCountry || "").trim().toUpperCase()
   params.push(`agecountry=${/^[A-Z]{2}$/.test(ageCountry) && ageCountry !== "GLOBAL" ? ageCountry : "IT"}`)
+  // Stile pill età SEMPRE esplicito in preview (come bq/qbs): senza, un
+  // default salvato knockout scavalcerebbe la scelta editor (desync WYSIWYG) —
+  // e uno standard esplicito non prevarrebbe su un knockout ereditato.
+  params.push(`agebs=${isAgeBadgeStyle(bp.ageBadgeStyle) ? bp.ageBadgeStyle : "standard"}`)
   // cr SEMPRE esplicito in preview (ON e OFF): senza, un mapping salvato con
   // customRatings=false scavalcerebbe il toggle editor (desync WYSIWYG).
   params.push(`cr=${bp.customRatings === false ? "0" : "1"}`)
@@ -422,8 +434,12 @@ export function buildPreviewUrl(ps: PosterState, bp: BadgeParams, configToken?: 
   params.push(`bs=${bp.badgeStyle}`)
   params.push(`rs=${bp.rankingBadgeStyle}`)
   // Standalone extra style: opt-in only (absent = legacy `rs` fallback,
-  // existing preview URLs stay byte-identical).
-  if (bp.extraBadgeStyle) params.push(`xbs=${bp.extraBadgeStyle}`)
+  // existing preview URLs stay byte-identical). The explicit follow-rank
+  // transport sentinel travels on ANY selected shape (legacy null/absent
+  // stays omitted on both shapes); the renderer boundary normalizes it to
+  // own-rank (`rs` fallback) — never baked here.
+  if (isExtraFollowRank(bp.extraBadgeStyle)) params.push(`xbs=follow-rank`)
+  else if (bp.extraBadgeStyle) params.push(`xbs=${bp.extraBadgeStyle}`)
   // Font badge SEMPRE esplicito in preview (come bs/rs): senza, un mapping
   // salvato con font diverso scavalcerebbe la scelta editor (desync WYSIWYG).
   params.push(`bfont=${bp.badgeFont ?? "inter"}`)
@@ -591,18 +607,20 @@ export interface DefaultsPreviewParams {
   defaultBadgeYear?: boolean
   defaultBadgeRating?: boolean
   defaultBadgeQuality?: boolean
-  /** Badge età testuale di default (default OFF): sempre esplicito in preview. */
+  /** Badge età testuale di default portrait (default OFF): sempre esplicito in preview. In preview landscape vince il profilo `landscape` (`land ?? flat`). */
   defaultAgeBadge?: boolean
-  /** Paese classificazione età di default (default "IT"): sempre esplicito. */
+  /** Paese classificazione età di default portrait (default "IT"): sempre esplicito. In preview landscape vince il profilo. */
   defaultAgeCountry?: string | null
+  /** Stile pill età di default portrait (default "standard"): sempre esplicito. In preview landscape vince il profilo. */
+  defaultAgeBadgeStyle?: AgeBadgeStyle | null
   defaultCustomRatings?: boolean
   defaultSeparateRatings?: boolean
   defaultSeparateRatingsStyle?: SeparateRatingsStyle | null
   defaultRatingSources?: string[]
   defaultBadgeStyle?: BadgeStyle
   defaultRankingBadgeStyle?: RankingBadgeStyle
-  /** Standalone extra-badge style default: emitted as `xbs` only when defined. */
-  defaultExtraBadgeStyle?: ExtraBadgeStyle | null
+  /** Standalone extra-badge style default: emitted as `xbs` only when defined (incl. "follow-rank" sentinel). */
+  defaultExtraBadgeStyle?: ExtraBadgeStyle | ExtraBadgeFollowRank | null
   defaultBadgeFont?: BadgeFont | null
   defaultQualityBadgeStyle?: QualityBadgeStyle | null
   defaultVideoFormats?: readonly VideoFormat[] | null
@@ -753,10 +771,18 @@ export function buildDefaultsPreviewUrl(bp: DefaultsPreviewParams): string {
   params.push(`br=${pick(land.badgeRating, bp.defaultBadgeRating) !== false ? "1" : "0"}`)
   params.push(`bq=${pick(land.badgeQuality, bp.defaultBadgeQuality) !== false ? "1" : "0"}`)
   // Badge età sempre esplicito in preview (toggle + paese non salvati devono
-  // mostrarsi subito, come `bq` sopra).
-  params.push(`age=${bp.defaultAgeBadge ? "1" : "0"}`)
-  const previewAgeCountry = (bp.defaultAgeCountry || "").trim().toUpperCase()
+  // mostrarsi subito, come `bq` sopra). Per-shape (task3A): in landscape
+  // vince il profilo Orizzontale (`land ?? flat`, stessa regola della UI e
+  // del server) così portrait ON non accende mai il landscape.
+  const effAgeBadge = previewLandscape ? (land.ageBadge ?? bp.defaultAgeBadge) : bp.defaultAgeBadge
+  const effAgeCountry = previewLandscape ? (land.ageCountry ?? bp.defaultAgeCountry) : bp.defaultAgeCountry
+  const effAgeStyle = previewLandscape ? (land.ageBadgeStyle ?? bp.defaultAgeBadgeStyle) : bp.defaultAgeBadgeStyle
+  params.push(`age=${effAgeBadge ? "1" : "0"}`)
+  const previewAgeCountry = (effAgeCountry || "").trim().toUpperCase()
   params.push(`agecountry=${/^[A-Z]{2}$/.test(previewAgeCountry) && previewAgeCountry !== "GLOBAL" ? previewAgeCountry : "IT"}`)
+  // Stile pill età sempre esplicito in preview (come sopra): il default
+  // salvato deve mostrarsi subito senza ereditare token o default altrui.
+  params.push(`agebs=${isAgeBadgeStyle(effAgeStyle) ? effAgeStyle : "standard"}`)
   params.push(`cr=${pick(land.customRatings, bp.defaultCustomRatings) === false ? "0" : "1"}`)
   params.push(`sep=${pick(land.separateRatings, bp.defaultSeparateRatings) ? "1" : "0"}`)
   // Stile normalizzato per formato effettivo (bar Orizzontale → pills).
@@ -766,9 +792,26 @@ export function buildDefaultsPreviewUrl(bp: DefaultsPreviewParams): string {
   }
   params.push(`bs=${pick(land.badgeStyle, bp.defaultBadgeStyle) ?? "shadow"}`)
   params.push(`rs=${pick(land.rankingBadgeStyle, bp.defaultRankingBadgeStyle) ?? "default"}`)
-  // Nullable inherit-null fields: explicit landscape `null` follows the flat
-  // (unlike logo scale/offset, where null means auto/zero).
-  const effPreviewXbs = pick(land.extraBadgeStyle ?? undefined, bp.defaultExtraBadgeStyle)
+  // Standalone extra style: a landscape profile that OWNS "follow-rank"
+  // shadows the portrait flat (the preview URL carries xbs=follow-rank and
+  // the server ownership guard resolves the own-rank fallback instead).
+  // Legacy landscape null/absent/invalid INHERITS the flat (byte-identical:
+  // flat pill travels as xbs=pill, flat legacy omits xbs). The other nullable
+  // inherit-null fields (font, quality style, formats) keep following the
+  // flat (unlike logo scale/offset, where null means auto/zero).
+  // NOTE: no `??` fallback here — an owned sentinel must survive, not
+  // collapse back onto the portrait flat.
+  let effPreviewXbs: ExtraBadgeStyle | ExtraBadgeFollowRank | null | undefined
+  if ("extraBadgeStyle" in land) {
+    const v = (land as { extraBadgeStyle?: unknown }).extraBadgeStyle
+    if (isExtraFollowRank(v) || isExtraBadgeStyle(typeof v === "string" ? v : null)) {
+      effPreviewXbs = v as ExtraBadgeStyle | ExtraBadgeFollowRank
+    } else {
+      effPreviewXbs = bp.defaultExtraBadgeStyle
+    }
+  } else {
+    effPreviewXbs = bp.defaultExtraBadgeStyle
+  }
   if (effPreviewXbs) params.push(`xbs=${effPreviewXbs}`)
   params.push(`bfont=${pick(land.badgeFont ?? undefined, bp.defaultBadgeFont) ?? "inter"}`)
   const effPreviewQbs = pick(land.qualityBadgeStyle ?? undefined, bp.defaultQualityBadgeStyle)
@@ -853,8 +896,13 @@ export function buildDefaultsPreviewUrl(bp: DefaultsPreviewParams): string {
   // default mostra davvero lo scope selezionato per quel formato.
   const effPreviewScope = (previewLandscape ? land.posterFreshScope : undefined) ?? bp.defaultPosterFreshScope
   params.push(`freshScope=${effPreviewScope === "all" ? "all" : "ranked"}`)
-  if (previewLandscape && bp.defaultLogoAlign) {
-    params.push(`align=${bp.defaultLogoAlign === "left" ? "left" : "center"}`)
+  // Alignment preview (landscape only — portraits stay centered by
+  // contract): the profile override wins, null/absent follows the flat, flat
+  // null (auto) stays omitted (the server resolves the landscape "left"
+  // itself, so legacy preview URLs stay byte-identical).
+  if (previewLandscape) {
+    const effPreviewAlign = ("logoAlign" in land ? land.logoAlign : undefined) ?? bp.defaultLogoAlign
+    if (effPreviewAlign) params.push(`align=${effPreviewAlign === "left" ? "left" : "center"}`)
   }
   if (bp.lang) params.push(`lang=${encodeURIComponent(bp.lang)}`)
   if (bp.defaultRegion) params.push(`region=${encodeURIComponent(bp.defaultRegion)}`)

@@ -63,9 +63,9 @@ FlixPatrol. I filtri genere globali si applicano dopo l'arricchimento TMDB.
    con `/api/trending/rank` e warmup (cache key include `:r<CODE>`).
    Restituisce `{ tmdbId, imdbId, rank }`:
    **l'`imdbId` arriva già da JustWatch** — non rifare una chiamata TMDB per ottenerlo.
-2. Per ogni riga: `getDetails` TMDB (`it-IT`) con la chiave risolta da
-   `resolveRequestApiKey(req)`.
-3. Id del meta: `row.imdbId` → fallback `resolveImdbId(...)` → fallback `tmdb:<id>`.
+2. Per ogni riga: dettagli TMDB nella lingua effettiva del catalogo, con la
+   chiave risolta da `resolveUserApiKeys(req, scopedUser)`.
+3. Id del meta: `tmdb:<id>` via `catalogMetaId`; l'IMDb della fonte resta disponibile per gli altri consumer, ma non decide l'id del catalogo.
 4. Poster: `/api/poster/{type}/{tmdbId}?rv=...` (+ `mv` se esiste un mapping salvato).
 
 ### Piattaforme Streaming (`pictorium-netflix-*`, `pictorium-prime-*`, ecc.)
@@ -117,20 +117,22 @@ tipo; `mixed` vale per entrambi).
 
 ## Chiavi API
 
-`resolveRequestApiKey(req)` in `lib/tmdb.ts` — priorità:
-1. header `x-api-key`;
-2. query `api_key`;
-3. env `PICTORIUM_TMDB_KEY` (fallback d'istanza, opt-in; legacy `POSTERIUM_TMDB_KEY` ancora accettata).
+`resolveUserApiKeys(req, scopedUser)` in `lib/tmdb.ts` — priorità TMDB:
+1. header `x-api-key`, poi query `api_key`;
+2. chiave cifrata del namespace utente, quando lo scoping è abilitato;
+3. fallback d'istanza consentito: `PICTORIUM_TMDB_KEY` (legacy
+   `POSTERIUM_TMDB_KEY`), poi `TMDB_KEY` / `TMDB_API_KEY`.
 
-**Nessuna chiave d'istanza di default** (`TMDB_API_KEY`/`MDBLIST_API_KEY` non
-sono lette). La fonte primaria di chiavi è la richiesta (header `x-api-key` >
-query `api_key`): senza chiave esplicita la chiamata
-TMDB/MDBList fallisce (poster 404, cataloghi vuoti). `resolveImdbId` DEVE
-ricevere la chiave della richiesta (è così oggi).
+`?u=` o `/u/<uuid>` seleziona il namespace secondo `user-auth.ts`; chiavi
+persistite in `user-keys.ts`, default e mapping sono scoped. Nel catalogo gli
+utenti inesistenti vengono declassati al ramo globale. Con multi-user ON il
+fallback env è disabilitato per richieste scoped, salvo opt-in
+`PICTORIUM_MULTI_USER_ALLOW_ENV_FALLBACK=1`; le richieste globali lo mantengono.
+MDBList/TVDB/Simkl/Fanart hanno le proprie precedenze nello stesso resolver.
+`resolveImdbId` DEVE ricevere la chiave effettiva del consumer.
 
-NOTA: il parametro `?u=` (o path `/u/<uuid>`) è solo identità/tracking per
-manifest e cache key — **non** fornisce chiavi API. Non esiste alcun profile
-store server-side: chiavi "da profilo" non sono mai state implementate.
+Il resolver sincrono legacy `resolveRequestApiKey` risolve solo richiesta >
+env: non sostituirlo al resolver scoped nei cataloghi.
 
 **Fallback d'istanza (opt-in, per istanze personali)**: `PICTORIUM_TMDB_KEY` e
 `PICTORIUM_MDBLIST_KEY` sono lette come FALLBACK quando la richiesta

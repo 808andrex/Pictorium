@@ -60,6 +60,7 @@ vi.mock("@/lib/svg-badge", async () => {
     renderRankingBadge: vi.fn(async () => png()),
     renderExtraBadge: vi.fn(async () => png()),
     renderQualityBadge: vi.fn(async () => png()),
+    renderQualityKnockoutBadge: vi.fn(async () => png()),
   }
 })
 
@@ -373,6 +374,48 @@ describe("GET /api/poster age badge (mocked production route)", () => {
     const genInput = spy.mock.calls[spy.mock.calls.length - 1][0] as { ageLabel: string | null; badgesEnabled: boolean }
     expect(genInput.badgesEnabled).toBe(true)
     expect(genInput.ageLabel).toBe("VM14")
+  })
+
+  it("agebs=knockout resolves the knockout style end-to-end (debug + renderer input)", async () => {
+    mockedGetReleaseDates.mockResolvedValue(movieReleaseDatesIT() as never)
+    const debug = await GET(new NextRequest(movieUrl("&age=1&agecountry=IT&agebs=knockout&debug=1")), {
+      params: Promise.resolve({ type: "movie", id: "44" }),
+    })
+    expect(debug.status).toBe(200)
+    const body = await debug.json()
+    expect(body.age.style).toBe("knockout")
+    expect(body.age.label).toBe("VM14")
+    // The debug branch returns before compositing: a real render request
+    // carries the resolved style into the production renderer input.
+    const render = await GET(new NextRequest(movieUrl("&age=1&agecountry=IT&agebs=knockout")), {
+      params: Promise.resolve({ type: "movie", id: "44" }),
+    })
+    expect(render.status).toBe(200)
+    const spy = vi.mocked(posterService.generatePosterBuffer)
+    expect(spy).toHaveBeenCalled()
+    const genInput = spy.mock.calls[spy.mock.calls.length - 1][0] as { ageBadgeStyle: string | null }
+    expect(genInput.ageBadgeStyle).toBe("knockout")
+  })
+
+  it("default age style is standard and invalid agebs collapses to it", async () => {
+    mockedGetReleaseDates.mockResolvedValue(movieReleaseDatesIT() as never)
+    const plain = await GET(new NextRequest(movieUrl("&age=1&agecountry=IT&debug=1")), {
+      params: Promise.resolve({ type: "movie", id: "44" }),
+    })
+    expect(plain.status).toBe(200)
+    expect((await plain.json()).age.style).toBe("standard")
+    const garbage = await GET(new NextRequest(movieUrl("&age=1&agecountry=IT&agebs=mono&debug=1")), {
+      params: Promise.resolve({ type: "movie", id: "44" }),
+    })
+    expect(garbage.status).toBe(200)
+    expect((await garbage.json()).age.style).toBe("standard")
+    const render = await GET(new NextRequest(movieUrl("&age=1&agecountry=IT&agebs=mono")), {
+      params: Promise.resolve({ type: "movie", id: "44" }),
+    })
+    expect(render.status).toBe(200)
+    const spy = vi.mocked(posterService.generatePosterBuffer)
+    const last = spy.mock.calls[spy.mock.calls.length - 1][0] as { ageBadgeStyle: string | null }
+    expect(last.ageBadgeStyle).toBe("standard")
   })
 
   it("network failure degrades to the ephemeral 120s TTL (fail-open, retried soon)", async () => {

@@ -13,7 +13,8 @@ import { isManualAccent } from "./accent-color"
 import { normalizeGenreName } from "./genre-normalize"
 import type { EnrichedAnimeItem } from "./validation"
 import type { VideoFormat } from "./av-specs"
-import type { SeparateRatingsStyle, ExtraBadgeStyle } from "./badge-styles"
+import type { SeparateRatingsStyle, ExtraBadgeStyle, ExtraBadgeFollowRank } from "./badge-styles"
+import { isExtraBadgeStyleTransport } from "./badge-styles"
 import type { PosterLayout, PosterFreshScope } from "./types"
 import type { LandscapeBlurState } from "./contexts/PosterEditorContext"
 import type { LandscapeServerDefaults } from "./server-defaults"
@@ -63,8 +64,8 @@ interface PosterSaveDeps {
   badgePresetRev?: string | null
   badgeStyle: string
   rankingBadgeStyle: string
-  /** Standalone extra-badge style per-titolo (congelato al save, null = legacy). */
-  extraBadgeStyle: ExtraBadgeStyle | null
+  /** Standalone extra-badge style per-titolo (congelato al save; null = legacy eredita, "follow-rank" = own-rank esplicito persistito). */
+  extraBadgeStyle: ExtraBadgeStyle | ExtraBadgeFollowRank | string | null
   /** Font dei testi badge per-titolo (congelato al save). */
   badgeFont: string
   /** Stile icone del badge qualità per-titolo (congelato al save). */
@@ -73,7 +74,7 @@ interface PosterSaveDeps {
   videoFormats?: VideoFormat[] | null
   defaultBadgeStyle: string
   defaultRankingBadgeStyle: string
-  defaultExtraBadgeStyle: ExtraBadgeStyle | null
+  defaultExtraBadgeStyle: ExtraBadgeStyle | ExtraBadgeFollowRank | string | null
   blurEnabled: boolean
   blurIntensity: number
   blurFade: number
@@ -520,7 +521,9 @@ export function usePosterSave(deps: PosterSaveDeps) {
           badgePresetRev: badgePresetRev ?? null,
           badgeStyle,
           rankingBadgeStyle,
-          extraBadgeStyle,
+          // Transport snapshot (renderer boundary escluso): stili concreti e
+          // sentinel "follow-rank" viaggiano validati; null/garbage = legacy.
+          extraBadgeStyle: isExtraBadgeStyleTransport(extraBadgeStyle) ? extraBadgeStyle : null,
           badgeFont,
           qualityBadgeStyle,
           videoFormats: videoFormats !== undefined ? videoFormats : undefined,

@@ -27,7 +27,8 @@ import { REGIONS } from "@/lib/regions"
 import { PosterLayoutSelector, PosterFreshScopeSelector } from "@/components/PosterLayoutSelector"
 import { BadgeStyleSelector } from "@/components/ui"
 import type { DefaultsPreviewFamily } from "@/lib/poster-url"
-import { isBottomSeparateRatingsStyle, getSeparateRatingsStyleForShape, DEFAULT_QUALITY_BADGE_OFFSET_X, DEFAULT_QUALITY_BADGE_OFFSET_Y, DEFAULT_QUALITY_BADGE_OFFSET_X_LANDSCAPE, DEFAULT_QUALITY_BADGE_OFFSET_Y_LANDSCAPE, getSeparateBadgeDefaultScale } from "@/lib/badge-styles"
+import { isBottomSeparateRatingsStyle, getSeparateRatingsStyleForShape, DEFAULT_AGE_BADGE_STYLE, DEFAULT_QUALITY_BADGE_OFFSET_X, DEFAULT_QUALITY_BADGE_OFFSET_Y, DEFAULT_QUALITY_BADGE_OFFSET_X_LANDSCAPE, DEFAULT_QUALITY_BADGE_OFFSET_Y_LANDSCAPE, getSeparateBadgeDefaultScale } from "@/lib/badge-styles"
+import { DEFAULT_AGE_COUNTRY } from "@/lib/certification"
 import { NATURAL_GRADIENT_DEFAULTS } from "@/lib/gradient-presets"
 import { GenreStyleSection, QualityStyleSection } from "@/components/settings/BadgeStyleSection"
 import { RatingSourceIcon } from "@/components/RatingSourceIcon"
@@ -36,7 +37,7 @@ import { SASH_BUCKETS, DEFAULT_SASH_ORDER, parseSashOrder, moveSashItem, type Sa
 import { formatRating } from "@/lib/custom-rating/formatter"
 import { saveDefaults } from "@/lib/save-defaults"
 import { http } from "@/lib/http"
-import { captureVisualPreset, normalizePresetExtraTuning } from "@/lib/visual-presets"
+import { captureVisualPreset, normalizePresetExtraTuning, independentLandscapeDefaults } from "@/lib/visual-presets"
 import { clearedExtraForPresetApply } from "@/lib/extra-materialize"
 import {
   applyLandscapeIsolated,
@@ -179,6 +180,12 @@ export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange }: {
   const [badgeStyle] = scoped("badgeStyle", ed.defaultBadgeStyle, ed.setDefaultBadgeStyle)
   const [rankingBadgeStyle, setRankingBadgeStyle] = scoped("rankingBadgeStyle", ed.defaultRankingBadgeStyle, ed.setDefaultRankingBadgeStyle)
   const [extraBadgeStyle, setExtraBadgeStyle] = scoped("extraBadgeStyle", ed.defaultExtraBadgeStyle, ed.setDefaultExtraBadgeStyle)
+  // Logo-block alignment, scoped per edit target like the badge styles
+  // (task 3B2): portrait writes the shared flat (`null` = per-shape auto),
+  // landscape the profile override (`undefined` = follow the flat, via the
+  // reset above). Portraits render centered by contract; the control only
+  // changes landscape pixels.
+  const [logoAlign, setLogoAlign] = scoped("logoAlign", ed.defaultLogoAlign, ed.setDefaultLogoAlign)
   // Graphical cover layout, scoped per edit target like the badge styles:
   // portrait writes the shared flat default, landscape the profile override
   // (reset below clears it back to following the flat).
@@ -186,11 +193,43 @@ export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange }: {
   // Fresh apply scope, scoped per edit target like the layout above:
   // portrait writes the shared flat default, landscape the profile override.
   const [posterFreshScope, setPosterFreshScope] = scoped("posterFreshScope", ed.defaultPosterFreshScope, ed.setDefaultPosterFreshScope)
-  // Scoped reset: clears only this tab's landscape overrides (numeric and
-  // gradient overrides owned by Transform stay intact).
-  const hasVisualOverrides = isLandscape && BADGE_VISUAL_LAND_KEYS.some((k) => ed.landscape[k] !== undefined)
+  // Età per-shape (task3A): portrait = flat condivisi, landscape = override
+  // del profilo (assente = segue il flat; `false` esplicito vince). Stesso
+  // pattern degli altri visual scoped (mai i root setter diretti).
+  const [ageBadge, setAgeBadge] = scoped("ageBadge", ed.defaultAgeBadge, ed.setDefaultAgeBadge)
+  const [ageCountry, setAgeCountry] = scoped("ageCountry", ed.defaultAgeCountry, ed.setDefaultAgeCountry)
+  const [ageBadgeStyle, setAgeBadgeStyle] = scoped("ageBadgeStyle", ed.defaultAgeBadgeStyle, ed.setDefaultAgeBadgeStyle)
+  // Scoped reset (task 3B1): restores this tab's landscape keys to
+  // independent shape-appropriate defaults — the current portrait effective
+  // frozen in (same pixels as follow, then decoupled), age forced to the
+  // canonical OFF/IT/standard trio — never clear-to-follow. Numerics and
+  // gradient overrides owned by Transform stay intact. Divergence (not mere
+  // presence) drives the button: a snapshot that still equals the flat is
+  // not an override; null on inherit-keys follows the flat (canonical
+  // NULL_INHERIT contract, same as the render chains).
+  const landRec = ed.landscape as unknown as Record<string, unknown>
+  const edRec = ed as unknown as Record<string, unknown>
+  const badgeDiverges = (k: (typeof BADGE_VISUAL_LAND_KEYS)[number]): boolean => {
+    const lv = landRec[k]
+    if (lv === undefined || lv === null) return false
+    const fv = edRec[`default${k.charAt(0).toUpperCase()}${k.slice(1)}`]
+    return JSON.stringify(lv) !== JSON.stringify(fv)
+  }
+  const hasVisualOverrides = isLandscape && (BADGE_VISUAL_LAND_KEYS.some(badgeDiverges)
+    || ed.landscape.ageBadge !== false
+    || ed.landscape.ageCountry !== DEFAULT_AGE_COUNTRY
+    || ed.landscape.ageBadgeStyle !== DEFAULT_AGE_BADGE_STYLE)
   const resetVisualOverrides = () => {
-    ed.setLandscape(Object.fromEntries(BADGE_VISUAL_LAND_KEYS.map((k) => [k, undefined])) as Partial<LandscapeServerDefaults>)
+    const full = independentLandscapeDefaults(edRec) as unknown as Record<string, unknown>
+    const patch = Object.fromEntries(
+      BADGE_VISUAL_LAND_KEYS.map((k) => [k, full[k]]),
+    ) as unknown as Partial<LandscapeServerDefaults>
+    ed.setLandscape({
+      ...patch,
+      ageBadge: false,
+      ageCountry: DEFAULT_AGE_COUNTRY,
+      ageBadgeStyle: DEFAULT_AGE_BADGE_STYLE,
+    })
   }
 
   // Rank bucket toggle: surgical rank on/off inside sashOrder (extra and the
@@ -446,7 +485,7 @@ export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange }: {
 
   // Quick preset apply: SINGLE atomic target-aware patch con helpers existing
   // (come Apple/personali). Portrait congela l'effettivo landscape ereditato,
-  // landscape scrive solo il profilo; globals (ratingSources/logoAlign/fit) e
+  // landscape scrive solo il profilo; globals (ratingSources/fit) e
   // delivery non mutati per isolamento. Il preset parziale contiene solo
   // scelte badge + reset canonico: sash/font/formats e altri default
   // esistenti preservati. Nessun nested `landscape` nel desired: in landscape
@@ -800,13 +839,13 @@ export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange }: {
       <div {...famAttrs("info")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-1.5 shadow-sm">
         <div className="space-y-1.5">
           <span className="text-[11px] text-muted font-medium block">{t("ui.extraBadgeStyle")}</span>
-          {extraBadgeStyle == null && (
+          {(extraBadgeStyle == null || extraBadgeStyle === "follow-rank") && (
             <p className="text-[10px] text-muted italic leading-tight">
               {t("ui.inherited")}: {t(EXTRA_STYLE_LABELS[legacyExtraStyleForRank(rankingBadgeStyle)])}
             </p>
           )}
           <BadgeStyleSelector
-            value={extraBadgeStyle ?? legacyExtraStyleForRank(rankingBadgeStyle)}
+            value={extraBadgeStyle === "follow-rank" ? legacyExtraStyleForRank(rankingBadgeStyle) : (extraBadgeStyle ?? legacyExtraStyleForRank(rankingBadgeStyle))}
             options={extraOptions}
             onChange={(v) => {
               setExtraBadgeStyle(v)
@@ -814,6 +853,97 @@ export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange }: {
             t={t}
             accentColor={accentColor}
           />
+          {isLandscape && (
+            <div className="flex gap-1 pt-1">
+              <button
+                type="button"
+                onClick={() => setExtraBadgeStyle("follow-rank" as never)}
+                aria-pressed={extraBadgeStyle === "follow-rank"}
+                className={`flex-1 py-1 px-1 rounded-lg text-[11px] font-semibold transition-all duration-150 cursor-pointer ${
+                  extraBadgeStyle === "follow-rank"
+                    ? "bg-white/20 text-white shadow-sm"
+                    : "bg-white/5 text-muted hover:bg-white/10 hover:text-zinc-200"
+                }`}
+              >
+                Follow rank
+              </button>
+              <button
+                type="button"
+                onClick={() => ed.setLandscape({ extraBadgeStyle: undefined })}
+                aria-pressed={!("extraBadgeStyle" in ed.landscape) || (ed.landscape as { extraBadgeStyle?: unknown }).extraBadgeStyle == null}
+                className={`flex-1 py-1 px-1 rounded-lg text-[11px] font-semibold transition-all duration-150 cursor-pointer ${
+                  (!("extraBadgeStyle" in ed.landscape) || (ed.landscape as { extraBadgeStyle?: unknown }).extraBadgeStyle == null)
+                    ? "bg-white/20 text-white shadow-sm"
+                    : "bg-white/5 text-muted hover:bg-white/10 hover:text-zinc-200"
+                }`}
+              >
+                {t("ui.inherited")}
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+      {/* Logo-block alignment (landscape-only effect: portraits render
+          centered by contract, so the portrait Left option is disabled as a
+          demonstrated no-op — Auto already means portrait-center). Portrait
+          edits the shared flat (`null` = per-shape auto); landscape the
+          profile override (follow = clear back to the flat, via the scoped
+          reset above). */}
+      <div className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-1.5 shadow-sm">
+        <div className="space-y-1.5">
+          <span className="text-[11px] text-muted font-medium block">{t("ui.logoAlign")}</span>
+          {isLandscape && (ed.landscape.logoAlign == null) && (
+            <p className="text-[10px] text-muted italic leading-tight">
+              {t("ui.inherited")}: {t(ed.defaultLogoAlign === "center" ? "ui.alignCenter" : "ui.sideLeft")}
+            </p>
+          )}
+          {!isLandscape && logoAlign == null && (
+            <p className="text-[10px] text-muted italic leading-tight">
+              {t("ui.auto")}: {t("ui.alignCenter")}
+            </p>
+          )}
+          <div className="grid grid-cols-3 gap-1" role="group" aria-label={t("ui.logoAlign")}>
+            <button
+              type="button"
+              onClick={() => {
+                if (isLandscape) ed.setLandscape({ logoAlign: undefined })
+                else setLogoAlign(null)
+              }}
+              aria-pressed={isLandscape ? ed.landscape.logoAlign == null : logoAlign == null}
+              className={`flex-1 py-1 px-1 rounded-lg text-[11px] font-semibold transition-all duration-150 cursor-pointer ${
+                (isLandscape ? ed.landscape.logoAlign == null : logoAlign == null)
+                  ? "bg-white/20 text-white shadow-sm"
+                  : "bg-white/5 text-muted hover:bg-white/10 hover:text-zinc-200"
+              }`}
+            >
+              {t(isLandscape ? "ui.inherited" : "ui.auto")}
+            </button>
+            <button
+              type="button"
+              onClick={() => setLogoAlign("left")}
+              disabled={!isLandscape}
+              aria-pressed={(logoAlign ?? (isLandscape ? "left" : "center")) === "left"}
+              className={`flex-1 py-1 px-1 rounded-lg text-[11px] font-semibold transition-all duration-150 ${!isLandscape ? "cursor-not-allowed opacity-40" : "cursor-pointer"} ${
+                (logoAlign ?? (isLandscape ? "left" : "center")) === "left"
+                  ? "bg-white/20 text-white shadow-sm"
+                  : "bg-white/5 text-muted hover:bg-white/10 hover:text-zinc-200"
+              }`}
+            >
+              {t("ui.sideLeft")}
+            </button>
+            <button
+              type="button"
+              onClick={() => setLogoAlign("center")}
+              aria-pressed={(logoAlign ?? (isLandscape ? "left" : "center")) === "center"}
+              className={`flex-1 py-1 px-1 rounded-lg text-[11px] font-semibold transition-all duration-150 cursor-pointer ${
+                (logoAlign ?? (isLandscape ? "left" : "center")) === "center"
+                  ? "bg-white/20 text-white shadow-sm"
+                  : "bg-white/5 text-muted hover:bg-white/10 hover:text-zinc-200"
+              }`}
+            >
+              {t("ui.alignCenter")}
+            </button>
+          </div>
         </div>
       </div>
       </BadgeGroup>
@@ -1357,23 +1487,23 @@ export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange }: {
               {t("ui.ageBadge")}
             </span>
             <Toggle
-              value={ed.defaultAgeBadge}
+              value={ageBadge}
               onChange={(v) => {
-                ed.setDefaultAgeBadge(v)
+                setAgeBadge(v)
               }}
               label={t("ui.ageBadge")}
             />
           </div>
           <p className="text-[11px] text-zinc-500 leading-relaxed">{t("ui.ageBadgeHint")}</p>
-          {ed.defaultAgeBadge && (
+          {ageBadge && (
             <div className="flex items-center justify-between gap-3">
               <span className="text-zinc-400 font-medium text-[11px] ps-5">
                 {t("ui.ageBadgeCountry")}
               </span>
               <select
-                value={ed.defaultAgeCountry}
+                value={ageCountry}
                 onChange={(e) => {
-                  ed.setDefaultAgeCountry(e.target.value)
+                  setAgeCountry(e.target.value)
                 }}
                 aria-label={t("ui.ageBadgeCountry")}
                 className="max-w-[190px] truncate px-2.5 py-1.5 rounded-lg text-[11px] font-medium bg-white/5 text-zinc-100 border border-white/10 hover:bg-white/10 focus:outline-none focus:border-teal-500/50 cursor-pointer"
@@ -1384,6 +1514,21 @@ export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange }: {
                   </option>
                 ))}
               </select>
+            </div>
+          )}
+          {ageBadge && (
+            <div className="space-y-1.5">
+              <label className="text-[11px] text-muted font-medium block">
+                {t("ui.ageBadgeStyle")}
+              </label>
+              <BadgeStyleSelector
+                value={ageBadgeStyle}
+                options={["standard", "knockout"] as const}
+                onChange={(v) => {
+                  setAgeBadgeStyle(v)
+                }}
+                t={t}
+              />
             </div>
           )}
         </div>

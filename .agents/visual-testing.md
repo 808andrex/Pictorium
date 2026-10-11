@@ -1,26 +1,35 @@
 # Pictorium - Visual Regression Testing
 
 > **Per modifiche ai parametri di resa visiva elencati in
-> `render-params.md`**, il gate visuale finale prima del commit è obbligatorio
-> per provare la sincronizzazione client/server. In iterazione bastano test
-> mirati e visual cached; non eseguire clean a ogni edit.
+> `render-params.md`**, il gate visuale finale prima del push/integrazione è
+> obbligatorio. Lo scheduling è definito solo in `AGENTS.md` → Verification
+> Strategy: durante il lavoro narrow; visual anticipato solo per diagnosi
+> richiesta o necessità dimostrata. Mai clean a ogni edit.
 
 ## Comandi
 
 | Regola | Dettaglio |
 |---|---|
-| Iterazione | `npm run e2e:visual` (riusa `.next-e2e` cached — veloce, per iterazione) |
+| Diagnosi durante il lavoro | `npm run e2e:visual` solo quando giustificato; l'app usa `next dev`, non una build production riusata |
 | Finale | `.next-e2e` deve essere provably fresh al gate finale: cached valido solo se rebuild relativo alle fonti correnti e dimostrato, altrimenti `npm run e2e:visual:clean` UNA sola volta alla fine |
 | Comando | `npx playwright test e2e/pictorium-visual.spec.ts` (solo test visivi) |
 | Suite completa | `npx playwright test e2e/` (include smoke test) |
 | Dipendenze esterne | Nessuna: i test usano il mock server locale (`e2e/mock-server.mjs`), avviato da `playwright.config.ts`, che serve TMDB/JustWatch/Wikidata/IMDb con dati deterministici. `TMDB_API_KEY` non serve più. Attenzione: serve una porta dedicata e un `distDir` separato (`.next-e2e`), quindi puoi eseguire i test anche con `npm run dev` attivo. |
 | Snapshot intenzionali | Se la modifica ALTERA INTENZIONALMENTE l'aspetto, aggiorna con `npx playwright test --update-snapshots` e committa i nuovi `.png` |
-| RENDER_VERSION | Ogni modifica ai parametri di resa (font, padding, gap, colori, gradienti, blur, logo) DEVE rigenerare `RENDER_VERSION` (mai editare `src/lib/render-version.ts` a mano) e aggiornare il valore `rv` nella riga header di `AGENTS.md`. `predev`/`prebuild`/`pretest` rigenerano automaticamente; per verifica immediata: `node scripts/write-render-version.mjs`. I test visivi confermano la coerenza della modifica. |
+| RENDER_VERSION | Rigenerare tramite `node scripts/write-render-version.mjs` quando richiesto; mai editare il generato a mano né copiare `rv` in documentazione. `predev`/`prebuild`/`pretest` rigenerano automaticamente. |
 
 ## Test attivi
 
-- **4 screenshot fissi**: home full-page, home viewport, home mobile, /status — sempre attivi
-- **22 test poster API** (11 funzionali + 11 visual): badge shadow/pill/bar/colored, ranking, extra, gradient height (`gradHeight`; `gradColor/gradOpacity/gradFade/gradDir` rimossi in quanto morti), blur, top shade (`ts`), clean, anime — sempre attivi (grazie al mock server)
+- `e2e/pictorium-visual.spec.ts`: screenshot UI e poster, test API funzionali,
+  layout, font, badge e formati. Leggere lo spec o l'output del runner per
+  l'inventario attuale; niente conteggi duplicati.
+- `e2e/pictorium-parity.spec.ts`: confronto debug/pixel tra preview esplicita e
+  titolo mappato Stremio. Includerlo nel batch finale per modifiche URL,
+  mapping o precedenze, insieme ai relativi unit test.
+- Il job CI `visual` esegue solo lo spec visuale: non sostituisce il gate parity.
+- `playwright.config.ts` avvia `next dev` con mock e dati isolati per invocazione;
+  il riuso dell'app richiede `PLAYWRIGHT_REUSE_APP=1` esplicito. Al gate finale
+  rispettare comunque il requisito fresh di `AGENTS.md`.
 
 ## Regole
 

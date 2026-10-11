@@ -683,6 +683,42 @@ export function buildQualityBadgeSvg(quality: string, fs: number, _textColor: st
 }
 
 /**
+ * Scatola del tag di tier streaming (4K/FHD/HD/SD, stile `standard`):
+ * volutamente PIU LARGA e MENO TONDA della pill neutra storica
+ * (`buildQualityBadgeSvg`, che la pill età conserva byte-identica):
+ * padding orizzontale `1.0 × fs` (era `0.75 × fs`) e raggio contenuto
+ * `0.32 × boxH` (era mezza altezza = pill piena). Altezza, satinatura,
+ * bordo, ombra, testo e crenatura restano quelli della pill neutra, quindi
+ * ancoraggi/scale/offset a valle non si muovono e il testo non clippa mai
+ * (`textLength` pinnato sulla stima, scatola solo allargata). Tutti i tier
+ * condividono questa scatola (unica famiglia del tag di tier); gli asset
+ * icona mono/color e il tag knockout mantengono la propria geometria.
+ */
+export const QUALITY_TIER_PAD_X_FACTOR = 1.0
+export const QUALITY_TIER_RADIUS_FACTOR = 0.32
+
+export function buildQualityTierBadgeSvg(quality: string, fs: number, topLight: boolean = false, font: BadgeFont = "inter") {
+  const px = Math.round(fs * QUALITY_TIER_PAD_X_FACTOR)
+  // Stessa crenatura da marchio tecnico della pill neutra (0.06em per
+  // intervallo, `textLength` pinnato su stima + tracking).
+  const track = quality.length > 1 ? Math.round(0.06 * fs * (quality.length - 1)) : 0
+  const textW = Math.max(estimateTextWidth(quality, fs, font) + track, fs)
+  const totalW = textW + px * 2
+  const boxH = badgeBoxHeight(fs)
+  const r = Math.round(boxH * QUALITY_TIER_RADIUS_FACTOR)
+  const stroke = topLight ? "rgba(0,0,0,0.12)" : "rgba(255,255,255,0.22)"
+  const fg = topLight ? "rgba(255,255,255,0.95)" : "rgba(0,0,0,0.88)"
+  const renderW = totalW + TOP_SHADOW_PAD * 2
+  const renderH = boxH + TOP_SHADOW_PAD * 2
+  const ox = TOP_SHADOW_PAD
+  const oy = TOP_SHADOW_PAD
+  const textEl = `<text x="${ox + totalW / 2}" y="${oy + boxH / 2}" text-anchor="middle" dominant-baseline="central" font-family="${fontFamilyFor(quality, font)}" font-weight="700" font-size="${fs}" letter-spacing="0.06em" fill="${fg}"${textFitAttrs(textW)}>${escSvg(quality)}</text>`
+  const defs = `<defs><linearGradient id="qg" x1="0" y1="0" x2="0" y2="1">${satinPillStops(topLight)}</linearGradient>${TOP_SHADOW_FILTER}</defs>`
+  const bgEl = `<rect x="${ox}" y="${oy}" width="${totalW}" height="${boxH}" rx="${r}" fill="url(#qg)" stroke="${stroke}" stroke-width="1.5" filter="url(#tds)"/>`
+  return { svg: `<svg xmlns="http://www.w3.org/2000/svg" width="${renderW}" height="${renderH}" viewBox="0 0 ${renderW} ${renderH}">${defs}${bgEl}${textEl}</svg>`, w: renderW, h: renderH }
+}
+
+/**
  * White knockout tag for the `knockout` quality style: opaque white
  * rounded tag (contained radius, not a full pill) with the tier glyphs cut
  * out via SVG mask, so the poster shows through the letters. The tag box
