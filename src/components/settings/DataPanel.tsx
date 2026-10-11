@@ -390,6 +390,8 @@ export function DataPanel({ active, exportData, importData, setSettingsOpen, mul
                       value={curPinInput}
                       onChange={(e) => setCurPinInput(e.target.value.replace(/\D/g, ""))}
                       placeholder="••••"
+                      // Numeric PIN: LTR under RTL document.
+                      dir="ltr"
                       className="w-full text-center text-sm font-mono tracking-widest min-h-[42px] py-2 px-3 rounded-xl bg-black/40 border border-white/10 text-white placeholder-zinc-600 focus:outline-none focus:border-amber-500/50"
                     />
                   </div>
@@ -403,6 +405,8 @@ export function DataPanel({ active, exportData, importData, setSettingsOpen, mul
                     value={newPinInput}
                     onChange={(e) => setNewPinInput(e.target.value.replace(/\D/g, ""))}
                     placeholder="••••"
+                    // Numeric PIN: LTR under RTL document.
+                    dir="ltr"
                     className="w-full text-center text-sm font-mono tracking-widest min-h-[42px] py-2 px-3 rounded-xl bg-black/40 border border-white/10 text-white placeholder-zinc-600 focus:outline-none focus:border-amber-500/50"
                   />
                 </div>
@@ -460,6 +464,8 @@ export function DataPanel({ active, exportData, importData, setSettingsOpen, mul
                     value={curPinInput}
                     onChange={(e) => setCurPinInput(e.target.value.replace(/\D/g, ""))}
                     placeholder="••••"
+                    // Numeric PIN: LTR under RTL document.
+                    dir="ltr"
                     className="w-full text-center text-sm font-mono tracking-widest min-h-[42px] py-2 px-3 rounded-xl bg-black/40 border border-white/10 text-white placeholder-zinc-600 focus:outline-none focus:border-rose-500/50"
                   />
                 </div>

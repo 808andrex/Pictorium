@@ -94,6 +94,8 @@ export function PinLockModal({ onSuccess }: PinLockModalProps) {
               setError(null)
             }}
             placeholder="••••"
+            // Numeric lock-screen PIN: LTR under RTL document.
+            dir="ltr"
             className="w-full text-center text-3xl font-mono tracking-[0.4em] py-3 px-4 rounded-2xl bg-black/40 border border-white/10 text-white placeholder-zinc-600 focus:outline-none focus:border-amber-500/50 transition-colors"
           />
 

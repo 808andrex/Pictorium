@@ -54,6 +54,12 @@ export const configTokenSchema = z.object({
   badgeYear: z.boolean().optional(),
   badgeRating: z.boolean().optional(),
   badgeQuality: z.boolean().optional(),
+  /** Badge età testuale (default OFF): opzionale per back-compat token vecchi. */
+  ageBadge: z.boolean().optional(),
+  /** Paese classificazione età (ISO-2, default "IT"): validazione lasca di
+   *  proposito come `region` — la normalizzazione fail-closed avviene in
+   *  risoluzione (poster-config). */
+  ageCountry: z.string().max(8).optional(),
   customRatings: z.boolean().optional(),
   ratingSources: z.array(z.string().max(20)).optional(),
   separateRatings: z.boolean().optional(),

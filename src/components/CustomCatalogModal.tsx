@@ -312,6 +312,9 @@ export function CustomCatalogModal({ isOpen, onClose }: CustomCatalogModalProps)
             placeholder={t("ui.customUrlPh")}
             value={url}
             onChange={(e) => handleUrlChange(e.target.value)}
+            // Machine-readable list URL: always LTR even under RTL document.
+            // (The catalog display name below stays dir-inherited: free text.)
+            dir="ltr"
             className="w-full px-3 py-2 bg-surface2 border border-white/10 rounded-xl text-xs text-foreground placeholder-zinc-500 focus:outline-none focus:border-accent-orange transition-colors"
             required
             autoFocus
@@ -353,6 +356,8 @@ export function CustomCatalogModal({ isOpen, onClose }: CustomCatalogModalProps)
               placeholder="https://www.imdb.com/list/ls..."
               value={sourceUrl}
               onChange={(e) => setSourceUrl(e.target.value)}
+              // Machine-readable IMDb list URL: always LTR even under RTL document.
+              dir="ltr"
               className="w-full px-3 py-2 bg-surface2 border border-white/10 rounded-xl text-xs text-foreground placeholder-zinc-500 focus:outline-none focus:border-accent-orange transition-colors"
             />
           </div>

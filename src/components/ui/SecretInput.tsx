@@ -64,6 +64,9 @@ export function SecretInput({
           onBlur={onBlur}
           onKeyDown={onKeyDown}
           placeholder={placeholder}
+          // API key / secret: Latin machine string, LTR in both modes
+          // (the eye toggle flips type but never the writing direction).
+          dir="ltr"
           className={`flex-1 bg-background border rounded-lg px-2.5 py-1.5 text-xs outline-none focus:border-accent placeholder:text-zinc-500 transition-colors duration-150 ${error ? "border-red-500/70 focus:border-red-500" : "border-border"}`}
         />
         <button

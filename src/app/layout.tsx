@@ -43,6 +43,7 @@ export const viewport: Viewport = {
 };
 
 import { ThemeProvider } from "@/lib/contexts/ThemeContext";
+import { DOCUMENT_LANG_PREPAINT_SCRIPT } from "@/lib/i18n";
 
 export default function RootLayout({
   children,
@@ -50,11 +51,18 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="it" suppressHydrationWarning className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
+    <html lang="it" dir="ltr" suppressHydrationWarning className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
       <head>
         <script
           dangerouslySetInnerHTML={{
             __html: `(function(){var t;try{t=localStorage.getItem("pictorium_ui_theme");}catch(e){}var s=t==="light"||t==="dark"?t:"system";var d=s==="system"?(typeof window.matchMedia==="function"?(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"):"dark"):s;document.documentElement.setAttribute("data-theme",d);document.documentElement.setAttribute("data-theme-setting",s);document.documentElement.classList.add(d);document.documentElement.classList.remove(d==="dark"?"light":"dark");})();`,
+          }}
+        />
+        <script
+          dangerouslySetInnerHTML={{
+            // Pre-paint language/direction (see DOCUMENT_LANG_PREPAINT_SCRIPT):
+            // persisted lang + matching dir before first paint, no LTR flash.
+            __html: DOCUMENT_LANG_PREPAINT_SCRIPT,
           }}
         />
         <link rel="preconnect" href="https://image.tmdb.org" />

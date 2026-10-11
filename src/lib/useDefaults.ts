@@ -7,6 +7,7 @@ import { isNetworkLogoPosition, isPosterLayout, isPosterFreshScope, isPosterShap
 import type { LandscapeServerDefaults } from "./server-defaults"
 import { parseDateFormat, type DateFormat } from "./release-badge"
 import { normalizeRegion } from "./regions"
+import { DEFAULT_AGE_COUNTRY, normalizeCertificationCountry } from "./certification"
 import { isProfilelessOnMultiUser, notifyProfilelessOnce, shouldSkipServerSync } from "./guest-guard"
 import { userFetch, parseRetryAfter } from "./http"
 import { USER_UNLOCK_EVENT, currentPathUuid } from "./user-token"
@@ -82,6 +83,10 @@ export interface DefaultsState {
   defaultBadgeYear: boolean
   defaultBadgeRating: boolean
   defaultBadgeQuality: boolean
+  /** Badge età testuale di default (default OFF). */
+  defaultAgeBadge: boolean
+  /** Paese classificazione età di default ("IT"). Globale, mai auto-cambiato. */
+  defaultAgeCountry: string
   /** Riga rating custom provider di default (default ON). */
   defaultCustomRatings: boolean
   /** Endpoint provider custom rating salvato via UI (non-segreto). */
@@ -254,6 +259,8 @@ const DEFAULTS: DefaultsState = {
   defaultBadgeYear: true,
   defaultBadgeRating: true,
   defaultBadgeQuality: true,
+  defaultAgeBadge: false,
+  defaultAgeCountry: DEFAULT_AGE_COUNTRY,
   defaultCustomRatings: true,
   defaultRatingSources: ["imdb", "tmdb"],
   defaultSeparateRatings: false,
@@ -351,6 +358,8 @@ interface StoredDefaults {
   badgeYear?: boolean
   badgeRating?: boolean
   badgeQuality?: boolean
+  ageBadge?: boolean
+  ageCountry?: string
   customRatings?: boolean
   networkLogo?: boolean
   gradientHeight?: number
@@ -420,6 +429,8 @@ interface StoredDefaults {
   defaultBadgeYear?: boolean
   defaultBadgeRating?: boolean
   defaultBadgeQuality?: boolean
+  defaultAgeBadge?: boolean
+  defaultAgeCountry?: string
   defaultCustomRatings?: boolean
   defaultCustomRatingEndpoint?: string
   defaultCustomRatingApiKeyHeader?: string
@@ -619,6 +630,10 @@ function buildFromStored(d: StoredDefaults | null): DefaultsState {
     defaultBadgeYear: d.defaultBadgeYear ?? d.badgeYear ?? true,
     defaultBadgeRating: d.defaultBadgeRating ?? d.badgeRating ?? true,
     defaultBadgeQuality: d.defaultBadgeQuality ?? d.badgeQuality ?? true,
+    // Badge età: default OFF; paese validato fail-closed su "IT" (mai
+    // auto-cambiato con lingua/regione — impostazione globale indipendente).
+    defaultAgeBadge: d.defaultAgeBadge ?? d.ageBadge ?? false,
+    defaultAgeCountry: normalizeCertificationCountry(d.defaultAgeCountry ?? d.ageCountry) ?? DEFAULT_AGE_COUNTRY,
     defaultCustomRatings: d.defaultCustomRatings ?? d.customRatings ?? true,
     defaultCustomRatingEndpoint: d.defaultCustomRatingEndpoint ?? d.customRatingEndpoint,
     defaultCustomRatingApiKeyHeader: d.defaultCustomRatingApiKeyHeader ?? d.customRatingApiKeyHeader,

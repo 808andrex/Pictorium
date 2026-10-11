@@ -72,8 +72,11 @@ describe("context i18n loader integration (real dictionaries)", () => {
         <Probe />
       </PictoriumRoot>,
     )
+    // The fr chunk resolves via dynamic import outside microtasks: poll for
+    // the commit (same eventual predicate as the tests below) instead of a
+    // fixed flush count, which flakes under full-suite worker contention.
+    await vi.waitFor(() => expect(ctx!.lang).toBe("fr"))
     await flush()
-    expect(ctx!.lang).toBe("fr")
     expect(getLang()).toBe("fr")
     expect(document.documentElement.lang).toBe("fr")
     // Reactive context t: no English fallback.

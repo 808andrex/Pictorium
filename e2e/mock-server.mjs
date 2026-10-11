@@ -230,6 +230,51 @@ const server = http.createServer(async (req, res) => {
     if (kwMatch) {
       return json(res, 200, { id: Number(kwMatch[2]), keywords: [] })
     }
+    // TMDB age certifications (deterministiche, verifica pre-integrazione):
+    // movie release_dates → IT VM14 theatrical + US PG-13; tv content_ratings
+    // → US TV-MA + IT VM14. Nessun fallback cross-country lato mock: entrambe
+    // le entry presenti così gli spec asseriscono il match stesso-paese.
+    const relMatch = pathname.match(/^\/3\/movie\/(\d+)\/release_dates$/)
+    if (relMatch) {
+      return json(res, 200, {
+        id: Number(relMatch[1]),
+        results: [
+          {
+            iso_3166_1: "IT",
+            release_dates: [
+              { certification: "VM14", release_date: "2024-01-10T00:00:00.000Z", type: 3 },
+            ],
+          },
+          {
+            iso_3166_1: "US",
+            release_dates: [
+              { certification: "PG-13", release_date: "2024-01-10T00:00:00.000Z", type: 3 },
+            ],
+          },
+        ],
+      })
+    }
+    const crMatch = pathname.match(/^\/3\/tv\/(\d+)\/content_ratings$/)
+    if (crMatch) {
+      return json(res, 200, {
+        id: Number(crMatch[1]),
+        results: [
+          { iso_3166_1: "US", rating: "TV-MA", descriptors: [] },
+          { iso_3166_1: "IT", rating: "VM14", descriptors: [] },
+        ],
+      })
+    }
+    // Trakt anticipated movies (shape ufficiale v2: [{ list_count, movie }]):
+    // 2 voci deterministiche, page>1 vuota (fine paginazione).
+    if (method === "GET" && pathname === "/trakt/movies/anticipated") {
+      const page = Number(url.searchParams.get("page") || "1")
+      if (!Number.isInteger(page) || page < 1) return json(res, 400, { error: "bad page" })
+      if (page > 1) return json(res, 200, [])
+      return json(res, 200, [
+        { list_count: 42, movie: { title: "Avatar", year: 2009, ids: { trakt: 1, slug: "avatar-2009", imdb: "tt0499549", tmdb: 19995 } } },
+        { list_count: 37, movie: { title: "Interstellar", year: 2014, ids: { trakt: 2, slug: "interstellar-2014", imdb: "tt0816692", tmdb: 157336 } } },
+      ])
+    }
     // TV seasons
     const seasonMatch = pathname.match(/^\/3\/tv\/(\d+)\/season\/(\d+)$/)
     if (seasonMatch) {

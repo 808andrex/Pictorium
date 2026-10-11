@@ -116,6 +116,9 @@ export function buildStremioPosterUrl(input: BuildStremioPosterUrlInput): URL {
     badgeYear: input.mapping?.badgeYear ?? sd.badgeYear,
     badgeRating: input.mapping?.badgeRating ?? sd.badgeRating,
     badgeQuality: input.mapping?.badgeQuality ?? sd.badgeQuality,
+    // Badge età globale (nessun per-titolo): default di spazio + paese.
+    ageBadge: sd.ageBadge,
+    ageCountry: sd.ageCountry ?? undefined,
     minQuality: sd.minQuality ?? undefined,
     customRatings: mapping?.customRatings ?? sd.customRatings,
     ratingSources: mapping?.ratingSources ?? sd.ratingSources,

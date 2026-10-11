@@ -231,6 +231,8 @@ function UserIdentityCard({ uuid }: { uuid: string }) {
               value={next}
               onChange={(e) => setNext(e.target.value)}
               placeholder="••••••••"
+              // Space password: Latin machine string, LTR under RTL document.
+              dir="ltr"
               className="w-full font-mono text-xs py-1.5 px-3 rounded-lg bg-black/40 border border-white/10 text-white placeholder-zinc-600 focus:outline-none focus:border-accent-orange/50"
             />
           </div>
@@ -243,6 +245,8 @@ function UserIdentityCard({ uuid }: { uuid: string }) {
                 value={current}
                 onChange={(e) => setCurrent(e.target.value)}
                 placeholder="••••••••"
+                // Current password / recovery key: LTR under RTL document.
+                dir="ltr"
                 className="w-full font-mono text-xs py-1.5 px-3 rounded-lg bg-black/40 border border-white/10 text-white placeholder-zinc-600 focus:outline-none focus:border-accent-orange/50"
               />
             </div>
@@ -450,6 +454,8 @@ export function UserSpacesList() {
               onKeyDown={(e) => { if (e.key === "Enter") void create() }}
               maxLength={128}
               placeholder="••••••••"
+              // New space password: LTR under RTL document.
+              dir="ltr"
               className="w-full font-mono text-xs py-1.5 px-3 rounded-lg bg-black/40 border border-white/10 text-white placeholder-zinc-600 focus:outline-none focus:border-accent-orange/50"
             />
           </div>
@@ -476,6 +482,8 @@ export function UserSpacesList() {
               maxLength={36}
               placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
               autoComplete="off"
+              // Space UUID (hex + dashes): LTR under RTL document.
+              dir="ltr"
               className="w-full font-mono text-xs py-1.5 px-3 rounded-lg bg-black/40 border border-white/10 text-white placeholder-zinc-600 focus:outline-none focus:border-accent-orange/50"
             />
           </div>
@@ -489,6 +497,8 @@ export function UserSpacesList() {
               onKeyDown={(e) => { if (e.key === "Enter") void login() }}
               maxLength={128}
               placeholder="••••••••"
+              // Login password: LTR under RTL document.
+              dir="ltr"
               className="w-full font-mono text-xs py-1.5 px-3 rounded-lg bg-black/40 border border-white/10 text-white placeholder-zinc-600 focus:outline-none focus:border-accent-orange/50"
             />
           </div>

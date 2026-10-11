@@ -160,6 +160,8 @@ export function CustomPosterUrl({ onAdd, onRemove, collapsible = false, defaultO
           placeholder={t("ui.customPosterPh")}
           spellCheck={false}
           aria-label={t("ui.customPosterTitle")}
+          // Machine-readable image URL: always LTR even under RTL document.
+          dir="ltr"
           className="min-w-0 flex-1 rounded-lg bg-black/40 border border-white/10 px-2.5 py-2 text-xs text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-accent-orange/60"
         />
         <button

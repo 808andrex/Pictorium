@@ -48,10 +48,47 @@ export function isRankKey(val: string | null): string | null {
   return null
 }
 
+/**
+ * Base language subtag, lowercased ("HE-IL" -> "he", "es-419" -> "es").
+ * Used for script-direction detection: region/number subtags never change
+ * the writing direction.
+ */
+export function baseLangCode(lang: string): string {
+  return lang.toLowerCase().split(/[-_]/)[0] ?? ""
+}
+
+const RTL_BASE_LANGS = new Set(["he", "ar"])
+
+/**
+ * True for right-to-left UI languages (Hebrew, Arabic — same logic for
+ * both; every other supported locale is left-to-right).
+ */
+export function isRtlLang(lang: string): boolean {
+  return RTL_BASE_LANGS.has(baseLangCode(lang))
+}
+
+/** Document direction for a UI language: "rtl" for he/ar, "ltr" otherwise. */
+export function documentDirectionFor(lang: string): "rtl" | "ltr" {
+  return isRtlLang(lang) ? "rtl" : "ltr"
+}
+
+/**
+ * Pre-paint inline script (layout `<head>`): applies the persisted UI
+ * language and its writing direction before first paint, so Hebrew/Arabic
+ * never flash LTR. Single source of truth — the layout renders this exact
+ * string; tests execute it. Keep dependency-free (no imports available
+ * inline) and in sync with `documentDirectionFor` above.
+ */
+export const DOCUMENT_LANG_PREPAINT_SCRIPT = `(function(){var l;try{l=localStorage.getItem("preferred_lang");}catch(e){}var c=String(l||"it").toLowerCase().split(/[-_]/)[0];var d=(c==="he"||c==="ar")?"rtl":"ltr";if(l){document.documentElement.setAttribute("lang",l);}document.documentElement.setAttribute("dir",d);})();`
+
 export function setLang(lang: string) {
   _currentLang = lang
   if (typeof document !== "undefined") {
     document.documentElement.lang = lang
+    // Keep writing direction in sync with the language: Hebrew/Arabic need
+    // RTL base direction (punctuation like "?" in "מה לכלול?" renders on
+    // the correct side), every other language resets to LTR.
+    document.documentElement.dir = documentDirectionFor(lang)
   }
 }
 

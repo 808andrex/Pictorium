@@ -186,6 +186,18 @@ export function normalizePosterCacheParams(searchParams: URLSearchParams): URLSe
     // avvelenerebbe le successive (stessa chiave, immagini diverse).
     params.set("bfont", "inter")
   }
+  // agecountry: territorio ISO-2 maiuscolo, GLOBAL escluso (vedi
+  // normalizeCertificationCountry). Presente-ma-invalido (garbage, vuoto,
+  // GLOBAL, non ISO-2) → delete: il resolver cade sul default di spazio
+  // esattamente come con l'assenza (stesso render, un'unica chiave).
+  // Canonical uppercase come il resolver (query case-insensitive, un'unica
+  // policy ovunque: `?agecountry=us` e `?agecountry=US` condividono la key).
+  const agecountry = params.get("agecountry")
+  if (agecountry !== null) {
+    const v = agecountry.trim().toUpperCase()
+    if (/^[A-Z]{2}$/.test(v) && v !== "GLOBAL") params.set("agecountry", v)
+    else params.delete("agecountry")
+  }
 
   return params
 }

@@ -36,7 +36,7 @@ import { TransformControls } from "@/components/TransformControls"
 import { EpisodeGroupControls } from "@/components/EpisodeGroupControls"
 import { JwRankBadge } from "@/components/JwRankBadge"
 import { usePosterPreview } from "@/lib/usePosterPreview"
-import { Check, Clock, Save, Image as ImageIcon, Trash2, X, ChevronLeft, ChevronDown, RectangleVertical, RectangleHorizontal, Tv, AlertTriangle, Loader2, AlertCircle } from "lucide-react"
+import { Check, Clock, Save, Image as ImageIcon, Trash2, X, ChevronLeft, ChevronDown, RectangleVertical, RectangleHorizontal, MonitorPlay, AlertTriangle, Loader2, AlertCircle } from "lucide-react"
 
 export default function EditView() {
   const accentColor = usePSelector((v) => v.accentColor)
@@ -982,16 +982,16 @@ export default function EditView() {
               } footer={
                 previewPoster && selected ? (
                   <div className="w-full">
-                  <div className="flex flex-wrap items-center justify-center gap-2">
+                  <div className="grid grid-cols-1 min-[420px]:grid-cols-2 auto-rows-fr items-stretch gap-2">
                     {(() => {
                       if (!selected) return null
                       const key = `${selected.media_type}:${selected.id}`
                       const hasMapping = mappingsMap.get(key)
                       if (!hasMapping) return null
                       return (
-                        <button type="button" aria-label={t("ui.remove")} onClick={() => { removeMapping(hasMapping).catch((e) => console.error("[pictorium] Remove mapping failed:", e)); setSelected(null); setPreviewPoster(null); setSelectedLogo(null); setPreviewId(null) }} className="btn-danger min-h-[44px] px-4 rounded-xl text-xs">
-                          <Trash2 className="w-4 h-4" />
-                          {t("ui.remove")}
+                        <button type="button" aria-label={t("ui.remove")} onClick={() => { removeMapping(hasMapping).catch((e) => console.error("[pictorium] Remove mapping failed:", e)); setSelected(null); setPreviewPoster(null); setSelectedLogo(null); setPreviewId(null) }} className="flex w-full h-full min-h-[44px] items-center justify-center gap-2 rounded-xl border border-red-500/25 bg-red-500/10 px-4 py-2 text-center text-xs font-semibold text-red-300 transition-all hover:border-red-500/40 hover:bg-red-500/15 active:scale-[0.97] cursor-pointer">
+                          <Trash2 className="w-[18px] h-[18px] shrink-0" />
+                          <span>{t("ui.remove")}</span>
                         </button>
                       )
                     })()}
@@ -999,16 +999,16 @@ export default function EditView() {
                       setStremioPreview(true)
                       setStremioModalOpen(true)
                       setMobileSection("preview")
-                    }} className="btn-secondary min-h-[44px] px-4 rounded-xl text-xs">
-                      <Tv className="w-4 h-4" />
-                      {t("ui.testStremioUrl")}
+                    }} className="btn-secondary w-full h-full min-h-[44px] gap-2 px-4 py-2 text-center rounded-xl text-xs">
+                      <MonitorPlay className="w-[18px] h-[18px] shrink-0" />
+                      <span>{t("ui.testStremioUrl")}</span>
                     </button>
                     <button
                       type="button"
                       aria-label={t("ui.savePoster")}
                       onClick={handleSave}
                       disabled={saveState === "saving"}
-                      className={`min-h-[44px] px-5 rounded-xl font-semibold text-xs flex items-center gap-2 cursor-pointer transition-all ${
+                      className={`w-full h-full min-h-[44px] px-5 py-2 rounded-xl font-semibold text-xs flex items-center justify-center gap-2 text-center cursor-pointer transition-all ${
                         saveState === "saving"
                           ? "bg-zinc-800 text-zinc-400 border border-white/10 opacity-70 cursor-wait"
                           : saveState === "error"
@@ -1020,22 +1020,22 @@ export default function EditView() {
                     >
                       {saveState === "saving" ? (
                         <>
-                          <Loader2 className="w-4 h-4 animate-spin" />
+                          <Loader2 className="w-[18px] h-[18px] shrink-0 animate-spin" />
                           <span>{t("ui.saving")}</span>
                         </>
                       ) : saveState === "error" ? (
                         <>
-                          <AlertCircle className="w-4 h-4" />
+                          <AlertCircle className="w-[18px] h-[18px] shrink-0" />
                           <span>{t("ui.saveError")}</span>
                         </>
                       ) : hasMapping && !mappingDirty ? (
                         <>
-                          <Check className="w-4 h-4 text-emerald-400" />
+                          <Check className="w-[18px] h-[18px] shrink-0 text-emerald-400" />
                           <span>{t("ui.savedShort")}</span>
                         </>
                       ) : (
                         <>
-                          <Save className="w-4 h-4" />
+                          <Check className="w-[18px] h-[18px] shrink-0" />
                           <span>{t("ui.savePoster")}</span>
                         </>
                       )}
@@ -1046,7 +1046,7 @@ export default function EditView() {
                       title={t("ui.saveCoverOnlyHint")}
                       onClick={handleSaveCoverOnly}
                       disabled={saveState === "saving"}
-                      className={`min-h-[44px] px-5 rounded-xl font-semibold text-xs flex items-center gap-2 cursor-pointer transition-all ${
+                      className={`w-full h-full min-h-[44px] px-5 py-2 rounded-xl font-semibold text-xs flex items-center justify-center gap-2 text-center cursor-pointer transition-all ${
                         saveState === "saving"
                           ? "bg-zinc-800 text-zinc-400 border border-white/10 opacity-70 cursor-wait"
                           : "btn-secondary"
@@ -1054,12 +1054,12 @@ export default function EditView() {
                     >
                       {saveState === "saving" ? (
                         <>
-                          <Loader2 className="w-4 h-4 animate-spin" />
+                          <Loader2 className="w-[18px] h-[18px] shrink-0 animate-spin" />
                           <span>{t("ui.saving")}</span>
                         </>
                       ) : (
                         <>
-                          <ImageIcon className="w-4 h-4" />
+                          <ImageIcon className="w-[18px] h-[18px] shrink-0" />
                           <span>{t("ui.saveCoverOnly")}</span>
                         </>
                       )}

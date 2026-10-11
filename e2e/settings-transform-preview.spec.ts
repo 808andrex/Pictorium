@@ -15,17 +15,42 @@ function tryDemoUrl(raw: string): URL | null {
   } catch {
     return null
   }
-  return u.searchParams.get("preview") === "1" ? u : null
+  if (u.searchParams.get("preview") !== "1") return null
+  // Geometry metadata (`debug=1&netgeo=1`, fetched via fetch() by
+  // useNetworkGeometry) returns JSON, not the rendered poster image (loaded
+  // via XHR blob, hence resourceType filtering would miss every genuine
+  // preview — the debug/netgeo query exclusion is the precise semantic).
+  // Counting it as a preview render breaks the no-image-refetch assertions.
+  if (u.searchParams.get("netgeo") === "1" || u.searchParams.get("debug") === "1") return null
+  return u
+}
+
+/** Geometry metadata fetch for the same demo path (JSON, never an image). */
+function tryGeometryUrl(raw: string): URL | null {
+  if (!raw.includes(DEMO_PATH)) return null
+  let u: URL
+  try {
+    u = new URL(raw)
+  } catch {
+    return null
+  }
+  return u.searchParams.get("netgeo") === "1" ? u : null
 }
 
 interface Seen {
   urls: string[]
+  geometryUrls: string[]
 }
 
 /** Log di tutte le request preview demo (anche quelle già partite). */
 function collectPreviewRequests(page: Page, seen: Seen) {
   page.on("request", (req) => {
-    if (tryDemoUrl(req.url())) seen.urls.push(req.url())
+    const raw = req.url()
+    if (tryDemoUrl(raw)) {
+      seen.urls.push(raw)
+      return
+    }
+    if (tryGeometryUrl(raw)) seen.geometryUrls.push(raw)
   })
 }
 
@@ -90,6 +115,10 @@ async function seed(page: Page) {
  * button-interactions.spec.ts): isola dagli altri spec che persistono
  * tuning condiviso nella stessa data-dir. Landscape sostituito in toto
  * (merge shallow), con override diversi dai flat per provare il profilo.
+ * networkLogo + follow espliciti: il fetch geometria (netgeo) è gated su di
+ * essi e il PUT è merge-only — senza, un networkLogo spento lasciato da uno
+ * spec precedente sopprime il fetch per tutto il test (0 request, mai un
+ * semplice ritardo).
  */
 async function resetServerDefaults(page: Page) {
   await page.goto("/")
@@ -98,6 +127,8 @@ async function resetServerDefaults(page: Page) {
     topBadgeScale: 100,
     qualityBadgeOffsetX: -10,
     qualityBadgeOffsetY: 15,
+    networkLogo: true,
+    networkLogoFollowTitle: true,
     landscape: {
       gradientHeight: 20,
       topBadgeScale: 120,
@@ -113,7 +144,7 @@ test.describe("Trasforma Verticale/Orizzontale preview-only", () => {
     await seed(page)
     await page.setViewportSize({ width: 1280, height: 900 })
     await resetServerDefaults(page)
-    const seen: Seen = { urls: [] }
+    const seen: Seen = { urls: [], geometryUrls: [] }
     collectPreviewRequests(page, seen)
 
     // Apro Impostazioni (tab Badge): la preview parte subito dai default.
@@ -124,13 +155,30 @@ test.describe("Trasforma Verticale/Orizzontale preview-only", () => {
     expect(p.get("shape")).toBe("poster")
     expect(p.get("gradHeight")).toBe("30")
 
-    // Passo a Trasforma (sotto-tab Verticale): stesso URL → nessun refetch.
+    // Passo a Trasforma (sotto-tab Verticale): stesso URL → nessun refetch
+    // immagine. Il freeze geometria (debug=1&netgeo=1, JSON) parte invece
+    // subito: va nel bucket geometria, mai in quello preview.
     const before = seen.urls.length
+    const geoBefore = seen.geometryUrls.length
     await dialog.getByRole("tab", { name: "Trasforma", exact: true }).click()
     const panel = dialog.getByRole("tabpanel", { name: "Trasforma" })
     await expect(panel).toBeVisible()
-    await page.waitForTimeout(1500)
+    // The geometry fetch is gated on hydrated editor state (network follow):
+    // under full-suite load the shared `defaults` bucket 429s delay hydration
+    // past any fixed sleep, so poll for the fetch like every preview
+    // assertion in this file. The no-image-refetch check below keeps (and its
+    // window only grows while polling).
+    await expect.poll(() => seen.geometryUrls.length, { timeout: 30_000 }).toBeGreaterThan(geoBefore)
     expect(seen.urls.length).toBe(before)
+    // Regressione: la geometria network è metadata JSON sulla stessa preview
+    // (stessi params + debug/netgeo), distinta dal render immagine.
+    expect(seen.geometryUrls.length).toBeGreaterThan(geoBefore)
+    const geo = new URL(seen.geometryUrls[seen.geometryUrls.length - 1])
+    expect(geo.searchParams.get("preview")).toBe("1")
+    expect(geo.searchParams.get("debug")).toBe("1")
+    expect(geo.searchParams.get("netgeo")).toBe("1")
+    expect(geo.searchParams.get("shape")).toBe("poster")
+    expect(seen.urls.every((raw) => !new URL(raw).searchParams.has("netgeo"))).toBe(true)
     p = await waitPreview(seen)
     expect(p.get("shape")).toBe("poster")
 
@@ -191,7 +239,7 @@ test.describe("Trasforma Verticale/Orizzontale preview-only", () => {
     await seed(page)
     await page.setViewportSize({ width: 390, height: 844 })
     await resetServerDefaults(page)
-    const seen: Seen = { urls: [] }
+    const seen: Seen = { urls: [], geometryUrls: [] }
     collectPreviewRequests(page, seen)
 
     await page.getByRole("button", { name: /Impostazioni/i }).click()
@@ -229,5 +277,11 @@ test.describe("Trasforma Verticale/Orizzontale preview-only", () => {
     })
     expect(p.get("shape")).toBe("poster")
     expect(p.get("gradHeight")).toBe("30")
+    // Regressione: il vincitore è un vero render preview (mai metadata
+    // geometria) e nessuna URL geometria è mai finita nel bucket preview.
+    expect(p.get("debug")).toBeNull()
+    expect(p.get("netgeo")).toBeNull()
+    expect(seen.urls.every((raw) => !new URL(raw).searchParams.has("netgeo"))).toBe(true)
+    expect(seen.geometryUrls.every((raw) => new URL(raw).searchParams.get("netgeo") === "1")).toBe(true)
   })
 })

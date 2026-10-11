@@ -106,6 +106,12 @@ export default defineConfig({
         IMDB_CHART_URL: `${mockUrl}/chart/top`,
         MDBLIST_API_URL: `${mockUrl}/mdblist/api`,
         TRAKT_API_URL: `${mockUrl}/trakt`,
+        // Dummy Trakt client ID (test-only, no live key): the server only
+        // attempts the Trakt fetch when an instance client ID is set; the
+        // value itself is never validated because TRAKT_API_URL above points
+        // at the deterministic mock. Without this, the Trakt browser spec
+        // would depend on the launching shell's inherited env.
+        PICTORIUM_TRAKT_CLIENT_ID: "e2e-dummy-trakt-client-id",
         SIMKL_API_URL: `${mockUrl}/simkl`,
         ANIZIP_API_URL: `${mockUrl}/anizip`,
         ANILIST_API_URL: `${mockUrl}/anilist`,

@@ -51,7 +51,7 @@ import type { QualityBadgeStyle } from "./badge-styles"
 import { FORMAT_ICON_PATHS, type VideoFormat } from "./av-specs"
 import type { BadgeVariableContext } from "./badge-variables"
 import { isRankKey } from "./i18n"
-import { composeFreshOverlay, isEffectiveFreshLayout, isFreshRank, prepareFreshReconstructedBackground } from "./fresh-layout"
+import { composeFreshOverlay, composeFreshOverlaySplit, isEffectiveFreshLayout, isFreshRank, prepareFreshReconstructedBackground, type ComposeFreshInput } from "./fresh-layout"
 import { renderCardPoster, aggregateCardRating, cardMetadataBand } from "./card-layout"
 import { cardLayoutGeometry } from "./card-layout-geometry"
 import { isEffectiveCardLayout, type CardSkin } from "./card-layout-skins"
@@ -151,6 +151,11 @@ export interface GenerationInput {
   badgeRating: boolean
   badgeQuality?: boolean
   quality?: string | null
+  /** Etichetta di classificazione per età già risolta e sanificata dalla
+   *  route (null = badge nascosto: disabilitato o dati assenti). Il gruppo
+   *  qualità la compone come pill neutra in fondo allo stack top-right
+   *  (sotto 4K/DV/Atmos), con gli stessi offset/scale/cap della qualità. */
+  ageLabel?: string | null
   /** Font dei testi badge ("inter" = resa storica; i preset custom/house e i loghi restano invariati). */
   badgeFont?: BadgeFont | null
   /** Stile icone del badge qualità (standard = pill testuale). */
@@ -623,34 +628,44 @@ export async function renderQualityIconBadge(
 /**
  * Renderizza la colonna verticale qualità + formati A/V (es. [4K] sopra [DV] sopra [ATMOS]).
  * Se non ci sono formati o falliscono, ritorna il singolo badge di risoluzione.
+ * `ageLabel` (etichetta età già sanificata, es. "VM14"): pill testuale neutra
+ * in FONDO allo stack (sotto 4K e formati), con la stessa base 17px e gli
+ * stessi offset/scale/cap del gruppo a valle. Senza qualità né formati ma con
+ * età, il gruppo rende la sola pill età (il badge non richiede il 4K).
+ * Senza nessuno dei tre → null (nessun composite, percorso storico intatto).
  */
 export async function renderQualityBadgeGroup(
-  quality: string,
+  quality: string | null | undefined,
   qualityBadgeStyle: QualityBadgeStyle | null | undefined,
   videoFormats: readonly VideoFormat[] | null | undefined,
   pw: number,
   topLight?: boolean,
   /** Font della pill testuale (default "inter" = resa storica; le icone mono/color restano invariate). */
   font: BadgeFont = "inter",
+  /** Etichetta età sanificata (null/"" = assente). */
+  ageLabel?: string | null,
 ): Promise<{ png: Buffer; w: number; h: number } | null> {
+  const ageText = typeof ageLabel === "string" ? ageLabel.trim() : ""
+  const qualityText = typeof quality === "string" ? quality : ""
+  const hasQuality = qualityText !== ""
   const isKnockout = qualityBadgeStyle === "knockout"
   // Knockout has no icon asset (qualityBadgeIconPath stays null by design):
   // it renders its own tag below and never falls back to the standard pill.
-  const qualityIconPath = isKnockout ? null : qualityBadgeIconPath(qualityBadgeStyle, quality)
+  const qualityIconPath = !hasQuality || isKnockout ? null : qualityBadgeIconPath(qualityBadgeStyle, qualityText)
   let resBadge: { png: Buffer; w: number; h: number } | null = null
-  if (qualityIconPath) {
-    resBadge = await renderQualityIconBadge(qualityIconPath, pw, topLight)
+  if (hasQuality) {
+    if (qualityIconPath) {
+      resBadge = await renderQualityIconBadge(qualityIconPath, pw, topLight)
+    }
+    if (!resBadge) {
+      resBadge = isKnockout
+        ? await renderQualityKnockoutBadge(qualityText, pw, normalizeBadgeFont(font))
+        : await renderQualityBadge(qualityText, pw, topLight, normalizeBadgeFont(font))
+    }
   }
-  if (!resBadge) {
-    resBadge = isKnockout
-      ? await renderQualityKnockoutBadge(quality, pw, normalizeBadgeFont(font))
-      : await renderQualityBadge(quality, pw, topLight, normalizeBadgeFont(font))
-  }
-  if (!resBadge) return null
-  if (!videoFormats || videoFormats.length === 0) return resBadge
+  if (!resBadge && ageText === "") return null
 
-  const validFormats = videoFormats.filter((f) => f in FORMAT_ICON_PATHS)
-  if (validFormats.length === 0) return resBadge
+  const validFormats = (videoFormats ?? []).filter((f) => f in FORMAT_ICON_PATHS)
 
   const hasDV = validFormats.includes("dv")
   const hasAtmos = validFormats.includes("atmos")
@@ -676,12 +691,28 @@ export async function renderQualityBadgeGroup(
     const icon = await renderQualityIconBadge(FORMAT_ICON_PATHS[fmt], pw, isKnockout && isDolbySingle ? false : topLight)
     if (icon) formatBadges.push(icon)
   }
-  if (formatBadges.length === 0) return resBadge
+  // Pill età neutra: stessa pill testuale standard della qualità (base 17px,
+  // polarità topLight, font badge), solo testo sanificato maiuscolo-minuscolo
+  // preservato (escSvg nel builder, mai HTML grezzo).
+  const renderAgePill = async (): Promise<{ png: Buffer; w: number; h: number } | null> =>
+    ageText === "" ? null : renderQualityBadge(ageText, pw, topLight, normalizeBadgeFont(font))
+  const agePill = await renderAgePill()
+  if (!resBadge && formatBadges.length === 0) {
+    // Solo età (niente qualità né formati che abbiano reso): la pill età è
+    // già il gruppo (ageText non-vuoto garantito dal return sopra, niente
+    // ricomposizione).
+    return agePill
+  }
 
   const gap = Math.round(5 * pw / 380)
   // Vertical stack for every style (knockout included): the tier tag on
-  // top, every verified format below — Dolby like any other format.
-  const allBadges = [resBadge, ...formatBadges]
+  // top, every verified format below — Dolby like any other format — and
+  // the neutral age pill last (below 4K and formats, never overlapping).
+  // Un singolo elemento resta il bitmap originale (percorso storico
+  // byte-identico: niente ricomposizione per qualità sola o età sola).
+  const allBadges = [...(resBadge ? [resBadge] : []), ...formatBadges, ...(agePill ? [agePill] : [])]
+  if (allBadges.length === 0) return null
+  if (allBadges.length === 1) return allBadges[0]
   const visWidths = allBadges.map((b) => Math.max(1, b.w - TOP_SHADOW_PAD * 2))
   const visHeights = allBadges.map((b) => Math.max(1, b.h - TOP_SHADOW_PAD * 2))
   const maxVisW = Math.max(...visWidths)
@@ -1357,6 +1388,8 @@ export async function generatePosterBuffer(input: GenerationInput): Promise<Buff
     badgesEnabled, rankingEnabled, genreName, voteAverage, badgeStyle,
     rankingBadgeStyle, extraBadgeStyle, badgeGenre, badgeYear, badgeRating, badgeQuality, quality,
     qualityBadgeStyle, videoFormats,
+    // Etichetta età (null = badge nascosto: default nei test diretti).
+    ageLabel = null,
     sashOrder,
     topLight, targetCenter, ribbonSide,
     // Nastro stile Netflix all'angolo: default true (comportamento storico per
@@ -1843,10 +1876,26 @@ export async function generatePosterBuffer(input: GenerationInput): Promise<Buff
   const effTopBadgeOffsetY = isExtraTopBadge ? (extraBadgeOffsetY ?? topBadgeOffsetY) : topBadgeOffsetY
 
   const hasQualityBadge = badgeQuality !== false && !!quality
+  // Badge età: master badge globale ON + etichetta risolta presente. NON
+  // richiede il badge qualità né il tier 4K (contratto esplicito: l'età
+  // rende anche senza qualità; solo il master globale spegne tutto).
+  // Il legacy toggle `bq` (badgeQuality=false) spegne TUTTO il tech stack:
+  // qualità E formati A/V. Senza gating, il gruppo sotto riaccenderebbe la
+  // qualità nascosta (quality ?? null passato raw) solo perché l'età apre il
+  // gruppo — l'age-only non deve mai resuscitare 4K/DV/Atmos disabilitati.
+  const effectiveQuality = badgeQuality === false ? null : quality
+  const effectiveFormats = badgeQuality === false ? null : videoFormats
+  const ageText = typeof ageLabel === "string" ? ageLabel.trim() : ""
+  const hasAgeBadge = badgesEnabled !== false && ageText !== ""
+  const hasQualityGroup = hasQualityBadge || hasAgeBadge
   // Built-in icon per style+tier (null = standard pill or knockout tag).
   // The style enters the cache key in both cases: style change = new
   // bitmaps, never a collision (knockout and standard share "std").
-  const qualityIconPath = qualityBadgeStyle === "knockout" ? null : qualityBadgeIconPath(qualityBadgeStyle, quality)
+  // `quality` può essere null quando il gruppo rende la sola età: l'icona
+  // resta null e la pill standard età compone il gruppo da sola. Quando il
+  // legacy toggle è OFF (badgeQuality=false) l'effettiva è null: niente
+  // icona tech, niente chiave che includa il tier nascosto.
+  const qualityIconPath = qualityBadgeStyle === "knockout" || !effectiveQuality ? null : qualityBadgeIconPath(qualityBadgeStyle, effectiveQuality)
 
   // Placca staccata: solo gli stili centrati (il nastro resta ancorato)
   // con offset Y esplicito arrotondano tutti e 4 gli angoli. Calcolato qui
@@ -1860,9 +1909,14 @@ export async function generatePosterBuffer(input: GenerationInput): Promise<Buff
   const rankBadgeKey = !showComingSoon && topBadge
     ? badgeCacheKey("rank", topBadge.type === "extra" ? topBadge.label : `${(topBadge as { rank: number }).rank}:${topBadge!.label}:${(topBadge as { ribbonLabel?: string }).ribbonLabel ?? ""}`, CW, topLight, topBadgeStyle, badgeFont, accentColorRank, ribbonSide, isAnimeRank, effTopBadgeScale, isRankDetached ? "detached" : undefined, rankingBadgeAccent ? "accent" : undefined)
     : null
-  const formatsKey = (videoFormats && videoFormats.length > 0) ? videoFormats.join(",") : "none"
-  const qualityBadgeKey = hasQualityBadge
-    ? badgeCacheKey("quality", quality, CW, topLight, badgeFont, qualityBadgeScale, qualityBadgeStyle ?? "standard", qualityIconPath ?? "std", formatsKey)
+  const formatsKey = (effectiveFormats && effectiveFormats.length > 0) ? effectiveFormats.join(",") : "none"
+  // L'età entra nella chiave (etichetta distinta = bitmap distinto); assente
+  // = sentinel stabile così le chiavi senza età restano distinte da ogni
+  // etichetta reale (mai collisione con "x": encodeURIComponent("x") === "x").
+  // La chiave usa l'EFFETTIVA (gated dal legacy toggle): con bq=0 il tier
+  // nascosto non entra nella chiave (stesso bitmap dell'age-only senza tier).
+  const qualityBadgeKey = hasQualityGroup
+    ? badgeCacheKey("quality", effectiveQuality ?? "noquality", CW, topLight, badgeFont, qualityBadgeScale, qualityBadgeStyle ?? "standard", qualityIconPath ?? "std", formatsKey, ageText !== "" ? ageText : "noage")
     : null
   const comingSoonKey = showComingSoon
     ? badgeCacheKey("comingsoon", comingSoonLabel, CW, badgeFont, topLight, ribbonSide)
@@ -1964,7 +2018,9 @@ export async function generatePosterBuffer(input: GenerationInput): Promise<Buff
     qualityBadgeKey
       ? (cacheGet<{ png: Buffer; w: number; h: number }>(qualityBadgeKey)
           || coalesceBadgeRender(qualityBadgeKey, async () => {
-              const res = await renderQualityBadgeGroup(quality!, qualityBadgeStyle, videoFormats, badgePw, topLight, badgeFont)
+              // Gruppo con qualità/formati EFFETTIVI (legacy-gated): con
+              // bq=0 l'age-only non resuscita il tech stack disabilitato.
+              const res = await renderQualityBadgeGroup(effectiveQuality ?? null, qualityBadgeStyle, effectiveFormats, badgePw, topLight, badgeFont, hasAgeBadge ? ageText : null)
               if (res) cacheSet(qualityBadgeKey, res, ["badge"], BADGE_CACHE_TTL)
               return res
             }))
@@ -2267,6 +2323,12 @@ export async function generatePosterBuffer(input: GenerationInput): Promise<Buff
   // (Dichiarata qui, usata nel blocco 6b: splice prima del chrome.)
   let freshInsertAt: number | null = null
   if (isFresh) freshInsertAt = composites.length
+  // Split-shade anchor (Fresh + active bottom blur only): reference to the
+  // bottom legibility shade layer, before which the raw bottom blur/tint
+  // overlay interleaves in the final composite (section 7). Identity survives
+  // fitCompositeToCanvas (valid layers return unchanged); a miss falls back
+  // to the legacy prepend order.
+  let freshBottomShadeLayer: PosterComposite | null = null
   if (safeComingSoonResult && ribbonLayout) {
     composites.push({
       input: safeComingSoonResult.png,
@@ -2905,7 +2967,7 @@ export async function generatePosterBuffer(input: GenerationInput): Promise<Buff
     // separata, come nello standard.
     const freshRawBadgeRating = input.freshRawBadgeRating ?? input.badgeRating
     const freshRawSeparateEnabled = input.freshRawSeparateRatings ?? (input.separateRatings !== undefined)
-    const freshLayers = await composeFreshOverlay({
+    const freshOverlayInput: ComposeFreshInput = {
       posterBuf: freshBaseBuf,
       CW,
       CH,
@@ -2953,8 +3015,20 @@ export async function generatePosterBuffer(input: GenerationInput): Promise<Buff
         logoOffsetX: logoOffsetX ?? null,
         logoOffsetY: logoOffsetY ?? null,
       },
-    })
-    composites.splice(freshInsertAt ?? composites.length, 0, ...freshLayers)
+    }
+    // Split-shade interleaving (Fresh + active bottom blur only): the raw
+    // bottom blur/tint overlay paints ABOVE the lateral shade and BELOW the
+    // bottom legibility shade + content, so the accent tint stays visible
+    // bottom-left instead of being blacked out by the side shade. Without an
+    // active bottom blur the legacy combined-shade path runs byte-identically.
+    if (blurOverlay) {
+      const split = await composeFreshOverlaySplit(freshOverlayInput)
+      freshBottomShadeLayer = split.aboveBottom[0] ?? null
+      composites.splice(freshInsertAt ?? composites.length, 0, ...split.belowBottom, ...split.aboveBottom)
+    } else {
+      const freshLayers = await composeFreshOverlay(freshOverlayInput)
+      composites.splice(freshInsertAt ?? composites.length, 0, ...freshLayers)
+    }
     // Badge extra non-rank: bitmap standard riusato al top (stesso anchor).
     if (isExtraTopBadge && finalRankBadge && finalRankLeft !== null) {
       composites.push({ input: finalRankBadge.png, top: finalRankTop, left: finalRankLeft })
@@ -3292,9 +3366,24 @@ export async function generatePosterBuffer(input: GenerationInput): Promise<Buff
   // layer — coprirebbe la card finita (metadata, titolo, provider, bordi).
   // Il blur esplicito pre-release sotto resta invece full-canvas per contratto.
   const cardBlurBaked = isCard && cardPng !== null && blurOverlay !== null
-  const layers: Array<PosterComposite | { input: Buffer; raw: { width: number; height: number; channels: 4 }; top: number; left: number }> = blurOverlay && !cardBlurBaked
-    ? [{ input: blurOverlay.overlay, raw: { width: CW, height: blurOverlay.height, channels: 4 }, top: blurOverlay.top, left: 0 }, ...safeComposites]
-    : safeComposites
+  // Root cause of the Fresh bottom-left blackout: the raw bottom blur/tint
+  // overlay used to composite FIRST (below everything), so the Fresh lateral
+  // black shade painted OVER the accent tint wherever they overlap
+  // (bottom-left), hiding it. The tinted bottom band now interleaves between
+  // the lateral shade (below) and the bottom legibility shade + content
+  // (above): accent visible bottom-left AND bottom-right, upper-left lateral
+  // shade untouched (the bottom overlay has no coverage there), and no color
+  // intensities changed anywhere. Standard/Card never take this branch
+  // (freshBottomShadeLayer stays null there).
+  const blurRawLayer = blurOverlay && !cardBlurBaked
+    ? { input: blurOverlay.overlay, raw: { width: CW, height: blurOverlay.height, channels: 4 }, top: blurOverlay.top, left: 0 }
+    : null
+  const freshBlurAt = blurRawLayer && freshBottomShadeLayer ? safeComposites.indexOf(freshBottomShadeLayer) : -1
+  const layers: Array<PosterComposite | { input: Buffer; raw: { width: number; height: number; channels: 4 }; top: number; left: number }> = !blurRawLayer
+    ? safeComposites
+    : freshBlurAt >= 0
+      ? [...safeComposites.slice(0, freshBlurAt), blurRawLayer, ...safeComposites.slice(freshBlurAt)]
+      : [blurRawLayer, ...safeComposites]
 
   let pipeline = sharp(isCard && cardPng ? cardPng : freshBaseBuf)
 

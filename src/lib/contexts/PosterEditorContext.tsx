@@ -253,6 +253,12 @@ export interface PosterEditorCtx {
   setDefaultBadgeRating: (v: boolean | ((prev: boolean) => boolean)) => void
   defaultBadgeQuality: boolean
   setDefaultBadgeQuality: (v: boolean | ((prev: boolean) => boolean)) => void
+  /** Badge età testuale di default (default OFF). */
+  defaultAgeBadge: boolean
+  setDefaultAgeBadge: (v: boolean | ((prev: boolean) => boolean)) => void
+  /** Paese classificazione età di default ("IT"). Globale, mai auto-cambiato. */
+  defaultAgeCountry: string
+  setDefaultAgeCountry: (v: string | ((prev: string) => string)) => void
   defaultCustomRatings: boolean
   setDefaultCustomRatings: (v: boolean | ((prev: boolean) => boolean)) => void
   /** Endpoint provider custom rating (non-segreto; chiave solo env). */
@@ -545,7 +551,7 @@ export function PosterEditorProvider({
     defaultSeparateBadgeOffsetX, defaultSeparateBadgeOffsetY,
     defaultGenreBadgeOffsetX, defaultGenreBadgeOffsetY, defaultQualityBadgeOffsetX, defaultQualityBadgeOffsetY,
     defaultNetworkLogoOffsetX, defaultNetworkLogoOffsetY,
-    defaultBadgeGenre, defaultBadgeYear, defaultBadgeRating, defaultBadgeQuality, defaultCustomRatings, defaultCustomRatingEndpoint, defaultCustomRatingApiKeyHeader, defaultRatingSources, defaultSeparateRatings, defaultSeparateRatingsStyle, defaultPosterLayout, defaultPosterFreshScope, defaultSashOrder,
+    defaultBadgeGenre, defaultBadgeYear, defaultBadgeRating, defaultBadgeQuality, defaultAgeBadge, defaultAgeCountry, defaultCustomRatings, defaultCustomRatingEndpoint, defaultCustomRatingApiKeyHeader, defaultRatingSources, defaultSeparateRatings, defaultSeparateRatingsStyle, defaultPosterLayout, defaultPosterFreshScope, defaultSashOrder,
     defaultAutoRotateClean, defaultAutoRotateBackdrop, defaultPortraitFitEnabled, defaultLandscapeFitEnabled, defaultNetworkLogo, defaultNetworkLogoPosition, defaultNetworkLogoFollowTitle, defaultPreRelease, defaultRibbonSide, defaultRibbonEnabled, defaultPosterShape, defaultLogoAlign,
     defaultDisableCleanPosters,
     landscape: landscapeDefaults,
@@ -1093,6 +1099,16 @@ export function PosterEditorProvider({
       const next = typeof v === "function" ? v(defaultBadgeQuality) : v
       update({ defaultBadgeQuality: next })
     }, [defaultBadgeQuality, update])
+  const setDefaultAgeBadge = useCallback(
+    (v: boolean | ((prev: boolean) => boolean)) => {
+      const next = typeof v === "function" ? v(defaultAgeBadge) : v
+      update({ defaultAgeBadge: next })
+    }, [defaultAgeBadge, update])
+  const setDefaultAgeCountry = useCallback(
+    (v: string | ((prev: string) => string)) => {
+      const next = typeof v === "function" ? v(defaultAgeCountry) : v
+      update({ defaultAgeCountry: next })
+    }, [defaultAgeCountry, update])
   const setDefaultCustomRatings = useCallback(
     (v: boolean | ((prev: boolean) => boolean)) => {
       const next = typeof v === "function" ? v(defaultCustomRatings) : v
@@ -1656,6 +1672,10 @@ export function PosterEditorProvider({
       setDefaultBadgeRating,
       defaultBadgeQuality,
       setDefaultBadgeQuality,
+      defaultAgeBadge,
+      setDefaultAgeBadge,
+      defaultAgeCountry,
+      setDefaultAgeCountry,
       defaultCustomRatings,
       setDefaultCustomRatings,
       defaultCustomRatingEndpoint,
@@ -1911,6 +1931,8 @@ export function PosterEditorProvider({
       defaultBadgeYear, setDefaultBadgeYear,
       defaultBadgeRating, setDefaultBadgeRating,
       defaultBadgeQuality, setDefaultBadgeQuality,
+      defaultAgeBadge, setDefaultAgeBadge,
+      defaultAgeCountry, setDefaultAgeCountry,
       defaultCustomRatings, setDefaultCustomRatings,
       defaultCustomRatingEndpoint, setDefaultCustomRatingEndpoint,
       defaultCustomRatingApiKeyHeader, setDefaultCustomRatingApiKeyHeader,

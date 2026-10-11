@@ -318,6 +318,8 @@ export default function StatusPage() {
                 value={keyInput}
                 onChange={(e) => setKeyInput(e.target.value)}
                 placeholder={t("ui.tmdbKeyPlaceholder")}
+                // TMDB API key: Latin machine string, LTR under RTL document.
+                dir="ltr"
                 className="flex-1 min-w-0 bg-black/30 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 placeholder:text-zinc-600 outline-none focus:border-accent-orange/50"
               />
               <button

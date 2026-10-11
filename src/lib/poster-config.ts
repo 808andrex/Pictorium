@@ -38,6 +38,7 @@ import {
   type SeparateRatingsStyle,
 } from "./badge-styles"
 import { NON_CLEAN_BLUR_FADE, NON_CLEAN_GRADIENT_HEIGHT } from "./gradient-defaults"
+import { DEFAULT_AGE_COUNTRY, normalizeCertificationCountry } from "./certification"
 import {
   resolveEffectiveNetworkFollow,
   resolveLandscapeNetworkOffsets,
@@ -331,6 +332,16 @@ export interface PosterRenderConfig {
   badgeYear: boolean
   badgeRating: boolean
   badgeQuality: boolean
+  /** Badge testuale di classificazione per età (default OFF). Globale
+   *  (nessun per-titolo, come minQuality/sashOrder): query `age` >
+   *  config token > server defaults > false. */
+  ageBadge: boolean
+  /** Paese della classificazione età (default "IT", impostazione globale
+   *  indipendente da lingua UI/regione streaming, mai auto-cambiata).
+   *  Catena: query `agecountry` > config token > server defaults > "IT"
+   *  (fail-closed: valori ignoti/GLOBAL/confini cadono sul livello
+   *  successivo, mai su fetch arbitrari). */
+  ageCountry: string
   /** Soglia minima tier qualità streaming — catena: query `qmin` > server defaults > "SD". Globale (nessun per-titolo). */
   minQuality: StreamQuality
   /** Ordine/priorità sash — catena: query `sash` > server defaults > default. Globale (nessun per-titolo). */
@@ -445,6 +456,35 @@ export interface PosterRenderConfig {
    * Globale: nessun override per-titolo (il mapping non ha il campo).
    */
   logoAlign: "left" | "center"
+}
+
+/**
+ * Age-badge request flags — UNICO punto di verità per route (early gating
+ * del fetch) e resolvePosterRenderConfig (valori finali): mai catene `age`
+ * duplicate che divergono. Catena globale senza per-titolo (come
+ * minQuality/sashOrder): query `age`/`agecountry` > config token >
+ * effective per-shape defaults > flat > OFF/"IT".
+ */
+export interface AgeBadgeRequest {
+  ageBadge: boolean
+  ageCountry: string
+}
+
+export function resolveAgeBadgeRequest(
+  searchParams: URLSearchParams,
+  configOverride: PictoriumUserConfig | null,
+  sd: ServerDefaults,
+  flatSd?: ServerDefaults | null,
+): AgeBadgeRequest {
+  const qAge = searchParams.get("age")
+  const ageBadge = qAge !== null
+    ? qAge !== "0"
+    : (configOverride?.ageBadge ?? sd.ageBadge ?? flatSd?.ageBadge ?? false)
+  const ageCountry = normalizeCertificationCountry(searchParams.get("agecountry"))
+    ?? normalizeCertificationCountry(configOverride?.ageCountry)
+    ?? normalizeCertificationCountry(sd.ageCountry ?? flatSd?.ageCountry)
+    ?? DEFAULT_AGE_COUNTRY
+  return { ageBadge, ageCountry }
 }
 
 export function resolvePosterRenderConfig(input: PosterRenderConfigInput): PosterRenderConfig {
@@ -636,6 +676,12 @@ export function resolvePosterRenderConfig(input: PosterRenderConfigInput): Poste
   const badgeYear = qBy !== null ? qBy !== "0" : (mapping?.badgeYear ?? configOverride?.badgeYear ?? esd.badgeYear ?? sd.badgeYear ?? true)
   const badgeRating = qBr !== null ? qBr !== "0" : (mapping?.badgeRating ?? configOverride?.badgeRating ?? esd.badgeRating ?? sd.badgeRating ?? true)
   const badgeQuality = qBq !== null ? qBq !== "0" : (mapping?.badgeQuality ?? configOverride?.badgeQuality ?? esd.badgeQuality ?? sd.badgeQuality ?? true)
+
+  // Badge età (classificazione regionale testuale) — catena globale senza
+  // per-titolo via resolveAgeBadgeRequest (unico punto di verità con la
+  // route, che lo riusa per il gating del fetch): default OFF = nessun
+  // fetch TMDB extra e nessun cambio di resa finché non abilitato.
+  const { ageBadge, ageCountry } = resolveAgeBadgeRequest(q, configOverride, esd, sd)
 
   // Minimum streaming quality tier — chain: query `qmin` > effective
   // per-shape defaults > "SD" (show all). Invalid values → default. No
@@ -980,6 +1026,8 @@ export function resolvePosterRenderConfig(input: PosterRenderConfigInput): Poste
     badgeYear,
     badgeRating,
     badgeQuality,
+    ageBadge,
+    ageCountry,
     minQuality,
     sashOrder,
     customRatings,

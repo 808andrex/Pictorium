@@ -26,6 +26,10 @@ export async function saveDefaults(ed: PosterEditorCtx): Promise<boolean> {
     badgeYear: ed.defaultBadgeYear,
     badgeRating: ed.defaultBadgeRating,
     badgeQuality: ed.defaultBadgeQuality,
+    // Badge età globale (default OFF, paese IT): persistito come gli altri
+    // default (PUT /api/defaults + localStorage via `d` sotto).
+    ageBadge: ed.defaultAgeBadge,
+    ageCountry: ed.defaultAgeCountry,
     customRatings: ed.defaultCustomRatings,    customRatingEndpoint: endpointForSave,
     customRatingApiKeyHeader: ed.defaultCustomRatingApiKeyHeader ?? "",
     ratingSources: ed.defaultRatingSources,

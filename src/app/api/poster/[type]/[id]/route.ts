@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server"
 import sharp from "sharp"
 import { initSharp } from "@/lib/sharp-config"
-import { getImages, getDetails, getDetailsWithExternalIds, getExternalIds, getKeywords, getReleaseDates, resolveUserApiKeys, type TMDBImage, type TMDBCompany } from "@/lib/tmdb"
+import { getImages, getDetails, getDetailsWithExternalIds, getExternalIds, getKeywords, getReleaseDates, getContentRatings, resolveUserApiKeys, type TMDBImage, type TMDBCompany } from "@/lib/tmdb"
 import { getJWRankings, hasJWOffers } from "@/lib/justwatch"
 import { resolveRankingSource } from "@/lib/ranking-source"
 import { fetchCustomRankingTop20, findRankingCustomCatalog } from "@/lib/custom-ranking"
@@ -94,7 +94,7 @@ import { getTvdbArtworks, getTvdbMovieId, getTvdbSeriesId, pickTvdbPoster } from
 import { validatePosterQuery } from "@/lib/validation"
 import { decodeConfig } from "@/lib/config-token"
 import { createLogger } from "@/lib/logger"
-import { resolvePosterRenderConfig, resolvePosterShape, resolveSeparateRatingsEnabled, resolveSeparateDisplayState } from "@/lib/poster-config"
+import { resolvePosterRenderConfig, resolvePosterShape, resolveSeparateRatingsEnabled, resolveSeparateDisplayState, resolveAgeBadgeRequest } from "@/lib/poster-config"
 import { selectBestLogo, logoBestLogoFallbackReason } from "@/lib/logo-selection"
 import { resolveStreamQuality, type StreamQualityResult } from "@/lib/stream-quality"
 import { applyMinQuality, type StreamQuality } from "@/lib/quality-tiers"
@@ -105,6 +105,7 @@ import { cachedImageBytes } from "@/lib/image-bytes-cache"
 import { timedFetch } from "@/lib/outbound-stats"
 import { createHash } from "node:crypto"
 import { fetchCustomRatings, resolveCustomRatingConfig, type RatingItem } from "@/lib/custom-rating"
+import { resolveAgeCertification, sanitizeAgeLabel } from "@/lib/certification"
 
 // Vercel: limite massimo di esecuzione della funzione. Il render poster ha un
 // deadline interno di 30s (PICTORIUM_RENDER_TIMEOUT_MS) → 40s copre il caso
@@ -1572,6 +1573,27 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
     // Segnali grezzi del rilevamento pre-digitale (solo debug=1).
     let preJw: boolean | null = null
     let preDigital: string | null = null
+    // Badge età (default OFF): stessa catena globale del render finale
+    // (resolveAgeBadgeRequest — mai catene duplicate). Spento = nessun fetch
+    // TMDB extra in Block B (zero rete, zero byte diversi).
+    const ageEarly = resolveAgeBadgeRequest(req.nextUrl.searchParams, configOverride, earlyEffSd, sd)
+    const ageBadgeEnabledEarly = ageEarly.ageBadge
+    const ageCountryEarly = ageEarly.ageCountry
+    // Master badge globale con la STESSA risoluzione canonica del render
+    // finale (resolvePosterRenderConfig: query `badges` > live-follow
+    // mapping/config/defaults > hasQuery/config/showBadges > true — mai
+    // catene duplicate che divergono). Con master OFF l'età è nascosta a
+    // valle (hasAgeBadge in poster-service), quindi il fetch
+    // release_dates/content_ratings sarebbe rete puramente opzionale per un
+    // badge nascosto: spento = nessun fetch età.
+    const qBadgesEarly = hardenedParams.get("badges")
+    const isLiveFollowEarly = hardenedParams.get("live") === "1"
+    const badgesEnabledEarly: boolean | undefined = qBadgesEarly !== null
+      ? qBadgesEarly !== "0"
+      : (isLiveFollowEarly
+        ? (mapping?.showBadges ?? configOverride?.globalBadges ?? earlyEffSd.globalBadges ?? sd.globalBadges ?? showBadges)
+        : (hasQueryEarly ? (configOverride !== null ? configOverride.globalBadges : showBadges) : true))
+    const ageFetchEnabledEarly = badgesEnabledEarly !== false && ageBadgeEnabledEarly
     // Anime rank parsed pre-cache; only rankingEnabledEarly is needed here.
     // Ranking source also resolved pre-cache and reused, no recompute.
 
@@ -1616,7 +1638,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
     let wikidataRaceTimedOut = false
     const [
       [originalBase, logoFetch, backdropFetch, rankingResult, animeRankResult, rawLiveQuality, preReleaseDetected],
-      [wikidataResult, tmdbKeywords, imdbTop250],
+      [wikidataResult, tmdbKeywords, imdbTop250, ageCert],
     ] = await Promise.all([
       // Block A: images + ranking data + quality
       Promise.all([
@@ -1799,6 +1821,29 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
           }
           return rankingEnabledEarly ? isImdbTop250(imdbId, renderAbort.signal) : false
         })(),
+        // Badge età (OPTIONAL, default OFF): film → release_dates (stessa URL
+        // del blocco pre-digitale in Block A: il tmdbFetch condiviso coalesce
+        // le richieste concorrenti identiche in un'unica rete + cache 5min —
+        // mai doppia chiamata), serie → content_ratings. Solo quando
+        // abilitato e con chiave TMDB (senza chiave niente rete, come il
+        // gating qualità); tetto POSTER_TMDB_TIMEOUT_MS col signal di render,
+        // fail-open (a dati ignoti il badge si nasconde, mai 500). `ok`
+        // distingue il miss genuino (dati ok, paese assente → cache stabile)
+        // dal degrado rete (TTL effimero come la qualità).
+        (ageFetchEnabledEarly && effTmdbKey
+          ? (async (): Promise<{ label: string | null; ok: boolean }> => {
+              try {
+                if (mediaType === "movie") {
+                  const relDates = await getReleaseDates(mediaType, tmdbId, effTmdbKey, renderAbort.signal, POSTER_TMDB_TIMEOUT_MS).catch(() => null)
+                  return { label: resolveAgeCertification("movie", ageCountryEarly, { releaseDates: relDates }), ok: relDates !== null }
+                }
+                const ratings = await getContentRatings(tmdbId, effTmdbKey, renderAbort.signal, POSTER_TMDB_TIMEOUT_MS).catch(() => null)
+                return { label: resolveAgeCertification("tv", ageCountryEarly, { contentRatings: ratings }), ok: ratings !== null }
+              } catch {
+                return { label: null, ok: false }
+              }
+            })()
+          : Promise.resolve({ label: null as string | null, ok: true })),
       ]),
     ])
 
@@ -1982,7 +2027,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
     extraBadgeStyle,
       blurEnabled, blurHeight, blurIntensity, blurFade, blurDarkness, tintStrength, topShade,
       badgesEnabled, rankingEnabled,
-      badgeGenre, badgeYear, badgeRating, badgeQuality, minQuality, sashOrder,
+      badgeGenre, badgeYear, badgeRating, badgeQuality, ageBadge, ageCountry, minQuality, sashOrder,
       separateRatings, separateRatingsStyle,
       logoScale, logoOffsetX, logoOffsetY,
       topBadgeScale, topBadgeOffsetX, topBadgeOffsetY,
@@ -2058,6 +2103,20 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
     // invece di 6h/24h + niente header immutable, così Stremio riprova poco
     // dopo. Early resta solo per il gating del fetch (Block A).
     const qualityEphemeral = badgeQuality && !qQualityParam && liveQualityResult.status !== "resolved"
+    // Etichetta età FINALE: solo col badge finale attivo (stessa catena del
+    // gating fetch — early e finale coincidono: catena globale senza mapping)
+    // E col master badge globale ON (badgesEnabled !== false, stessa
+    // semantica di hasAgeBadge in poster-service: undefined = ON storico):
+    // con master OFF il badge è nascosto e l'etichetta resta null (niente
+    // pill, niente TTL effimero spurio). Sanificata (tetto lunghezza/charset,
+    // mai testo grezzo nel badge).
+    // Null = badge nascosto (disabilitato o dati assenti per il paese).
+    const ageLabel = ageBadge && badgesEnabled !== false ? sanitizeAgeLabel(ageCert.label) : null
+    // Stesso trattamento effimero della qualità per il degrado rete età
+    // (fetch fallito a badge attivo): il poster senza pill resta in cache 2
+    // minuti invece di 6h/24h. Miss genuino (ok, paese assente) = stabile.
+    // Master OFF = stabile (badge già nascosto, nessun degrado da ritentare).
+    const ageEphemeral = !!ageBadge && badgesEnabled !== false && !ageCert.ok
     // Stesso trattamento per Wikidata degradato (race persa, breaker, outage):
     // il poster senza premi resta in cache 2 minuti invece di 6h/24h, così un
     // miss transitorio (es. Emmy intermittente) guarisce al ricaricamento
@@ -2070,7 +2129,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
     // Solo fallback reale (custom richiesto ma base TMDB): custom riuscito o
     // nessun custom = TTL pieno invariato.
     const customFallbackEphemeral = !!effectiveCustomUrl && originalBase !== null && !originalBase.custom
-    const ephemeralTtl = qualityEphemeral || wikidataEphemeral || customFallbackEphemeral
+    const ephemeralTtl = qualityEphemeral || wikidataEphemeral || customFallbackEphemeral || ageEphemeral
     const effectiveTtlSec = ephemeralTtl ? QUALITY_EPHEMERAL_TTL_SEC : dynamicTtlSec
     const effectiveImmutable = immutablePoster && !ephemeralTtl
 
@@ -2211,6 +2270,14 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
           status: liveQualityResult.status,
           rawTokens: liveQualityResult.rawTokens ?? [],
         },
+        // Badge età: impostazioni effettive + etichetta risolta (null =
+        // nascosto: disabilitato o paese senza dati; mai fallback).
+        age: {
+          enabled: ageBadge,
+          country: ageCountry,
+          label: ageLabel,
+          degraded: ageEphemeral,
+        },
         minQuality,
         preRelease: { enabled: preRelease, detected: preReleaseDetected, applied: applyPreRelease, jwAvailable: preJw, digitalDate: preDigital, theatricalDate: releaseDate ?? mapping?.releaseDate ?? null },
         rankings: {
@@ -2249,6 +2316,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
             badgeYear,
             badgeRating,
             badgeQuality,
+            ageBadge,
+            ageCountry,
             separateRatings: useSeparate,
             separateRatingsStyle,
             bottomActive,
@@ -2339,6 +2408,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
       freshRawBadgeYear: badgeYear,
       sashOrder,
       quality: finalQuality,
+      ageLabel,
       topLight, bottomLight, logoBadgeVisibility, targetCenter, ribbonSide, ribbonEnabled, rankingBadgeAccent,
       logoScale, logoOffsetX, logoOffsetY,
       topBadgeScale, topBadgeOffsetX, topBadgeOffsetY,

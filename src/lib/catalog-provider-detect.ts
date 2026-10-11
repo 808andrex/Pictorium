@@ -63,7 +63,8 @@ export function detectCatalogProvider(input: string): ProviderDetectionResult | 
 
   // 2. Trakt
   // es. https://trakt.tv/users/donxy/lists/marvel-cinematic-universe o https://trakt.tv/lists/12345
-  const traktMatch = trimmed.match(/^(?:https?:\/\/)?(?:www\.)?trakt\.tv\/(?:users\/([a-zA-Z0-9_.-]+)\/(?:lists\/([a-zA-Z0-9_.-]+)|watchlist)|lists\/([a-zA-Z0-9_.-]+))\/?(?:[?#].*)?$/i)
+  // Host esatti: trakt.tv, www.trakt.tv, app.trakt.tv (nuova webapp, stessi path lista).
+  const traktMatch = trimmed.match(/^(?:https?:\/\/)?(?:www\.|app\.)?trakt\.tv\/(?:users\/([a-zA-Z0-9_.-]+)\/(?:lists\/([a-zA-Z0-9_.-]+)|watchlist)|lists\/([a-zA-Z0-9_.-]+))\/?(?:[?#].*)?$/i)
   if (traktMatch) {
     const user = traktMatch[1]
     const slug = traktMatch[2] || traktMatch[3]
@@ -73,6 +74,24 @@ export function detectCatalogProvider(input: string): ProviderDetectionResult | 
       provider: "trakt",
       nameSuggestion: rawName,
       defaultType: "mixed",
+    }
+  }
+
+  // 2b. Trakt Discovery "anticipated" (SOLO film, custom catalog):
+  // es. https://app.trakt.tv/discover/anticipated?mode=movie
+  // Host esatti come sopra. Il detect riconosce il path a prescindere dal
+  // mode così il fetch risponde con lo status tipizzato `unsupported`
+  // (rifiuto esplicito) invece di cadere nel fallback MDBList con un
+  // generico `empty`; solo mode=movie viene davvero scaricato (film-only,
+  // in linea con le definizioni catalogo film). Mode mancante/sconosciuto
+  // → mai default implicito, mai serie senza requirement: il salvataggio
+  // resta bloccato dalla preview senza titoli.
+  const traktAnticipatedMatch = trimmed.match(/^(?:https?:\/\/)?(?:www\.|app\.)?trakt\.tv\/discover\/anticipated\/?(?:[?#].*)?$/i)
+  if (traktAnticipatedMatch) {
+    return {
+      provider: "trakt",
+      nameSuggestion: "Trakt Anticipated Movies",
+      defaultType: "movie",
     }
   }
 

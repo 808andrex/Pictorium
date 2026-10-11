@@ -701,23 +701,73 @@ export function freshMetaRows(input: FreshMetaInput): FreshMetaRow[] {
   return rows
 }
 
+/** Shared `freshSide` gradient (inner fragment, no defs wrapper). */
+function freshSideGradient(fadeX: number): string {
+  return (
+    `<linearGradient id="freshSide" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="${fadeX}" y2="0">` +
+    `<stop offset="0" stop-color="#000000" stop-opacity="0.42"/>` +
+    `<stop offset="0.55" stop-color="#000000" stop-opacity="0.22"/>` +
+    `<stop offset="1" stop-color="#000000" stop-opacity="0"/>` +
+    `</linearGradient>`
+  )
+}
+
+/** Shared `freshBottom` gradient (inner fragment, no defs wrapper). */
+function freshBottomGradient(): string {
+  return (
+    `<linearGradient id="freshBottom" x1="0" y1="0" x2="0" y2="1">` +
+    `<stop offset="0.55" stop-color="#000000" stop-opacity="0"/>` +
+    `<stop offset="1" stop-color="#000000" stop-opacity="0.5"/>` +
+    `</linearGradient>`
+  )
+}
+
 /** Full-canvas legibility shade: left gradient + bottom gradient (native SVG). */
 export async function renderFreshShade(CW: number, CH: number, zoneW: number): Promise<Buffer> {
   const fadeX = Math.round(zoneW * 1.5)
   const svg =
     `<svg xmlns="http://www.w3.org/2000/svg" width="${CW}" height="${CH}" viewBox="0 0 ${CW} ${CH}">` +
     `<defs>` +
-    `<linearGradient id="freshSide" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="${fadeX}" y2="0">` +
-    `<stop offset="0" stop-color="#000000" stop-opacity="0.42"/>` +
-    `<stop offset="0.55" stop-color="#000000" stop-opacity="0.22"/>` +
-    `<stop offset="1" stop-color="#000000" stop-opacity="0"/>` +
-    `</linearGradient>` +
-    `<linearGradient id="freshBottom" x1="0" y1="0" x2="0" y2="1">` +
-    `<stop offset="0.55" stop-color="#000000" stop-opacity="0"/>` +
-    `<stop offset="1" stop-color="#000000" stop-opacity="0.5"/>` +
-    `</linearGradient>` +
+    freshSideGradient(fadeX) +
+    freshBottomGradient() +
     `</defs>` +
     `<rect width="${CW}" height="${CH}" fill="url(#freshSide)"/>` +
+    `<rect width="${CW}" height="${CH}" fill="url(#freshBottom)"/>` +
+    `</svg>`
+  return renderSVG(svg, CW)
+}
+
+/**
+ * Left lateral shade only (the `freshSide` half of renderFreshShade).
+ * Split so the bottom blur/tint overlay can paint ABOVE this lateral shade
+ * in the bottom band (fix: the accent tint was blacked out bottom-left by the
+ * side shade sitting over it). Gradient definition and rect are identical to
+ * the combined shade above.
+ */
+export async function renderFreshSideShade(CW: number, CH: number, zoneW: number): Promise<Buffer> {
+  const fadeX = Math.round(zoneW * 1.5)
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${CW}" height="${CH}" viewBox="0 0 ${CW} ${CH}">` +
+    `<defs>` +
+    freshSideGradient(fadeX) +
+    `</defs>` +
+    `<rect width="${CW}" height="${CH}" fill="url(#freshSide)"/>` +
+    `</svg>`
+  return renderSVG(svg, CW)
+}
+
+/**
+ * Bottom legibility shade only (the `freshBottom` half of renderFreshShade).
+ * Paints ABOVE the bottom blur/tint overlay, preserving the historic bottom
+ * legibility darkening once the tint is visible. Definition and rect are
+ * identical to the combined shade above.
+ */
+export async function renderFreshBottomShade(CW: number, CH: number): Promise<Buffer> {
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${CW}" height="${CH}" viewBox="0 0 ${CW} ${CH}">` +
+    `<defs>` +
+    freshBottomGradient() +
+    `</defs>` +
     `<rect width="${CW}" height="${CH}" fill="url(#freshBottom)"/>` +
     `</svg>`
   return renderSVG(svg, CW)
@@ -1923,6 +1973,21 @@ export function freshUnrankedPlacement(
 }
 
 /**
+ * Fresh overlay layers split around the bottom blur/tint overlay. The caller
+ * (poster-service, Fresh + active bottom blur only) composites the raw bottom
+ * RGBA overlay BETWEEN `belowBottom` and `aboveBottom`, so the accent-tinted
+ * bottom band paints ABOVE the lateral shade instead of being blacked out by
+ * it, while the bottom legibility shade and all content stay above the tint.
+ * Layer buffers and placements are otherwise identical to composeFreshOverlay.
+ */
+export interface FreshSplitOverlay {
+  /** Painted BELOW the bottom blur/tint overlay: left-blur strip + lateral shade. */
+  readonly belowBottom: PosterComposite[]
+  /** Painted ABOVE the bottom blur/tint overlay: bottom shade + numeral/meta/provider/logo. */
+  readonly aboveBottom: PosterComposite[]
+}
+
+/**
  * Fresh overlay layers. The caller splices them BEFORE the retained standard
  * chrome (quality pill, Coming Soon ribbon, extra top badge) so the fresh
  * shade never darkens that chrome; base + blur + encoding stay with the
@@ -1931,6 +1996,24 @@ export function freshUnrankedPlacement(
  * maximum row count (custom MAX_CUSTOM_RATINGS + MAX_SEPARATE_RATINGS separate).
  */
 export async function composeFreshOverlay(input: ComposeFreshInput): Promise<PosterComposite[]> {
+  const { layers } = await composeFreshInner(input, "single")
+  return layers
+}
+
+/**
+ * Split-shade variant of composeFreshOverlay for the Fresh + bottom-blur
+ * path. `belowBottom` holds the strip + lateral shade, `aboveBottom` starts
+ * with the bottom legibility shade followed by the same content layers.
+ */
+export async function composeFreshOverlaySplit(input: ComposeFreshInput): Promise<FreshSplitOverlay> {
+  const { layers, bottomIndex } = await composeFreshInner(input, "split")
+  return { belowBottom: layers.slice(0, bottomIndex), aboveBottom: layers.slice(bottomIndex) }
+}
+
+async function composeFreshInner(
+  input: ComposeFreshInput,
+  shadeMode: "single" | "split",
+): Promise<{ layers: PosterComposite[]; bottomIndex: number }> {
   const layers: PosterComposite[] = []
   const t = input.transforms ?? null
   const geo = freshGeometry(input.CW, input.CH, input.rank, t)
@@ -1943,7 +2026,19 @@ export async function composeFreshOverlay(input: ComposeFreshInput): Promise<Pos
     const strip = await renderFreshLeftBlurStrip(input.posterBuf, input.CW, input.CH, geo.numeral)
     if (strip) layers.push({ input: strip.png, top: strip.top, left: strip.left })
   }
-  layers.push({ input: await renderFreshShade(input.CW, input.CH, geo.zoneW), top: 0, left: 0 })
+  // Split mode (Fresh + bottom blur): the lateral shade stays BELOW the
+  // bottom blur/tint overlay (belowBottom) while the bottom legibility shade
+  // paints ABOVE it (aboveBottom, bottomIndex). Single mode keeps the legacy
+  // combined shade byte-identically (blur-off Fresh and every existing caller
+  // are untouched).
+  let bottomIndex = -1
+  if (shadeMode === "split") {
+    layers.push({ input: await renderFreshSideShade(input.CW, input.CH, geo.zoneW), top: 0, left: 0 })
+    bottomIndex = layers.length
+    layers.push({ input: await renderFreshBottomShade(input.CW, input.CH), top: 0, left: 0 })
+  } else {
+    layers.push({ input: await renderFreshShade(input.CW, input.CH, geo.zoneW), top: 0, left: 0 })
+  }
   if (geo.numeral) {
     // The numeral geometry above already carries the user scale/offsets, so
     // the glass fill ROI below samples the transformed location — never a
@@ -2028,7 +2123,7 @@ export async function composeFreshOverlay(input: ComposeFreshInput): Promise<Pos
     if (meta) layers.push({ input: meta.png, top: place.metaTop, left: place.metaLeft })
     if (providerBox) layers.push({ input: providerBox.png, top: place.providerTop, left: place.providerLeft })
     if (logoBox) layers.push({ input: logoBox.png, top: place.logoTop, left: place.logoLeft })
-    return layers
+    return { layers, bottomIndex }
   }
   // Reserved height below the meta block: provider slot (when a provider
   // mark is composed, following the effective provider scale — neutral 100
@@ -2094,7 +2189,7 @@ export async function composeFreshOverlay(input: ComposeFreshInput): Promise<Pos
         top: clampLayerY(fitted.h, input.CH - fitted.h - geo.titleBottom + loy),
         left: clampLayerX(fitted.w, Math.round((input.CW - fitted.w) / 2) + lox),
       })
-      return layers
+      return { layers, bottomIndex }
     }
     const fitted = await fitFreshTitleLogo(input.logo, effLandscapeTitleMaxW, effLandscapeTitleMaxH)
     // The bitmap already carries the user scale (logoResult, sized by the
@@ -2109,5 +2204,5 @@ export async function composeFreshOverlay(input: ComposeFreshInput): Promise<Pos
       left: clampLayerX(fitted.w, input.CW - fitted.w - geo.titleRight + lox),
     })
   }
-  return layers
+  return { layers, bottomIndex }
 }

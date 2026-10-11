@@ -153,6 +153,11 @@ export interface ServerDefaults {
   badgeYear?: boolean
   badgeRating?: boolean
   badgeQuality?: boolean
+  /** Badge testuale di classificazione per età (default OFF). Globale. */
+  ageBadge?: boolean
+  /** Paese della classificazione età (default "IT"). Globale, indipendente
+   *  da lingua UI e regione streaming. */
+  ageCountry?: string
   /** Soglia minima tier qualità streaming (SD < HD < FHD < 4K): sotto soglia niente badge. Default SD. */
   minQuality?: StreamQuality
   /** Riga rating custom provider (display). Default ON quando il provider è configurato. */
@@ -312,6 +317,12 @@ function defaultsFromEnv(): ServerDefaults {
   if (by !== undefined) d.badgeYear = by
   if (br !== undefined) d.badgeRating = br
   if (bq !== undefined) d.badgeQuality = bq
+  const ageB = envBool("AGE_BADGE")
+  if (ageB !== undefined) d.ageBadge = ageB
+  // Paese età: ISO-2 maiuscolo, GLOBAL esplicitamente escluso (non è un
+  // territorio di certification — vedi normalizeCertificationCountry).
+  const ageCountryRaw = getEnv("AGE_COUNTRY")?.trim().toUpperCase()
+  if (ageCountryRaw && /^[A-Z]{2}$/.test(ageCountryRaw) && ageCountryRaw !== "GLOBAL") d.ageCountry = ageCountryRaw
   if (cr !== undefined) d.customRatings = cr
   const rsrcEnv = getEnv("RATING_SOURCES")?.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean)
   if (rsrcEnv && rsrcEnv.length > 0) d.ratingSources = rsrcEnv

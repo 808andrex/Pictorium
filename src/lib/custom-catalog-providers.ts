@@ -72,6 +72,14 @@ interface TraktApiItem {
   episode?: { ids?: TraktApiIds }
 }
 
+/** Item di discovery Trakt "anticipated" (solo film, docs ufficiali):
+ *  [{ list_count, movie: { ids, title, year } }] — niente `type`, l'ordine
+ *  API è il ranking (più listati prima). */
+interface TraktAnticipatedItem {
+  list_count?: number
+  movie?: { ids?: TraktApiIds; title?: string; year?: number }
+}
+
 const TRAKT_TIMEOUT_MS = 8000
 const TRAKT_PAGE_LIMIT = 100
 
@@ -245,7 +253,26 @@ async function fetchTraktList(url: string, limit: number = 500, signal?: AbortSi
   })
   try {
     const trimmed = url.trim()
-    const traktMatch = trimmed.match(/^(?:https?:\/\/)?(?:www\.)?trakt\.tv\/(?:users\/([a-zA-Z0-9_.-]+)\/(?:lists\/([a-zA-Z0-9_.-]+)|watchlist)|lists\/([a-zA-Z0-9_.-]+))\/?(?:[?#].*)?$/i)
+    // Discovery "anticipated" film: https://app.trakt.tv/discover/anticipated?mode=movie
+    // (speculare al detect: solo mode=movie; mode mancante/altro → unsupported
+    // esplicito, mai default implicito né serie senza requirement).
+    const anticipatedMatch = trimmed.match(/^(?:https?:\/\/)?(?:www\.|app\.)?trakt\.tv\/discover\/anticipated\/?(?:[?#].*)?$/i)
+    if (anticipatedMatch) {
+      let mode: string | null = null
+      try {
+        const urlObj = new URL(trimmed.startsWith("http") ? trimmed : `https://${trimmed}`)
+        mode = urlObj.searchParams.get("mode")
+      } catch {
+        return empty("unsupported")
+      }
+      if (mode?.toLowerCase() !== "movie") {
+        log.warn("Trakt anticipated mode not supported as custom catalog")
+        return empty("unsupported")
+      }
+      return fetchTraktAnticipated(limit, signal)
+    }
+
+    const traktMatch = trimmed.match(/^(?:https?:\/\/)?(?:www\.|app\.)?trakt\.tv\/(?:users\/([a-zA-Z0-9_.-]+)\/(?:lists\/([a-zA-Z0-9_.-]+)|watchlist)|lists\/([a-zA-Z0-9_.-]+))\/?(?:[?#].*)?$/i)
     if (!traktMatch) return empty("unsupported")
 
     const user = traktMatch[1]
@@ -350,6 +377,108 @@ async function fetchTraktList(url: string, limit: number = 500, signal?: AbortSi
     return done(items)
   } catch (err) {
     log.error("Error fetching Trakt list", { error: (err as Error).message })
+    return empty("unavailable")
+  }
+}
+
+/**
+ * Scarica la discovery Trakt "most anticipated movies" tramite API ufficiale
+ * Trakt v2 (`GET /movies/anticipated`, docs ufficiali): richiede la stessa
+ * Client ID d'istanza delle liste (PICTORIUM_TRAKT_CLIENT_ID), niente OAuth.
+ * Solo film: gli elementi sono `{ list_count, movie }` (niente `type`) e
+ * l'ordine API è il ranking — preservato. Voci senza imdb/tmdb non sono
+ * risolvibili dalla pipeline (mai id Trakt nudi) e vengono scartate.
+ * Stesse garanzie delle liste: paginazione limitata, abort → prefisso
+ * parziale `incomplete` (mai long-cache), stessi status (key_missing,
+ * private, not_found, rate_limited, unavailable).
+ */
+async function fetchTraktAnticipated(limit: number = 500, signal?: AbortSignal): Promise<UnifiedCatalogResult> {
+  const empty = (status: CatalogFetchStatus): UnifiedCatalogResult => ({ items: [], status })
+  const done = (items: MDBListEntry[], incomplete = false): UnifiedCatalogResult => ({
+    items: items.slice(0, limit),
+    status: items.length > 0 ? "ok" : "empty",
+    ...(incomplete ? { incomplete: true as const } : {}),
+  })
+  try {
+    const clientId = getTraktClientId()
+    if (!clientId) {
+      log.warn("Trakt client ID missing: set PICTORIUM_TRAKT_CLIENT_ID")
+      return empty("key_missing")
+    }
+
+    const base = traktApiBase()
+    const headers = {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      "trakt-api-version": "2",
+      "trakt-api-key": clientId,
+      "User-Agent": "Mozilla/5.0 Pictorium",
+    }
+
+    const maxPages = Math.max(1, Math.min(25, Math.ceil(limit / TRAKT_PAGE_LIMIT)))
+    const items: MDBListEntry[] = []
+    for (let page = 1; page <= maxPages; page++) {
+      if (signal?.aborted) return items.length ? done(items, true) : empty("unavailable")
+      const pageUrl = `${base}/movies/anticipated?page=${page}&limit=${TRAKT_PAGE_LIMIT}`
+      const res = await fetch(pageUrl, {
+        headers,
+        signal: combineAbortSignals(signal, TRAKT_TIMEOUT_MS),
+      }).catch(() => null)
+
+      if (!res) return items.length ? done(items, true) : empty("unavailable")
+      if (res.status === 401 || res.status === 403) {
+        log.warn("Trakt anticipated is private or forbidden", { status: res.status })
+        return empty("private")
+      }
+      if (res.status === 404) {
+        log.warn("Trakt anticipated not found")
+        return empty("not_found")
+      }
+      if (res.status === 429) {
+        const retryAfter = res.headers?.get?.("Retry-After") ?? null
+        log.warn("Trakt rate limited", retryAfter ? { retryAfter } : {})
+        return empty("rate_limited")
+      }
+      if (!res.ok) {
+        log.warn("Trakt anticipated fetch failed", { status: res.status })
+        return items.length ? done(items, true) : empty("unavailable")
+      }
+
+      const json = await res.json().catch(() => null)
+      // Stessa validazione esplicita delle liste: un 200 senza array top-level
+      // (es. error body) è una pagina fallita, non una coda vuota sana. Con
+      // prefisso atterrato → partial incomplete (mai long-cache); senza righe
+      // → transient.
+      const rawItems: TraktAnticipatedItem[] | null = Array.isArray(json)
+        ? (json as TraktAnticipatedItem[])
+        : null
+      if (rawItems === null) {
+        log.warn("Trakt anticipated page malformed", { page })
+        return items.length ? done(items, true) : empty("unavailable")
+      }
+      if (rawItems.length === 0) break
+
+      for (const it of rawItems) {
+        const media = it && typeof it === "object" ? it.movie : undefined
+        const ids = media?.ids || {}
+        const title = media?.title || ""
+        const year = Number(media?.year) || 0
+        const imdb = typeof ids.imdb === "string" ? ids.imdb : ""
+        const tmdb = typeof ids.tmdb === "number" && Number.isFinite(ids.tmdb) ? ids.tmdb : undefined
+        if (imdb || tmdb) {
+          items.push({ imdb, tmdb, title, year, mediatype: "movie" })
+        }
+        if (items.length >= limit) break
+      }
+      if (items.length >= limit) break
+      if (rawItems.length < TRAKT_PAGE_LIMIT) break
+      const pageCount = Number(res.headers?.get?.("X-Pagination-Page-Count"))
+      if (Number.isFinite(pageCount) && pageCount > 0 && page >= pageCount) break
+    }
+
+    return done(items)
+  } catch (err) {
+    log.error("Error fetching Trakt anticipated", { error: (err as Error).message })
     return empty("unavailable")
   }
 }

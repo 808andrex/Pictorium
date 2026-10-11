@@ -219,6 +219,8 @@ export function UserUnlockModal() {
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter") void savePassword() }}
                 placeholder="••••••••"
+                // Space password (toggled to text): LTR in both modes.
+                dir="ltr"
                 className="w-full font-mono text-xs py-2 pl-3 pr-10 rounded-lg bg-black/40 border border-white/10 text-white placeholder-zinc-600 focus:outline-none focus:border-accent-orange/50"
               />
               <button
@@ -244,6 +246,8 @@ export function UserUnlockModal() {
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter") void saveSecret() }}
                 placeholder="••••••••"
+                // Recovery secret (toggled to text): LTR in both modes.
+                dir="ltr"
                 className="w-full font-mono text-xs py-2 pl-3 pr-10 rounded-lg bg-black/40 border border-white/10 text-white placeholder-zinc-600 focus:outline-none focus:border-accent-orange/50"
               />
               <button

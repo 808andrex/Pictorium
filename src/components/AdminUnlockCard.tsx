@@ -107,6 +107,8 @@ export function AdminUnlockCard({ t, description, className, onUnlocked, onLock 
             }}
             placeholder={t("ui.adminTokenPlaceholder")}
             aria-label={t("ui.adminTokenTitle")}
+            // Admin token: opaque Latin secret, LTR under RTL document.
+            dir="ltr"
             className="flex-1 min-w-0 bg-black/30 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 placeholder:text-zinc-600 outline-none focus:border-amber-500/50"
           />
           <button

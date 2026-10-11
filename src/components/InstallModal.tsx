@@ -40,6 +40,29 @@ type InstallTab = "stremio" | "aio" | "nuvio"
 const FOCUS_RING =
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-orange focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950"
 
+/**
+ * Latin-script runs inside a translated sentence (brand/product names like
+ * "AIOMetadata", multiword instructions like "Poster URL Pattern"). Wrapped
+ * in `<bdi>` so each run is directionally self-determined under RTL
+ * paragraphs: without isolation, adjacent neutrals (spaces, the "←"/"→"
+ * arrow, a trailing period) can attach to the Hebrew runs and the Latin
+ * words reorder or drift. Lossless by construction — the parts rejoin to
+ * the exact translation, which tests assert.
+ */
+const LATIN_RUN_RE = /([A-Za-z0-9][A-Za-z0-9 _\-&|/{}()←→+]*[A-Za-z0-9)}\]←→+]|[A-Za-z0-9])/g
+
+function LatinRuns({ text }: { text: string }) {
+  const parts = text.split(LATIN_RUN_RE)
+  return (
+    <>
+      {parts.map((part, i) =>
+        // Odd indices are the captured Latin runs.
+        i % 2 === 1 ? <bdi key={i}>{part}</bdi> : <React.Fragment key={i}>{part}</React.Fragment>,
+      )}
+    </>
+  )
+}
+
 /** Riga template copiabile pulita ed essenziale. */
 function PatternRow({ value, copyLabel }: { value: string; copyLabel: string }) {
   const { t } = useT()
@@ -66,6 +89,9 @@ function PatternRow({ value, copyLabel }: { value: string; copyLabel: string }) 
         readOnly
         value={value}
         aria-label={copyLabel}
+        // Machine-readable URL template: always LTR (Latin URL + placeholders
+        // like {tmdb_id}) even when the document direction is RTL.
+        dir="ltr"
         className="w-full bg-transparent px-2.5 py-1 text-xs sm:text-sm font-mono text-zinc-200 truncate select-all focus:outline-none"
       />
       <button
@@ -88,7 +114,7 @@ function PatternRow({ value, copyLabel }: { value: string; copyLabel: string }) 
 function QrFigure({ svg, label, generatingLabel }: { svg: string; label: string; generatingLabel: string }) {
   if (!svg) {
     return (
-      <div className="w-[144px] h-[144px] bg-white/5 rounded-xl border border-white/10 flex items-center justify-center text-zinc-500 text-xs sm:text-sm">
+      <div dir="auto" className="w-[144px] h-[144px] bg-white/5 rounded-xl border border-white/10 flex items-center justify-center text-zinc-500 text-xs sm:text-sm">
         {generatingLabel}
       </div>
     )
@@ -313,10 +339,10 @@ export function InstallModal({
               <Download className="w-4.5 h-4.5" />
             </div>
             <div>
-              <h2 id="install-hub-title" className="text-base font-bold text-foreground tracking-tight leading-snug">
+              <h2 id="install-hub-title" dir="auto" className="text-base font-bold text-foreground tracking-tight leading-snug">
                 {t("ui.installHubTitle")}
               </h2>
-              <p className="text-xs sm:text-sm text-zinc-400 mt-0.5">{t("ui.installHubSub")}</p>
+              <p dir="auto" className="text-xs sm:text-sm text-zinc-400 mt-0.5">{t("ui.installHubSub")}</p>
             </div>
           </div>
           <button
@@ -372,7 +398,7 @@ export function InstallModal({
             <div className="space-y-4">
               {/* 1. Titolo "Cosa vuoi includere?" */}
               <div className="space-y-2">
-                <h3 id="install-mode-heading" className="text-xs sm:text-sm font-semibold text-zinc-200">
+                <h3 id="install-mode-heading" dir="auto" className="text-xs sm:text-sm font-semibold text-zinc-200">
                   {t("ui.installWhatInclude")}
                 </h3>
                 {/* 2. Selettore Completo / Cataloghi / Ricerca */}
@@ -403,7 +429,7 @@ export function InstallModal({
                   </button>
                 </div>
                 {/* 3. Una sola descrizione breve senza riquadro */}
-                <p className="text-xs sm:text-sm text-zinc-400 leading-relaxed pt-0.5">
+                <p dir="auto" className="text-xs sm:text-sm text-zinc-400 leading-relaxed pt-0.5">
                   {hubMode === "all" && t("ui.hubDescAll")}
                   {hubMode === "catalogs" && t("ui.hubDescCatalogs")}
                   {hubMode === "search" && t("ui.hubDescSearch")}
@@ -457,7 +483,7 @@ export function InstallModal({
                 </summary>
                 <div className="flex flex-col items-center gap-2.5 p-4 border-t border-white/5 bg-black/20">
                   <QrFigure svg={qrSvg} label={t("ui.qrAria")} generatingLabel={t("ui.qrGenerating")} />
-                  <p className="text-xs text-zinc-400 text-center">{t("ui.scanQr")}</p>
+                  <p dir="auto" className="text-xs text-zinc-400 text-center">{t("ui.scanQr")}</p>
                 </div>
               </details>
             </div>
@@ -472,8 +498,8 @@ export function InstallModal({
               hidden={activeTab !== "aio"}
             >
               <div className="space-y-4">
-                <p className="text-xs sm:text-sm text-zinc-400 leading-relaxed">
-                  {t("ui.installAioDesc")}
+                <p dir="auto" className="text-xs sm:text-sm text-zinc-400 leading-relaxed">
+                  <LatinRuns text={t("ui.installAioDesc")} />
                 </p>
 
                 {/* Campo URL con pulsante Copia link */}
@@ -483,7 +509,7 @@ export function InstallModal({
                 />
 
                 {/* Breve indicazione modalità corrente */}
-                <p className="text-xs sm:text-sm text-zinc-400 leading-relaxed">
+                <p dir="auto" className="text-xs sm:text-sm text-zinc-400 leading-relaxed">
                   <strong className="text-zinc-200">{t(linkMode === "follow" ? "ui.linkModeFollow" : "ui.linkModeFixed")}</strong>:{" "}
                   {t(linkMode === "follow" ? "ui.linkModeFollowSub" : "ui.linkModeFixedSub")}
                 </p>
@@ -536,8 +562,8 @@ export function InstallModal({
               hidden={activeTab !== "nuvio"}
             >
               <div className="space-y-4">
-                <p className="text-xs sm:text-sm text-zinc-400 leading-relaxed">
-                  {t("ui.installNuvioDesc")}
+                <p dir="auto" className="text-xs sm:text-sm text-zinc-400 leading-relaxed">
+                  <LatinRuns text={t("ui.installNuvioDesc")} />
                 </p>
 
                 {/* Campo URL con pulsante Copia link (formato Nuvio auto-shape) */}
@@ -547,7 +573,7 @@ export function InstallModal({
                 />
 
                 {/* Breve indicazione modalità corrente */}
-                <p className="text-xs sm:text-sm text-zinc-400 leading-relaxed">
+                <p dir="auto" className="text-xs sm:text-sm text-zinc-400 leading-relaxed">
                   <strong className="text-zinc-200">{t(linkMode === "follow" ? "ui.linkModeFollow" : "ui.linkModeFixed")}</strong>:{" "}
                   {t(linkMode === "follow" ? "ui.linkModeFollowSub" : "ui.linkModeFixedSub")}
                 </p>

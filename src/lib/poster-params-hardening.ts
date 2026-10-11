@@ -103,6 +103,7 @@ export const POSTER_CACHE_ALLOWLIST: ReadonlySet<string> = new Set([
   "tl", "bl", "bs", "rs", "xbs", "bfont", "sepstyle", "ts", "dv",
   // Funzionali (letti dalla route / poster-config, mai stile libero).
   "badges", "ranking", "bg", "by", "br", "bq", "qbs", "ribbon", "cr", "sep", "netLogo", "netPos", "netFollow",
+  "age", "agecountry",
   "pre", "side", "hideLogo", "tint", "be", "preview", "u", "user",
   "config", "c", "api_key", "mdblist_key", "simkl_key", "tvdb_key",
   "region", "country", "logoFit", "debug", "netgeo",
@@ -269,6 +270,17 @@ export function hardenPosterSearchParams(
     const v = (params.get("netPos") || "").toLowerCase()
     if (v === "top" || v === "auto") params.set("netPos", v)
     else params.delete("netPos")
+  }
+  // agecountry: territorio ISO-2 maiuscolo, GLOBAL esplicitamente escluso
+  // (non è un territorio di certification). Presente-ma-invalido → delete:
+  // il resolver cade sul default di spazio come con l'assenza (stesso
+  // render, un'unica chiave — mai avvelenamento). Solo in presets mode
+  // (preview WYSIWYG e istanze private passano intatte; la normalizzazione
+  // chiave in normalizePosterCacheParams copre tutti i modi).
+  if (params.has("agecountry")) {
+    const v = (params.get("agecountry") || "").trim().toUpperCase()
+    if (/^[A-Z]{2}$/.test(v) && v !== "GLOBAL") params.set("agecountry", v)
+    else params.delete("agecountry")
   }
   // sepstyle: enum finita ("column"/"bottom-bar"/"bottom-pills"), query
   // case-insensitive con canonical lowercase (stessa policy di

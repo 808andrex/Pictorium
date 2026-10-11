@@ -25,6 +25,13 @@ export interface StremioPosterParamsInput {
   readonly badgeYear?: boolean
   readonly badgeRating?: boolean
   readonly badgeQuality?: boolean
+  /** Badge testuale di classificazione per età: emesso come `age=1` solo
+   *  quando attivo (default OFF, cache stabile — con `config` sempre
+   *  esplicito come badges/ranking). */
+  readonly ageBadge?: boolean
+  /** Paese della classificazione età: emesso come `agecountry=XX` solo con
+   *  badge attivo (il server risolve query > config > defaults > "IT"). */
+  readonly ageCountry?: string | null
   /** Soglia minima tier qualità (emessa come `qmin` solo quando non-SD per non invalidare la cache). */
   readonly minQuality?: StreamQuality | null
   /** Riga rating custom provider (display). `false` emette `cr=0`. */
@@ -333,6 +340,23 @@ export function buildStremioPosterSearchParams(input: StremioPosterParamsInput):
   if (input.badgeYear === false) params.set("by", "0")
   if (input.badgeRating === false) params.set("br", "0")
   if (input.badgeQuality === false) params.set("bq", "0")
+  // Badge età (default OFF): con token stateless sempre esplicito (come
+  // badges/ranking sopra — altrimenti un master OFF del token vincerebbe su
+  // un default ON dello spazio); senza token solo `age=1` quando attivo così
+  // gli URL esistenti restano byte-identici. Il paese viaggia solo col badge
+  // attivo (canonico maiuscolo, validato di nuovo server-side).
+  const ageCountry = (input.ageCountry || "").trim().toUpperCase()
+  if (input.config) {
+    params.set("age", input.ageBadge ? "1" : "0")
+    if (input.ageBadge && /^[A-Z]{2}$/.test(ageCountry) && ageCountry !== "GLOBAL") {
+      params.set("agecountry", ageCountry)
+    }
+  } else if (input.ageBadge) {
+    params.set("age", "1")
+    if (/^[A-Z]{2}$/.test(ageCountry) && ageCountry !== "GLOBAL") {
+      params.set("agecountry", ageCountry)
+    }
+  }
   const mq = parseMinQuality(input.minQuality ?? null)
   if (mq && mq !== "SD") params.set("qmin", mq)
   if (input.customRatings === false) params.set("cr", "0")

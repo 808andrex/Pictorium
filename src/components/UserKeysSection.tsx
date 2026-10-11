@@ -108,6 +108,9 @@ function KeyRow({
           onChange={onChange ? (e) => onChange(e.target.value) : undefined}
           onFocus={onFocus}
           placeholder={placeholder}
+          // Server API key (tmdb/mdblist/tvdb/simkl/fanart): Latin machine
+          // string, LTR in both modes (the eye toggle flips type, never dir).
+          dir="ltr"
           className="flex-1 min-w-0 w-0 font-mono text-xs py-1.5 px-3 rounded-lg bg-black/40 border border-white/10 text-white placeholder-zinc-600 focus:outline-none focus:border-accent-orange/50"
         />
         <button

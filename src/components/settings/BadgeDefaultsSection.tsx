@@ -23,6 +23,7 @@ import { type ExtraBadgeStyle, type RankingBadgeStyle } from "@/lib/badge-styles
 import type { LandscapeServerDefaults } from "@/lib/server-defaults"
 import type { VisualPresetValues } from "@/lib/visual-presets"
 import { Toggle } from "@/components/Toggle"
+import { REGIONS } from "@/lib/regions"
 import { PosterLayoutSelector, PosterFreshScopeSelector } from "@/components/PosterLayoutSelector"
 import { BadgeStyleSelector } from "@/components/ui"
 import type { DefaultsPreviewFamily } from "@/lib/poster-url"
@@ -1069,6 +1070,8 @@ export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange }: {
                     onChange={(e) => ed.setDefaultCustomRatingEndpoint(e.target.value)}
                     placeholder="https://example.com/ratings/{imdbId}"
                     maxLength={500}
+                    // Machine-readable provider URL: always LTR even under RTL document.
+                    dir="ltr"
                     className="w-full text-xs font-mono py-1.5 px-2.5 rounded-lg bg-black/40 border border-white/10 text-foreground placeholder-zinc-600 focus:outline-none focus:border-teal-500/50"
                   />
                 </div>
@@ -1342,6 +1345,47 @@ export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange }: {
               label={t("ui.badgeQuality")}
             />
           </div>
+        </div>
+      </div>
+
+      {/* Age rating: small neutral text badge below the quality stack */}
+      <div {...famAttrs("quality")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-3 shadow-sm">
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-zinc-300 font-medium flex items-center gap-1.5">
+              <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+              {t("ui.ageBadge")}
+            </span>
+            <Toggle
+              value={ed.defaultAgeBadge}
+              onChange={(v) => {
+                ed.setDefaultAgeBadge(v)
+              }}
+              label={t("ui.ageBadge")}
+            />
+          </div>
+          <p className="text-[11px] text-zinc-500 leading-relaxed">{t("ui.ageBadgeHint")}</p>
+          {ed.defaultAgeBadge && (
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-zinc-400 font-medium text-[11px] ps-5">
+                {t("ui.ageBadgeCountry")}
+              </span>
+              <select
+                value={ed.defaultAgeCountry}
+                onChange={(e) => {
+                  ed.setDefaultAgeCountry(e.target.value)
+                }}
+                aria-label={t("ui.ageBadgeCountry")}
+                className="max-w-[190px] truncate px-2.5 py-1.5 rounded-lg text-[11px] font-medium bg-white/5 text-zinc-100 border border-white/10 hover:bg-white/10 focus:outline-none focus:border-teal-500/50 cursor-pointer"
+              >
+                {REGIONS.map((r) => (
+                  <option key={r.code} value={r.code} className="bg-zinc-900 text-zinc-100">
+                    {r.flag} {r.label} ({r.code})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
       </div>
 

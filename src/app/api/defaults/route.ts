@@ -82,6 +82,11 @@ const defaultsSchema = z.object({
   badgeYear: z.boolean().optional(),
   badgeRating: z.boolean().optional(),
   badgeQuality: z.boolean().optional(),
+  /** Badge età testuale (default OFF). Globale, nessun profilo landscape. */
+  ageBadge: z.boolean().optional(),
+  /** Paese classificazione età (default "IT"): validazione lasca, la
+   *  normalizzazione fail-closed avviene in risoluzione (poster-config). */
+  ageCountry: z.string().max(8).optional(),
   customRatings: z.boolean().optional(),
   // Endpoint provider custom rating (non-segreto; la chiave resta solo env).
   // Stessi vincoli del fetch: placeholder {imdbId}, http/https, no credenziali.

@@ -324,6 +324,8 @@ npm install --ignore-scripts && npm run build && npm start
 | `PICTORIUM_TINT_STRENGTH` | `20` | Scene tint strength for background blur (0–100). |
 | `PICTORIUM_TOP_SHADE` | `50` | Top linear shade over the upper 25% of the poster (0–100, 0 = off). |
 | `PICTORIUM_BADGE_QUALITY` | `1` | Show or hide video streaming resolution badges (4K/FHD). |
+| `PICTORIUM_AGE_BADGE` | `0` | Show or hide the regional age-certification text badge below the quality stack (original country label, no conversion). |
+| `PICTORIUM_AGE_COUNTRY` | `IT` | Certification country for the age badge (ISO-2, e.g. `US`, `FR`; `GLOBAL` is rejected). Independent from UI language and streaming region. |
 | `PICTORIUM_QUALITY_SOURCE` | `torrentio` | Streaming quality source: `torrentio` (with JustWatch fallback), `justwatch` (JW only), `none` (badge never shown, zero upstream). |
 | `PICTORIUM_NETWORK_LOGO` | `1` | Show or hide production network/studio logos. |
 | `PICTORIUM_PRE_RELEASE` | `0` | Dark veil + "Coming Soon" ribbon for movies not yet streaming. |

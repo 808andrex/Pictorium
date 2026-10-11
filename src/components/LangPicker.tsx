@@ -186,6 +186,8 @@ export function LangPicker({ onPickLang, onPickRegion, onDone, skipPin }: SetupW
                     setPinError(null)
                   }}
                   placeholder="••••"
+                  // Numeric setup PIN: LTR under RTL document.
+                  dir="ltr"
                   className="w-full text-center text-2xl font-mono tracking-[0.3em] py-3 px-4 rounded-2xl bg-black/40 border border-white/10 text-white placeholder-zinc-600 focus:outline-none focus:border-amber-500/50 transition-colors"
                 />
                 {pinError && (

@@ -245,6 +245,8 @@ export function AddonCatalogModal({ isOpen, onClose }: { isOpen: boolean; onClos
               placeholder={t("ui.addonUrlPh")}
               value={url}
               onChange={(e) => handleUrlChange(e.target.value)}
+              // Machine-readable manifest URL: always LTR even under RTL document.
+              dir="ltr"
               className="flex-1 px-3 py-2 bg-surface2 border border-white/10 rounded-xl text-xs text-foreground placeholder-zinc-500 focus:outline-none focus:border-accent-orange transition-colors"
               required
               autoFocus

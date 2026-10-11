@@ -757,6 +757,39 @@ export async function getReleaseDates(mediaType: "movie" | "tv", id: number, api
   return parseTmdb<TMDBReleaseDatesResponse>("release_dates", tmdbReleaseDatesSchema, data)
 }
 
+const tmdbContentRatingItemSchema = z.object({
+  iso_3166_1: z.string(),
+  rating: z.string().nullable().optional(),
+  descriptors: z.array(z.string()).optional(),
+}).passthrough()
+
+const tmdbContentRatingsSchema = z.object({
+  id: z.number().int().positive(),
+  results: z.array(tmdbContentRatingItemSchema).default([]),
+}).passthrough()
+
+export interface TMDBContentRatingsResponse {
+  id: number
+  results: {
+    iso_3166_1: string
+    rating?: string | null
+    descriptors?: string[]
+  }[]
+}
+
+/**
+ * Content rating per paese per le serie TV (`/tv/{id}/content_ratings`).
+ * Stesso layer condiviso di getReleaseDates (tmdbFetch: cache 5min a chiave
+ * neutra senza api_key, inflight coalescing, timeout combinato col signal
+ * esterno, 401 negative cache): chiave/cancellazione/caching allineati.
+ * Nessuna normalizzazione qui: la selezione deterministica per paese vive in
+ * `src/lib/certification.ts` (data layer puro, nessun fallback cross-country).
+ */
+export async function getContentRatings(tvId: number, apiKey?: string, signal?: AbortSignal, timeoutMs = 30000): Promise<TMDBContentRatingsResponse> {
+  const data = await tmdbFetch(`/tv/${tvId}/content_ratings`, apiKey, signal, timeoutMs)
+  return parseTmdb<TMDBContentRatingsResponse>("content_ratings", tmdbContentRatingsSchema, data)
+}
+
 export interface TMDBKeywordsResponse {
   id: number
   keywords?: { id: number; name: string }[]

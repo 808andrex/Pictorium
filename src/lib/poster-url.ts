@@ -44,6 +44,10 @@ interface BadgeParams {
   badgeYear?: boolean
   badgeRating?: boolean
   badgeQuality?: boolean
+  /** Badge età testuale: `false` emette `age=0` (default OFF). */
+  ageBadge?: boolean
+  /** Paese classificazione età: emesso come `agecountry=XX` (default "IT"). */
+  ageCountry?: string | null
   /** Riga rating custom provider (display). `false` emette `cr=0`. */
   customRatings?: boolean
   ratingSources?: string[]
@@ -251,6 +255,8 @@ export function buildUrlPattern(bp: BadgeParams & {
     badgeYear: bp.badgeYear,
     badgeRating: bp.badgeRating,
     badgeQuality: bp.badgeQuality,
+    ageBadge: bp.ageBadge ?? undefined,
+    ageCountry: bp.ageCountry ?? undefined,
     customRatings: bp.customRatings,
     ratingSources: bp.ratingSources,
     separateRatings: bp.separateRatings,
@@ -335,6 +341,11 @@ export function buildPreviewUrl(ps: PosterState, bp: BadgeParams, configToken?: 
   params.push(`by=${bp.badgeYear !== false ? "1" : "0"}`)
   params.push(`br=${bp.badgeRating !== false ? "1" : "0"}`)
   params.push(`bq=${bp.badgeQuality !== false ? "1" : "0"}`)
+  // Badge età sempre esplicito in preview (ON e OFF): senza, un default
+  // salvato ON scavalcerebbe il toggle editor (desync WYSIWYG, come `bq`).
+  params.push(`age=${bp.ageBadge ? "1" : "0"}`)
+  const ageCountry = (bp.ageCountry || "").trim().toUpperCase()
+  params.push(`agecountry=${/^[A-Z]{2}$/.test(ageCountry) && ageCountry !== "GLOBAL" ? ageCountry : "IT"}`)
   // cr SEMPRE esplicito in preview (ON e OFF): senza, un mapping salvato con
   // customRatings=false scavalcerebbe il toggle editor (desync WYSIWYG).
   params.push(`cr=${bp.customRatings === false ? "0" : "1"}`)
@@ -580,6 +591,10 @@ export interface DefaultsPreviewParams {
   defaultBadgeYear?: boolean
   defaultBadgeRating?: boolean
   defaultBadgeQuality?: boolean
+  /** Badge età testuale di default (default OFF): sempre esplicito in preview. */
+  defaultAgeBadge?: boolean
+  /** Paese classificazione età di default (default "IT"): sempre esplicito. */
+  defaultAgeCountry?: string | null
   defaultCustomRatings?: boolean
   defaultSeparateRatings?: boolean
   defaultSeparateRatingsStyle?: SeparateRatingsStyle | null
@@ -737,6 +752,11 @@ export function buildDefaultsPreviewUrl(bp: DefaultsPreviewParams): string {
   params.push(`by=${pick(land.badgeYear, bp.defaultBadgeYear) !== false ? "1" : "0"}`)
   params.push(`br=${pick(land.badgeRating, bp.defaultBadgeRating) !== false ? "1" : "0"}`)
   params.push(`bq=${pick(land.badgeQuality, bp.defaultBadgeQuality) !== false ? "1" : "0"}`)
+  // Badge età sempre esplicito in preview (toggle + paese non salvati devono
+  // mostrarsi subito, come `bq` sopra).
+  params.push(`age=${bp.defaultAgeBadge ? "1" : "0"}`)
+  const previewAgeCountry = (bp.defaultAgeCountry || "").trim().toUpperCase()
+  params.push(`agecountry=${/^[A-Z]{2}$/.test(previewAgeCountry) && previewAgeCountry !== "GLOBAL" ? previewAgeCountry : "IT"}`)
   params.push(`cr=${pick(land.customRatings, bp.defaultCustomRatings) === false ? "0" : "1"}`)
   params.push(`sep=${pick(land.separateRatings, bp.defaultSeparateRatings) ? "1" : "0"}`)
   // Stile normalizzato per formato effettivo (bar Orizzontale → pills).
