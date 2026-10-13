@@ -19,6 +19,9 @@
 /.next-e2e-probe/
 /.next-load/
 /.next-bench/
+/.next-shot/
+# distDir ".next-shot " (spazio finale): lo spazio va escapato o git lo rimuove.
+/.next-shot\ /
 /.next-tune/
 /out/
 

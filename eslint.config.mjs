@@ -40,6 +40,11 @@ const eslintConfig = defineConfig([
     ".next-load/**",
     // DistDir di bench-image-cache.mjs (stesso pattern di .next-load).
     ".next-bench/**",
+    // DistDir di riprese/screenshot (NEXT_DIST_DIR ".next-shot ", con spazio
+    // finale): output generato da Next/Turbopack come gli altri distDir sopra.
+    // Entrambe le varianti: ordinaria e con spazio finale effettivo.
+    ".next-shot/**",
+    ".next-shot /**",
     // Worktree Claude (.claude/worktrees/**): contengono una copia del repo con
     // il proprio .next generato, che altrimenti verrebbe lintato (868 errori
     // dai tipi generati da Next).

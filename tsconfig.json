@@ -52,7 +52,9 @@
     ".next-e2e-l1/types/**/*.ts",
     ".next-e2e-l1/dev/types/**/*.ts",
     ".next-e2e-l2/types/**/*.ts",
-    ".next-e2e-l2/dev/types/**/*.ts"
+    ".next-e2e-l2/dev/types/**/*.ts",
+    ".next-shot /types/**/*.ts",
+    ".next-shot /dev/types/**/*.ts"
   ],
   "exclude": [
     "node_modules",
