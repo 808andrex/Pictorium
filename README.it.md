@@ -318,7 +318,7 @@ npm install --ignore-scripts && npm run build && npm start
 | `PICTORIUM_RIBBON_ENABLED` | `1` | Nastro stile Netflix all'angolo (`1` = nastro all'angolo, `0` = badge classifica centrato). |
 | `PICTORIUM_BLUR_ENABLED` | `1` | Attiva o disattiva lo sfondo sfocato dei poster verticali. |
 | `PICTORIUM_TINT_STRENGTH` | `20` | Intensità della tinta di scena per lo sfondo sfocato (0–100). |
-| `PICTORIUM_TOP_SHADE` | `50` | Ombra lineare superiore sul primo 25% del poster (0–100, 0 = spenta). |
+| `PICTORIUM_TOP_SHADE` | `80` | Ombra lineare superiore sul primo 25% del poster (0–100, 0 = spenta). |
 | `PICTORIUM_BADGE_QUALITY` | `1` | Mostra/nasconde il badge di risoluzione video streaming (4K/FHD). |
 | `PICTORIUM_QUALITY_SOURCE` | `torrentio` | Sorgente qualità streaming: `torrentio` (con fallback JustWatch), `justwatch` (solo JW), `none` (badge mai mostrato, zero upstream). |
 | `PICTORIUM_NETWORK_LOGO` | `1` | Mostra/nasconde il logo del network o studio di produzione. |
@@ -371,7 +371,17 @@ npm run verify
 
 ## 📄 Licenza & Crediti
 
-* Rilasciato sotto licenza open-source **GNU Affero General Public License v3.0 (AGPL-3.0)**.
+* Rilasciato sotto licenza open-source **GNU Affero General Public License v3.0 (AGPL-3.0)** — vedi [LICENSE](LICENSE) e [NOTICE](NOTICE).
+* Copyright (C) 2025 **Eful97** — https://github.com/Eful97/Pictorium
+* Fork e derivati devono preservare l'attribuzione secondo [NOTICE](NOTICE) (AGPL-3.0 §5a/§7b): mantenere l'avviso di copyright, accreditare Pictorium di Eful97 con link e dichiarare in modo evidente cosa è stato cambiato e quando. Su GitHub, usare il pulsante **Fork** così la provenienza resta collegata.
 * Ispirato al progetto [erdb](https://github.com/realbestia1/erdb) di realbestia1.
-* Dati e metadati forniti da [TMDb](https://www.themoviedb.org/), [TheTVDB](https://thetvdb.com/) e [JustWatch](https://www.justwatch.com/).
-* Loghi network e studi per gentile concessione di [Wikimedia Commons](https://commons.wikimedia.org/).
+* Metadati e artwork: [TMDB](https://www.themoviedb.org/) (metadati/immagini), [TheTVDB](https://thetvdb.com/) (metadati/artwork — vedi [informazioni API](https://thetvdb.com/api-information)), [Fanart](https://fanart.tv/) (artwork) e [Wikidata](https://www.wikidata.org/) (dati premi, pubblicati in CC0 — vedi [Wikidata:Introduction](https://www.wikidata.org/wiki/Wikidata:Introduction)).
+* This product uses the TMDB API but is not endorsed or certified by TMDB. Per i requisiti di attribuzione vedi i [requisiti di attribuzione TMDB](https://developer.themoviedb.org/docs/faq).
+* Valutazioni e liste aggregate: [MDBList](https://mdblist.com/) (valutazioni/liste aggregate; provider a valle come IMDb, Rotten Tomatoes, Metacritic e Letterboxd compaiono tramite aggregatori — nessun permesso diretto dichiarato), [Trakt](https://trakt.tv/) (liste pubbliche), [SIMKL](https://simkl.com/) (valutazioni), [AniList](https://anilist.co/) e [Kitsu](https://kitsu.app/) (valutazioni anime), con fallback per il voto IMDb via [Cinemeta](https://v3-cinemeta.strem.io/). Le importazioni di liste Letterboxd passano via StremThru.
+* Disponibilità e classifiche: [JustWatch](https://www.justwatch.com/) (disponibilità streaming/classifiche) e [FlixPatrol](https://flixpatrol.com/) (classifiche, tramite i cataloghi [fp-crawler](https://github.com/0xConstant1/fp-crawler)).
+* Mappatura ID anime: [Fribb/anime-lists](https://github.com/Fribb/anime-lists) (snapshot compatto di ID/stagione incluso nel progetto, senza artwork) che fonde [anime-offline-database](https://github.com/cedya77/anime-offline-database) (licenza attuale ODbL 1.0 / DbCL 1.0; continuazione di [manami-project/anime-offline-database](https://github.com/manami-project/anime-offline-database)) e [Anime-Lists/anime-lists](https://github.com/Anime-Lists/anime-lists) (nessuna licenza identificata nelle fonti esaminate — non è un'affermazione che non esistano diritti). L'albero Fribb pinnato non dichiara una licenza e le revisioni esatte dei dati di origine non sono note, quindi i termini a monte e l'applicabilità della clausola share-alike restano oggetto di verifica — vedi [docs/anime-id-mapping.md](docs/anime-id-mapping.md#source-attribution-and-license-review). Supporto aggiuntivo di mappatura da [AniZip](https://api.ani.zip/).
+* L'integrazione CSV IMDb è un'importazione di liste fornita dall'utente, non uno scaricamento dei dataset non commerciali di IMDb.
+* I badge di network, studi, valutazioni e qualità usano asset locali inclusi nel progetto; solo la ricerca dei loghi di network/studi può inoltre ricorrere alle immagini TMDB (vedi [src/lib/network-svgs.ts](src/lib/network-svgs.ts)). Origini singole e note di licenza sono ancora da verificare — vedi il [registro di provenienza badge/loghi](docs/badge-logo-provenance.md); nulla qui afferma che siano di pubblico dominio o usati con permesso.
+* Font inclusi nell'app (Inter, Noto Sans Symbols 2, Rubik, Barlow Condensed, Oswald) sotto SIL Open Font License 1.1; i testi di licenza completi, corrispondenti alle versioni incluse e con gli avvisi di copyright, sono inclusi in [src/assets/fonts/licenses/](src/assets/fonts/licenses/) — vedi [src/assets/fonts/README.md](src/assets/fonts/README.md) per fonti, revisioni, hash SHA256 e prove di verifica di ogni famiglia.
+* Questo progetto è AGPL-3.0; dati, artwork, font e marchi esterni mantengono licenze e titolari propri. Tutti i marchi appartengono ai rispettivi titolari; non si dichiara alcuna approvazione da parte dei fornitori di dati.
+* Note aperte: la verifica di licenze/attribuzioni per singola fonte non è completa (in particolare asset locali di badge/loghi e termini a monte di Fribb/anime-lists). Questa sezione sarà aggiornata con l'avanzare della verifica; non afferma che la revisione legale sia conclusa.
