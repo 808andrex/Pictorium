@@ -781,6 +781,10 @@ test.describe("mobile toast header pointer", () => {
         // real mouse click on Save — no force, no keyboard workaround.
         await save.click()
         await expect(page.locator('[data-sonner-toast][data-type="success"]')).toBeVisible({ timeout: 15_000 })
+        // Mobile/tablet success keeps the global top-center section: the
+        // desktop bottom-right override must not leak below lg.
+        await expect(page.locator('[data-sonner-toaster][data-x-position="center"][data-y-position="top"] [data-sonner-toast][data-type="success"]')).toBeVisible({ timeout: 5_000 })
+        expect(await page.locator('[data-sonner-toaster][data-x-position="right"][data-y-position="bottom"] [data-sonner-toast][data-type="success"]').count()).toBe(0)
         // Settle the entry slide (see error probe above) before hit-testing.
         await page.waitForTimeout(600)
         // Steady-state probe: let the exiting error toast detach first —
@@ -798,6 +802,9 @@ test.describe("mobile toast header pointer", () => {
         console.log(`mobile-toast-success-probe-${vp.width} ${JSON.stringify(okProbe)}`)
         expect(okProbe.back.hit).toBe(true)
         expect(okProbe.save.hit).toBe(true)
+        // Evidence while VISIBLE (not after dismiss): success toast under the
+        // mobile header, top-center.
+        await page.screenshot({ path: `test-results/mobile-${vp.width}-save-success.png` })
         // Ordinary Back click while the success toast is still visible closes
         // the editor (the click executes, not just hit-tests).
         await back.click()
@@ -900,5 +907,67 @@ test.describe("mobile toast header pointer", () => {
     } finally {
       await page.unroute("**/api/defaults")
     }
+  })
+})
+
+test.describe("desktop save toast position", () => {
+  test("1280 IT: per-title save success toasts bottom-right (real POST, ordinary click)", async ({
+    page,
+  }) => {
+    // Desktop (>= lg, 1024px): the per-title save success toast renders in
+    // sonner's bottom-right section, while errors and the global Toaster
+    // stay top-center (settings footer retry guard unchanged).
+    await page.setViewportSize({ width: 1280, height: 900 })
+    await seed(page, "it")
+    await page.goto("/")
+    await expect(page.getByPlaceholder(/cerca/i)).toBeVisible({ timeout: 30_000 })
+    const search = page.getByPlaceholder(/cerca/i)
+    await search.fill("avatar")
+    await search.press("Enter")
+    await expect(page.getByText(/Avatar/i).first()).toBeVisible({ timeout: 20_000 })
+    await page.getByText(/Avatar/i).first().click()
+    await expect(page.getByRole("heading", { name: "Anteprima" })).toBeVisible({ timeout: 15_000 })
+    // Desktop: the sticky mobile header is lg:hidden, so the preview-column
+    // Save owns the write (visible filter, no force).
+    const save = page.getByRole("button", { name: "Salva Poster", exact: true }).filter({ visible: true }).first()
+    await expect(save).toBeVisible()
+    const postUrls: string[] = []
+    await page.route("**/api/mappings", async (route) => {
+      if (route.request().method() === "POST") postUrls.push(route.request().url())
+      await route.continue()
+    })
+    try {
+      await save.click()
+      const okToast = page.locator('[data-sonner-toaster][data-x-position="right"][data-y-position="bottom"] [data-sonner-toast][data-type="success"]')
+      await expect(okToast).toBeVisible({ timeout: 15_000 })
+      // Settle the entry slide before measuring (mirrors the mobile probes).
+      await page.waitForTimeout(600)
+      const probe = await okToast.evaluate((el) => {
+        const r = el.getBoundingClientRect()
+        return { x: r.x, y: r.y, w: r.width, h: r.height }
+      })
+      const vp = page.viewportSize()!
+      console.log(`desktop-save-toast-probe-1280 ${JSON.stringify({ probe, vp })}`)
+      // Bottom-right: right edge near the viewport right, below mid-height.
+      expect(probe.x).toBeGreaterThan(vp.width / 2)
+      expect(probe.x + probe.w).toBeGreaterThan(vp.width - 80)
+      expect(probe.y).toBeGreaterThan(vp.height / 2)
+      expect(probe.y + probe.h).toBeGreaterThan(vp.height - 160)
+      // No success toast leaks into the global top-center section on desktop.
+      expect(await page.locator('[data-sonner-toaster][data-x-position="center"][data-y-position="top"] [data-sonner-toast][data-type="success"]').count()).toBe(0)
+      // Evidence while VISIBLE (not after dismiss).
+      await page.screenshot({ path: "test-results/desktop-1280-save-success.png" })
+      expect(postUrls.length).toBeGreaterThanOrEqual(1)
+      for (const u of postUrls) expect(u).not.toContain("u=")
+    } finally {
+      await page.unroute("**/api/mappings")
+      // Per-title mapping cleanup: the shared fixture id must not leak into
+      // later specs (mirrors the mobile per-title test).
+      await page.evaluate(async () => {
+        await fetch("/api/mappings/movie:19995", { method: "DELETE" }).catch(() => null)
+      })
+    }
+    // Refill window for the shared defaults bucket before the next boot.
+    await page.waitForTimeout(1000)
   })
 })

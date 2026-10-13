@@ -171,6 +171,20 @@ export interface SaveConfigOverrides {
   silent?: boolean
 }
 
+/**
+ * Per-title save success toast position: bottom-right on desktop (>= lg),
+ * global top-center below lg. Evaluated at toast time (SSR-safe); the global
+ * Toaster stays top-center for errors and settings.
+ */
+function saveSuccessToastPosition(): "bottom-right" | undefined {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return undefined
+  try {
+    return window.matchMedia("(max-width: 1023.5px)").matches ? undefined : "bottom-right"
+  } catch {
+    return undefined
+  }
+}
+
 export function usePosterSave(deps: PosterSaveDeps) {
   const {
     selected, previewPoster, selectedLogo, setSelectedLogo, setPreviewPoster, setPreviewId,
@@ -603,9 +617,15 @@ export function usePosterSave(deps: PosterSaveDeps) {
       })
       setPreviewId(`${selected.media_type}:${selected.id}`)
       // Conferma pillola/goccia arancio (lo stile e l'animazione vengono dal CSS globale).
-      if (!overrides.silent) import("sonner").then(({ toast }) => toast.success(t("ui.saveSuccess"), {
-        duration: 2500,
-      }))
+      // Per-title success only: bottom-right on desktop via per-toast override;
+      // below lg it inherits the global top-center.
+      if (!overrides.silent) {
+        const successPosition = saveSuccessToastPosition()
+        import("sonner").then(({ toast }) => toast.success(t("ui.saveSuccess"), {
+          duration: 2500,
+          ...(successPosition ? { position: successPosition } : {}),
+        }))
+      }
       await loadMappings()
       return true
     } catch (error) {
@@ -657,8 +677,11 @@ export function usePosterSave(deps: PosterSaveDeps) {
         body: JSON.stringify(body),
       })
       setPreviewId(`${selected.media_type}:${selected.id}`)
+      // Same desktop override as the full save; top-center inherited below lg. Errors unchanged.
+      const coverSuccessPosition = saveSuccessToastPosition()
       import("sonner").then(({ toast }) => toast.success(t("ui.saveSuccess"), {
         duration: 2500,
+        ...(coverSuccessPosition ? { position: coverSuccessPosition } : {}),
       }))
       await loadMappings()
       return true

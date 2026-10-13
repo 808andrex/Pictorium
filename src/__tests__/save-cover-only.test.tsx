@@ -4,7 +4,7 @@
  * clears any previously frozen custom styling and the title inherits the
  * global defaults again. Full-save (saveConfig) behavior is unchanged.
  */
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { act, renderHook, render } from "@testing-library/react"
 import { usePosterSave } from "@/lib/usePosterSave"
 import { usePosterEditor, type PosterEditorCtx } from "@/lib/contexts/PosterEditorContext"
@@ -12,6 +12,9 @@ import { buildCoverOnlyPayload } from "@/lib/cover-only-save"
 import { logoDefaultScale } from "@/lib/logo-selection"
 import { createWrapper } from "@/__tests__/test-utils"
 import type { Mapping } from "@/lib/types"
+import { toast } from "sonner"
+
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() } }))
 
 const noop = () => {}
 
@@ -506,6 +509,128 @@ describe("saveCoverOnly hook", () => {
     expect(body.customBadge).toBe("Custom!")
     expect(body.showBadges).toBe(false)
     expect(body.accentColor).toBe("#ff0000")
+  })
+})
+
+describe("save success toast position (desktop bottom-right, mobile top-center)", () => {
+  const realMatchMedia = window.matchMedia
+  function stubViewport(isMobile: boolean) {
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      writable: true,
+      value: vi.fn(() => ({
+        matches: isMobile,
+        media: "(max-width: 1023.5px)",
+        onchange: null,
+        addListener: noop,
+        removeListener: noop,
+        addEventListener: noop,
+        removeEventListener: noop,
+        dispatchEvent: () => false,
+      })),
+    })
+  }
+  beforeEach(() => {
+    vi.mocked(toast.success).mockClear()
+    vi.mocked(toast.error).mockClear()
+  })
+  afterEach(() => {
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      writable: true,
+      value: realMatchMedia,
+    })
+  })
+
+  it("saveConfig desktop (>=1024): success toast bottom-right, duration 2500 unchanged", async () => {
+    stubViewport(false)
+    const { result } = renderHook(() => usePosterSave(baseDeps({
+      loadMappings: async () => {},
+    })))
+    let ok: unknown
+    await act(async () => {
+      ok = await result.current.saveConfig()
+    })
+    expect(ok).toBe(true)
+    await vi.waitFor(() => expect(toast.success).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(toast.success).mock.calls[0]?.[1]).toEqual({ duration: 2500, position: "bottom-right" })
+  })
+
+  it("saveConfig mobile/tablet (<1024, 390/768): success toast inherits global top-center (no override)", async () => {
+    stubViewport(true)
+    const { result } = renderHook(() => usePosterSave(baseDeps({
+      loadMappings: async () => {},
+    })))
+    let ok: unknown
+    await act(async () => {
+      ok = await result.current.saveConfig()
+    })
+    expect(ok).toBe(true)
+    await vi.waitFor(() => expect(toast.success).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(toast.success).mock.calls[0]?.[1]).toEqual({ duration: 2500 })
+    expect(vi.mocked(toast.success).mock.calls[0]?.[1]).not.toHaveProperty("position")
+  })
+
+  it("saveCoverOnly desktop (>=1024): success toast bottom-right", async () => {
+    stubViewport(false)
+    const { result } = renderHook(() => usePosterSave(baseDeps({
+      loadMappings: async () => {},
+    })))
+    let ok: unknown
+    await act(async () => {
+      ok = await result.current.saveCoverOnly()
+    })
+    expect(ok).toBe(true)
+    await vi.waitFor(() => expect(toast.success).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(toast.success).mock.calls[0]?.[1]).toEqual({ duration: 2500, position: "bottom-right" })
+  })
+
+  it("saveCoverOnly mobile/tablet (<1024): success toast inherits global top-center (no override)", async () => {
+    stubViewport(true)
+    const { result } = renderHook(() => usePosterSave(baseDeps({
+      loadMappings: async () => {},
+    })))
+    let ok: unknown
+    await act(async () => {
+      ok = await result.current.saveCoverOnly()
+    })
+    expect(ok).toBe(true)
+    await vi.waitFor(() => expect(toast.success).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(toast.success).mock.calls[0]?.[1]).toEqual({ duration: 2500 })
+    expect(vi.mocked(toast.success).mock.calls[0]?.[1]).not.toHaveProperty("position")
+  })
+
+  it("saveConfig error keeps the global position (message-only, no per-toast override)", async () => {
+    stubViewport(false)
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: false, status: 400, headers: { get: () => null }, text: async () => "bad", json: async () => ({}),
+    })))
+    const { result } = renderHook(() => usePosterSave(baseDeps({
+      loadMappings: async () => {},
+    })))
+    let ok: unknown = true
+    await act(async () => {
+      ok = await result.current.saveConfig()
+    })
+    expect(ok).toBe(false)
+    await vi.waitFor(() => expect(toast.error).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(toast.error).mock.calls[0]).toHaveLength(1)
+    expect(toast.success).not.toHaveBeenCalled()
+  })
+
+  it("saveConfig silent: no success toast on desktop", async () => {
+    stubViewport(false)
+    const { result } = renderHook(() => usePosterSave(baseDeps({
+      loadMappings: async () => {},
+    })))
+    let ok: unknown
+    await act(async () => {
+      ok = await result.current.saveConfig({ silent: true })
+    })
+    expect(ok).toBe(true)
+    await act(async () => {})
+    expect(toast.success).not.toHaveBeenCalled()
+    expect(toast.error).not.toHaveBeenCalled()
   })
 })
 
