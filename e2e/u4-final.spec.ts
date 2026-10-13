@@ -509,6 +509,18 @@ test.describe("U4 U2 contextual preview (defaults)", () => {
     // open burst already fired once and never refetches without an edit.
     let p = await waitPreview(seen, (u) => u.searchParams.get("sash") === "upcoming,rank,new,award,extra")
     expect(p.get("extra")).toBeNull()
+    // Settled-hydration gate (serial-sweep 429 proven): the staged session
+    // baselines on whatever outer it mounts with, and a RESET hydration that
+    // lands AFTER the first staged edit trips the by-design external-conflict
+    // guard (Save disabled, draft preserved). The RESET pill+ribbon URL can
+    // only fire post-hydration (factory previews carry rs=default), so this
+    // proves the baseline is RESET before anything stages — no edit, no
+    // timing change, just the file's own settled-preview pattern.
+    p = await waitPreview(
+      seen,
+      (u) => u.searchParams.get("shape") === "poster" && u.searchParams.get("rs") === "pill",
+    )
+    expect(p.get("ribbon")).toBe("1")
     await expect(chip).toContainText("Verticale")
     await expect(chip).toContainText("Anteprima completa")
 

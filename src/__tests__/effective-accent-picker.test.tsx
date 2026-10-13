@@ -374,8 +374,11 @@ describe("automatic picker shows the actually-painted hex (never the base)", () 
     expect(container.textContent).not.toContain(tEn("ui.accentAutoHint"))
   })
 
-  it("non-painting style: honest empty state, never the base as actual", async () => {
-    const { container } = renderHarness({})
+  it("non-painting style: honest empty state, base named as detected-unused, never as painted", async () => {
+    const writes: Array<string | null> = []
+    const { container } = renderHarness({ onAccent: (v) => writes.push(v) })
+    // Current-server none fixture: the gradient side is EXPLICITLY
+    // not-painted (never omitted to hide the unknown-gradient branch).
     publishHeader(PREVIEW_URL, "ready", {
       genreHex: null,
       rankHex: null,
@@ -384,12 +387,203 @@ describe("automatic picker shows the actually-painted hex (never the base)", () 
       topType: null,
       provGenre: "not-painted",
       provRank: "not-painted",
+      gradientHex: null,
+      gradientPaints: false,
+      provGradient: "not-painted",
     })
-    await waitFor(() => expect(container.textContent).toContain(tEn("ui.accentAutoNone")))
-    // Placeholder, disabled — the legacy base is nowhere claimed.
+    // Single concise readout: the canonical base is named as
+    // detected-but-unused by this style — never as the painted value and
+    // never stacked with the none line.
+    await waitFor(() =>
+      expect(container.textContent).toContain(tEn("ui.accentAutoDetectedUnused", { hex: BASE })),
+    )
+    expect(container.textContent).not.toContain(tEn("ui.accentAutoNone"))
+    // Placeholder, disabled — the picker never carries the base as actual.
     expect(nativePicker(container).disabled).toBe(true)
     expect(nativePicker(container).value).toBe("#555555")
-    expect(container.textContent).not.toContain(BASE)
+    // Display NEVER writes canonical: no setAccentColor call from the auto path.
+    expect(writes).toEqual([])
+  })
+
+  it("non-painting style with no detected base: single honest line, no detected claim", async () => {
+    const { container } = renderHarness({ auto: null })
+    // Current-server none fixture: explicit gradient not-painted like above.
+    publishHeader(PREVIEW_URL, "ready", {
+      genreHex: null,
+      rankHex: null,
+      genrePaints: false,
+      topPaints: false,
+      topType: null,
+      provGenre: "not-painted",
+      provRank: "not-painted",
+      gradientHex: null,
+      gradientPaints: false,
+      provGradient: "not-painted",
+    })
+    await waitFor(() => expect(container.textContent).toContain(tEn("ui.accentAutoNone")))
+    expect(nativePicker(container).disabled).toBe(true)
+    expect(nativePicker(container).value).toBe("#555555")
+  })
+})
+
+describe("gradient-aware automatic picker (gradient counts as painted)", () => {
+  const GRADIENT_HEX = "#2a9d8f"
+
+  function gradientOnlyMeta(): EffectiveAccentMeta {
+    return {
+      genreHex: null,
+      rankHex: null,
+      genrePaints: false,
+      topPaints: false,
+      topType: null,
+      provGenre: "not-painted",
+      provRank: "not-painted",
+      gradientHex: GRADIENT_HEX,
+      gradientPaints: true,
+      provGradient: "extracted",
+    }
+  }
+
+  it("gradient-only auto: enabled picker with the actual gradient hex, never unused", async () => {
+    const writes: Array<string | null> = []
+    const { container } = renderHarness({ onAccent: (v) => writes.push(v) })
+    publishHeader(PREVIEW_URL, "ready", gradientOnlyMeta())
+    // The automatic color is ACTIVE (the gradient paints it): the picker
+    // carries the actual rendered gradient hex — never the placeholder.
+    await waitFor(() => expect(nativePicker(container).value).toBe(GRADIENT_HEX))
+    expect(nativePicker(container).disabled).toBe(false)
+    // Honest single readout: the gradient zone is named, and the style is
+    // never reported as painting nothing while the gradient uses the color.
+    expect(container.textContent).toContain(tEn("ui.accentAutoGradient", { hex: GRADIENT_HEX }))
+    expect(container.textContent).not.toContain(tEn("ui.accentAutoNone"))
+    expect(container.textContent).not.toContain(
+      tEn("ui.accentAutoDetectedUnused", { hex: BASE }),
+    )
+    // Display NEVER writes canonical: no setAccentColor call from the auto path.
+    expect(writes).toEqual([])
+  })
+
+  it("badge + gradient same hex: one concise readout, picker shows the shared hex", async () => {
+    const { container } = renderHarness({})
+    publishHeader(PREVIEW_URL, "ready", {
+      genreHex: GENRE_HEX,
+      rankHex: null,
+      genrePaints: true,
+      topPaints: false,
+      topType: null,
+      provGenre: "extracted",
+      provRank: "not-painted",
+      gradientHex: GENRE_HEX,
+      gradientPaints: true,
+      provGradient: "extracted",
+    })
+    await waitFor(() => expect(nativePicker(container).value).toBe(GENRE_HEX))
+    expect(container.textContent).toContain(tEn("ui.accentAutoBottom", { hex: GENRE_HEX }))
+    // One concise readout: the shared hex is named once (bottom line); the
+    // gradient zone adds no second line for the same hex.
+    expect(container.textContent).not.toContain(tEn("ui.accentAutoGradient", { hex: GENRE_HEX }))
+    expect(container.textContent).not.toContain(tEn("ui.accentAutoNone"))
+    expect(container.textContent).not.toContain(tEn("ui.accentAutoDetectedUnused", { hex: BASE }))
+  })
+
+  it("badge + gradient different hexes: both zones distinguished honestly", async () => {
+    const { container } = renderHarness({})
+    publishHeader(PREVIEW_URL, "ready", {
+      genreHex: GENRE_HEX,
+      rankHex: null,
+      genrePaints: true,
+      topPaints: false,
+      topType: null,
+      provGenre: "extracted",
+      provRank: "not-painted",
+      gradientHex: GRADIENT_HEX,
+      gradientPaints: true,
+      provGradient: "extracted",
+    })
+    // Picker keeps the bottom-zone reference by locality; the gradient zone
+    // is named with its own actual hex (never the detected base as painted).
+    await waitFor(() => expect(nativePicker(container).value).toBe(GENRE_HEX))
+    expect(container.textContent).toContain(tEn("ui.accentAutoBottom", { hex: GENRE_HEX }))
+    expect(container.textContent).toContain(tEn("ui.accentAutoGradient", { hex: GRADIENT_HEX }))
+    expect(container.textContent).not.toContain(tEn("ui.accentAutoNone"))
+    expect(container.textContent).not.toContain(tEn("ui.accentAutoDetectedUnused", { hex: BASE }))
+  })
+
+  it("transparent/disabled gradient never counts as painted (honest empty state kept)", async () => {
+    const writes: Array<string | null> = []
+    const { container } = renderHarness({ onAccent: (v) => writes.push(v) })
+    publishHeader(PREVIEW_URL, "ready", {
+      genreHex: null,
+      rankHex: null,
+      genrePaints: false,
+      topPaints: false,
+      topType: null,
+      provGenre: "not-painted",
+      provRank: "not-painted",
+      gradientHex: null,
+      gradientPaints: false,
+      provGradient: "not-painted",
+    })
+    // Single concise readout with a detected base: detected-but-unused only.
+    await waitFor(() =>
+      expect(container.textContent).toContain(tEn("ui.accentAutoDetectedUnused", { hex: BASE })),
+    )
+    // One concise readout: the none line never stacks with detected-unused.
+    expect(container.textContent).not.toContain(tEn("ui.accentAutoNone"))
+    expect(nativePicker(container).disabled).toBe(true)
+    expect(nativePicker(container).value).toBe("#555555")
+    expect(writes).toEqual([])
+  })
+
+  it("legacy record without gradient fields: honest unavailable, never unused", async () => {
+    const writes: Array<string | null> = []
+    const { container } = renderHarness({ onAccent: (v) => writes.push(v) })
+    // Legacy sanitized shape: gradient entry absent (provGradient unknown
+    // after sanitize) — gradient usage is UNKNOWN, so the style must not be
+    // reported as painting nothing nor as detected-but-unused.
+    publishHeader(PREVIEW_URL, "ready", {
+      genreHex: null,
+      rankHex: null,
+      genrePaints: false,
+      topPaints: false,
+      topType: null,
+      provGenre: "not-painted",
+      provRank: "not-painted",
+    } as EffectiveAccentMeta)
+    await waitFor(() => expect(container.textContent).toContain(tEn("ui.accentAutoUnavailable")))
+    expect(container.textContent).not.toContain(tEn("ui.accentAutoNone"))
+    expect(container.textContent).not.toContain(
+      tEn("ui.accentAutoDetectedUnused", { hex: BASE }),
+    )
+    // Placeholder, disabled — the picker never carries the base as actual,
+    // and display NEVER writes canonical.
+    expect(nativePicker(container).disabled).toBe(true)
+    expect(nativePicker(container).value).toBe("#555555")
+    expect(writes).toEqual([])
+  })
+
+  it("unknown badge provenance with no painted hex: honest unavailable, never unused", async () => {
+    const { container } = renderHarness({})
+    // Malformed paint claims coerce to unknown provenance at the sanitizer;
+    // the component must treat that as unknown usage, not confirmed empty.
+    publishHeader(PREVIEW_URL, "ready", {
+      genreHex: null,
+      rankHex: null,
+      genrePaints: true,
+      topPaints: false,
+      topType: null,
+      provGenre: "unknown",
+      provRank: "not-painted",
+      gradientHex: null,
+      gradientPaints: false,
+      provGradient: "not-painted",
+    })
+    await waitFor(() => expect(container.textContent).toContain(tEn("ui.accentAutoUnavailable")))
+    expect(container.textContent).not.toContain(tEn("ui.accentAutoNone"))
+    expect(container.textContent).not.toContain(
+      tEn("ui.accentAutoDetectedUnused", { hex: BASE }),
+    )
+    expect(nativePicker(container).disabled).toBe(true)
   })
 })
 

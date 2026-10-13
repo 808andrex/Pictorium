@@ -84,13 +84,14 @@ describe("per-title unified presentation (BadgeControls)", () => {
     ).toHaveLength(1)
   })
 
-  it("presentation group lives in the classifica card between the top badge and the extra style", () => {
+  it("presentation group lives in the ranking family between the panel header and the extra style", () => {
     renderEditor()
     const group = screen.getByTestId("ranking-presentation")
-    // Historic first-card header (visibility & badge position) comes before.
+    // Panel header (per-title scope, never a badge family) comes before.
     expect(precedes(screen.getByText("ui.badgeSectionPoster"), group)).toBe(true)
-    // Custom-badge/classifica card header comes before the group…
-    expect(precedes(screen.getByText("ui.customBadge"), group)).toBe(true)
+    // Approved family order (genre → ranking → extra → quality → common):
+    // the ranking group now precedes the custom-badge/extra family (never mixed)…
+    expect(precedes(group, screen.getByText("ui.customBadge"))).toBe(true)
     // …and the extra style block comes after (single exclusive rank+layout).
     expect(precedes(group, screen.getByText("ui.extraBadgeStyle"))).toBe(true)
   })

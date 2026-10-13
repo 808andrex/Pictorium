@@ -36,6 +36,9 @@ const META: EffectiveAccentMeta = {
   topType: "extra",
   provGenre: "extracted",
   provRank: "extracted",
+  gradientHex: "#3a7d8c",
+  gradientPaints: true,
+  provGradient: "extracted",
 }
 
 const NOT_PAINTED: EffectiveAccentMeta = {
@@ -46,6 +49,9 @@ const NOT_PAINTED: EffectiveAccentMeta = {
   topType: null,
   provGenre: "not-painted",
   provRank: "not-painted",
+  gradientHex: null,
+  gradientPaints: false,
+  provGradient: "not-painted",
 }
 
 beforeEach(() => {
@@ -122,6 +128,61 @@ describe("sanitizeEffectiveAccentMeta", () => {
     expect(clean!.provGenre).toBe("unknown")
     expect(clean!.topType).toBeNull()
     expect(clean!.genrePaints).toBe(false)
+  })
+
+  it("legacy records without gradient fields read as unknown gradient (never painted)", () => {
+    const legacy = {
+      genreHex: null,
+      rankHex: null,
+      genrePaints: false,
+      topPaints: false,
+      topType: null,
+      provGenre: "not-painted",
+      provRank: "not-painted",
+    }
+    const clean = sanitizeEffectiveAccentMeta(legacy)
+    expect(clean!.gradientHex).toBeNull()
+    expect(clean!.gradientPaints).toBe(false)
+    // Honest unknown: an old header cannot say whether the gradient painted.
+    expect(clean!.provGradient).toBe("unknown")
+    // Badge sides keep their explicit honest state.
+    expect(clean!.provGenre).toBe("not-painted")
+    expect(clean!.provRank).toBe("not-painted")
+  })
+
+  it("round-trips the additive gradient entry and prunes secret-shaped gradient keys", () => {
+    const clean = sanitizeEffectiveAccentMeta({
+      ...META,
+      bandRGB: { r: 1, g: 2, b: 3 },
+    })
+    expect(clean).toEqual(META)
+    const painted = sanitizeEffectiveAccentMeta({
+      genreHex: null,
+      rankHex: null,
+      genrePaints: false,
+      topPaints: false,
+      topType: null,
+      provGenre: "not-painted",
+      provRank: "not-painted",
+      gradientHex: "#2a9d8f",
+      gradientPaints: true,
+      provGradient: "extracted",
+    })
+    expect(painted!.gradientHex).toBe("#2a9d8f")
+    expect(painted!.gradientPaints).toBe(true)
+    expect(painted!.provGradient).toBe("extracted")
+  })
+
+  it("drops gradient painted claims without a valid hex (never a guessed color)", () => {
+    const clean = sanitizeEffectiveAccentMeta({
+      ...META,
+      gradientHex: "red",
+      gradientPaints: true,
+    })
+    expect(clean!.gradientHex).toBeNull()
+    expect(clean!.provGradient).toBe("unknown")
+    // Badge sides survive the gradient coercion untouched.
+    expect(clean!.genreHex).toBe("#4e8087")
   })
 })
 

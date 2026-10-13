@@ -269,6 +269,24 @@ input[type="range"]::-moz-range-thumb:active {
   }
 }
 
+/* Da lg in su, SOLO mentre il dialog settings desktop è aperto, il toast
+   bottom-right scavalca il footer del dialog (Save/Sincronizzato) anche
+   durante la corsa d'ingresso: il pannello desktop è h-[88dvh] centrato →
+   margine inferiore 6dvh; il centro del Save sta a ~78px dal fondo pannello
+   (py-3 + h-11), la pillola standard è alta 44px e l'ingresso sonner viaggia
+   di un'altezza toast da sotto. 6dvh + 86px tiene il volo d'ingresso sopra il
+   centro del Save e la sosta 28px sopra il footer a ogni altezza viewport.
+   Lo scope `body:has(.settings-dialog-panel)` (il pannello esiste nel DOM
+   solo a settings aperte, solo nel layout desktop) riporta il toast ordinario
+   a settings chiuse al default sonner vicino al bordo (--offset-bottom, 24px:
+   ingresso dal bordo, non a mezz'aria). !important vince sulla var inline di
+   sonner. Sotto lg il toaster è top-center: regola inerte su mobile. */
+@media (min-width: 1024px) {
+  body:has(.settings-dialog-panel) [data-sonner-toaster][data-y-position="bottom"] {
+    --offset-bottom: calc(6dvh + 86px) !important;
+  }
+}
+
 /* Capsula a Pillola fluttuante dinamica (larghezza adattiva al contenuto) */
 [data-sonner-toast] {
   width: fit-content !important;
@@ -2255,6 +2273,43 @@ button.status-version:hover {
   border-color: rgba(255, 255, 255, 0.18);
 }
 
+/* Attribuzione TMDB: regione "Credits" inline a SINISTRA della stessa strip
+   (sinistra: stato + logo/notice · destra: spazi/versione), sempre
+   visibile. La notice esatta (TOS TMDB) va mostrata su ogni viewport, quindi
+   qui non si usa nessuna utility `hidden`; il testo va a capo (wrap) invece di
+   troncare. Niente seconda barra: nessuna base piena né divisore orizzontale —
+   su viewport strette la regione va a capo dentro la stessa strip. */
+.status-credits {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.status-credits-logo {
+  flex: none;
+  width: auto;
+  height: 20px;
+}
+
+.status-credits-notice {
+  min-width: 0;
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: #71717a;
+  letter-spacing: 0.01em;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.status-credits-notice:hover {
+  color: #a1a1aa;
+  text-decoration: underline;
+}
+
 .changelog-dot {
   width: 7px;
   height: 7px;
@@ -2338,12 +2393,25 @@ button.status-version:hover {
   .status-strip {
     justify-content: space-between;
     text-align: center;
-    /* Riga singola compatta su mobile. */
+    /* Riga di stato compatta su mobile; la regione Credits va a capo dentro la
+       stessa strip (senza divisore) e la notice TMDB si avvolge invece di
+       traboccare. */
     flex-direction: row;
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
     border-radius: 9999px;
     gap: 0.5rem;
     padding: 0.4rem 0.75rem;
+  }
+
+  .status-credits {
+    flex-basis: 100%;
+    order: 3;
+    justify-content: center;
+    text-align: center;
+  }
+
+  .status-credits-notice {
+    font-size: 10px;
   }
 
   .status-left {
@@ -2695,7 +2763,7 @@ button.status-version:hover {
   color: var(--color-accent-orange);
   filter: none;
 }
-[data-theme="light"] :is(.header-tagline, .feature-card-desc, .status-meta) {
+[data-theme="light"] :is(.header-tagline, .feature-card-desc, .status-meta, .status-credits-notice) {
   color: var(--color-muted);
 }
 [data-theme="light"] :is(.hero-kicker, .stat-pill, .feature-card-title, .status-pill, .control-label, .tab-chip, .counter-badge, .btn-secondary, .segmented-option:hover, .top-action-button:not(.top-action-button-primary):not(.top-action-button-accent)) {

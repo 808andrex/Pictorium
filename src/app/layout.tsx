@@ -1,7 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import { Toaster } from "sonner";
-import { Check, Info, AlertTriangle, AlertCircle } from "lucide-react";
+import { ResponsiveToaster } from "@/components/ResponsiveToaster";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -74,25 +73,7 @@ export default function RootLayout({
             Skip to main content
           </a>
           <main id="main-content">{children}</main>
-          <Toaster
-            // Top-center: a bottom-right toast overlays the settings footer
-            // Save after a failed save (the dialog layer sits below the
-            // toaster layer), so pointer users cannot click retry. Top-center
-            // clears every footer while keeping toast actions/dismiss intact.
-            position="top-center"
-            // Sotto lg l'offset sotto-header vive in globals.css (regola
-            // canonica unica): qui restano solo position/duration, con il
-            // default desktop invariato.
-            duration={3000}
-            closeButton={false}
-            richColors={false}
-            icons={{
-              success: <Check className="w-3.5 h-3.5 stroke-[2.5]" />,
-              info: <Info className="w-3.5 h-3.5 stroke-[2.5]" />,
-              warning: <AlertTriangle className="w-3.5 h-3.5 stroke-[2.5]" />,
-              error: <AlertCircle className="w-3.5 h-3.5 stroke-[2.5]" />,
-            }}
-          />
+          <ResponsiveToaster />
         </ThemeProvider>
       </body>
     </html>

@@ -77,18 +77,31 @@ export function HomeStatusStrip() {
           <span className="pulse-dot" aria-hidden="true" />
           <span>{t("ui.statusTitle")}</span>
         </Link>
-        <span className="status-divider hidden sm:inline-block" aria-hidden="true" />
-        <span className="status-meta hidden sm:inline" aria-hidden="true">{t("ui.statusMeta")}</span>
-        <span className="status-divider hidden sm:inline-block" aria-hidden="true" />
+      </div>
+      {/* TMDB credit: local copy of the official TMDB logo (historic brand-page
+          approved variant, qualified in docs/tmdb-attribution-asset.md) plus the
+          exact notice, always visible (mobile included) inside a "Credits" region.
+          Single-strip layout: this section sits inline LEFT, immediately after
+          the status controls, while the spaces/version controls stay right — no
+          second bar, no divider. It may wrap below within the same strip on narrow
+          viewports, still without a separator. */}
+      <section className="status-credits" aria-label="Credits">
+        <img
+          src="/attribution/tmdb/blue_square_2-d537fb228cf3ded904ef09b136fe3fec72548ebc1fea3fbbd1ad9e36364db38b.svg"
+          alt="The Movie Database (TMDB)"
+          width={18504}
+          height={13340}
+          className="status-credits-logo"
+        />
         <a
-          className="status-meta hidden sm:inline"
+          className="status-credits-notice"
           href="https://www.themoviedb.org/"
           target="_blank"
           rel="noreferrer"
         >
           This product uses the TMDB API but is not endorsed or certified by TMDB.
         </a>
-      </div>
+      </section>
       <div className="status-right">
         {spaces !== null && (
           <div

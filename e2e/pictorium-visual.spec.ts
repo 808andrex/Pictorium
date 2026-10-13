@@ -1,5 +1,6 @@
-import { test, expect, type Page, type TestInfo } from "@playwright/test"
+import { test, expect, type APIRequestContext, type Page, type TestInfo } from "@playwright/test"
 import { writeFile } from "node:fs/promises"
+import { withDefaultsRetry } from "./defaults-retry"
 
 // I test poster girano SENZA TMDB_API_KEY: le chiamate esterne (TMDB, immagini,
 // JustWatch, Wikidata, IMDb) vengono servite dal mock server locale
@@ -14,6 +15,44 @@ const POSTER_PATH = "/mocked/avatar.jpg"
 function posterUrl(params: Record<string, string>, mediaType = MEDIA_TYPE, id: number | string = MOVIE_TMDB): string {
   const qs = new URLSearchParams({ ...params, poster: POSTER_PATH, preview: "1" })
   return `/api/poster/${mediaType}/${id}?${qs.toString()}`
+}
+
+/**
+ * Shared-live-defaults access for the request-only poster tests below, via
+ * the existing 429-tolerant retry helper (same rule as every spec's inline
+ * PUT/GET: only 429 is retried with the server's Retry-After, anything else
+ * throws with status details — a failed arrange/restore never silently
+ * becomes a pass).
+ */
+async function readDefaultsJson(request: APIRequestContext, label: string): Promise<Record<string, unknown>> {
+  let out: Record<string, unknown> | undefined
+  await withDefaultsRetry(
+    async () => {
+      const res = await request.get("/api/defaults")
+      const text = await res.text()
+      if (res.ok()) {
+        try {
+          out = JSON.parse(text) as Record<string, unknown>
+        } catch {
+          return { ok: false, status: res.status(), body: text.slice(0, 200), retryAfter: res.headers()["retry-after"] ?? null }
+        }
+      }
+      return { ok: res.ok(), status: res.status(), body: text.slice(0, 200), retryAfter: res.headers()["retry-after"] ?? null }
+    },
+    { label },
+  )
+  if (!out) throw new Error(`${label}: empty defaults payload`)
+  return out
+}
+
+async function writeDefaultsJson(request: APIRequestContext, label: string, payload: Record<string, unknown>): Promise<void> {
+  await withDefaultsRetry(
+    async () => {
+      const res = await request.put("/api/defaults", { data: payload })
+      return { ok: res.ok(), status: res.status(), body: (await res.text()).slice(0, 200), retryAfter: res.headers()["retry-after"] ?? null }
+    },
+    { label },
+  )
 }
 
 // Helper: render a poster URL in the page and return a locator for the <img>
@@ -466,7 +505,19 @@ test.describe("poster API — functional", () => {
   test("top shade (ts) — default 80, off needs explicit ts=0", async ({ request }, testInfo) => {
     // Default 80: omitted and explicit ts=80 render byte-identical; ts=0 (off) differs.
     // Legacy ts=50 stays a valid mid shade, byte-different from both 80 and 0 (stored value preserved, not automigrated).
-    const base = { genreName: "Action", voteAverage: "7.8", badges: "1", ranking: "0" }
+    // Isolation (serial-run proven 235/236): an omitted ts resolves the shared
+    // live /api/defaults topShade (poster-config chain query > mapping >
+    // config > esd > 80), so inheriting topShade=50 from the
+    // badge-format-defaults FACTORY_RESTORE would render "omitted" as 50 and
+    // fail the 80 identity below. Arrange the 80 precondition explicitly and
+    // restore the previously stored value afterwards — no production-code
+    // change, no factory flips, no assertion weakening.
+    const original = await readDefaultsJson(request, "ts-shade: read original defaults")
+    const hadTopShade = "topShade" in original
+    const originalTopShade = original.topShade
+    try {
+      await writeDefaultsJson(request, "ts-shade: arrange topShade 80", { topShade: 80 })
+      const base = { genreName: "Action", voteAverage: "7.8", badges: "1", ranking: "0" }
     const defRes = await request.get(posterUrl(base))
     expect(defRes.ok()).toBeTruthy()
     const defBuffer = await defRes.body()
@@ -490,6 +541,16 @@ test.describe("poster API — functional", () => {
     const fiftyRepeatRes = await request.get(posterUrl({ ...base, ts: "50" }))
     expect(fiftyRepeatRes.ok()).toBeTruthy()
     expect(Buffer.compare(fiftyBuffer, await fiftyRepeatRes.body())).toBe(0)
+    // Live-default semantics (isolation proof, same byte comparison, no
+    // tolerance): with 50 stored, omitted tracks the stored value — this is
+    // the serial-run state the arrange above neutralizes.
+    await writeDefaultsJson(request, "ts-shade: arrange topShade 50 (isolation proof)", { topShade: 50 })
+    const storedRes = await request.get(posterUrl(base))
+    expect(storedRes.ok()).toBeTruthy()
+    const storedBuffer = await storedRes.body()
+    expect(storedBuffer.length).toBeGreaterThan(1000)
+    expect(Buffer.compare(storedBuffer, fiftyBuffer)).toBe(0)
+    expect(Buffer.compare(storedBuffer, eightyBuffer)).not.toBe(0)
     const attachPng = async (info: TestInfo, name: string, body: Buffer, contentType: string) => {
       const file = info.outputPath(name)
       await writeFile(file, body)
@@ -499,6 +560,15 @@ test.describe("poster API — functional", () => {
     await attachPng(testInfo, "ts-explicit80.png", eightyBuffer, eightyRes.headers()["content-type"] ?? "image/png")
     await attachPng(testInfo, "ts-explicit50-legacy.png", fiftyBuffer, fiftyRes.headers()["content-type"] ?? "image/png")
     await attachPng(testInfo, "ts-off-explicit0.png", offBuffer, offRes.headers()["content-type"] ?? "image/png")
+    } finally {
+      // Restore the pre-test stored value so later specs inherit exactly what
+      // this test found. The PUT merge cannot delete keys: when topShade was
+      // absent, the 80 arrange is semantically identical to the hardcoded
+      // fallback, so it is safely left (re-asserted) in place.
+      await writeDefaultsJson(request, "ts-shade: restore original defaults", { topShade: (hadTopShade ? originalTopShade : 80) as number })
+    }
+    const restored = await readDefaultsJson(request, "ts-shade: verify restore")
+    expect(restored.topShade).toBe(hadTopShade ? originalTopShade : 80)
   })
 
   test("all badges off (clean poster) — valid image", async ({ request }) => {

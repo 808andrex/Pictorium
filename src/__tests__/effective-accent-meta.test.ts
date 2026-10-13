@@ -470,6 +470,133 @@ describe("onAccentMeta: manual, fallback, glass, non-consuming styles", () => {
   })
 })
 
+describe("onAccentMeta: gradient (blur tint) entry from the actual render decision", () => {
+  it("blur on + non-consuming badges: gradient paints the exact blur tint, badges stay not-painted", async () => {
+    const scene = await mockScene(STD_W, STD_H, { r: 232, g: 200, b: 60 })
+    const { png, metas } = await renderWithMeta(
+      baseInput({
+        posterBuf: scene,
+        badgeStyle: "shadow",
+        rankingBadgeStyle: "default",
+        queryExtra: null,
+        rankingEnabled: false,
+        blurEnabled: true,
+        blurHeight: 50,
+        blurIntensity: 20,
+        blurFade: 50,
+        blurDarkness: 30,
+        tintStrength: 20,
+        analysisKey: "eff-gradient-only",
+      }),
+    )
+    expect(metas).toHaveLength(1)
+    const meta = metas[0]!
+    // The gradient entry is the SAME tint hex the renderer mixed into the
+    // overlay (extracted scene tint here) — never a remembered color.
+    const tint = await extractSceneTint(scene, "Comedy", null)
+    const expected = tint ?? GENRE_FALLBACK["Comedy"]
+    expect(meta.gradientPaints).toBe(true)
+    expect(meta.gradientHex).toBe(expected)
+    expect(meta.provGradient).toBe(tint ? "extracted" : "fallback-genre")
+    // Badges paint nothing in this style: the old mistaken-unused shape.
+    expect(meta.genrePaints).toBe(false)
+    expect(meta.topPaints).toBe(false)
+    expect(meta.genreHex).toBeNull()
+    expect(meta.rankHex).toBeNull()
+    expect(png.length).toBeGreaterThan(1000)
+  })
+
+  it("zero tint strength: transparent gradient never claimed painted", async () => {
+    const scene = await mockScene(STD_W, STD_H, { r: 232, g: 200, b: 60 })
+    const { metas } = await renderWithMeta(
+      baseInput({
+        posterBuf: scene,
+        badgeStyle: "shadow",
+        rankingBadgeStyle: "default",
+        queryExtra: null,
+        rankingEnabled: false,
+        blurEnabled: true,
+        tintStrength: 0,
+        analysisKey: "eff-gradient-transparent",
+      }),
+    )
+    expect(metas).toHaveLength(1)
+    expect(metas[0]).toMatchObject({
+      gradientHex: null,
+      gradientPaints: false,
+      provGradient: "not-painted",
+    })
+  })
+
+  it("blur off + non-consuming badges: neither paints (existing honest empty state)", async () => {
+    const scene = await mockScene(STD_W, STD_H, { r: 232, g: 200, b: 60 })
+    const { metas } = await renderWithMeta(
+      baseInput({
+        posterBuf: scene,
+        badgeStyle: "shadow",
+        rankingBadgeStyle: "default",
+        queryExtra: null,
+        rankingEnabled: false,
+        blurEnabled: false,
+        analysisKey: "eff-gradient-disabled",
+      }),
+    )
+    expect(metas).toHaveLength(1)
+    expect(metas[0]).toMatchObject({
+      genrePaints: false,
+      topPaints: false,
+      gradientPaints: false,
+      provGradient: "not-painted",
+    })
+  })
+
+  it("manual override tints the gradient exactly with manual provenance", async () => {
+    const scene = await mockScene(STD_W, STD_H, { r: 232, g: 200, b: 60 })
+    const { metas } = await renderWithMeta(
+      baseInput({
+        posterBuf: scene,
+        badgeStyle: "shadow",
+        rankingBadgeStyle: "default",
+        queryExtra: null,
+        rankingEnabled: false,
+        blurEnabled: true,
+        tintStrength: 20,
+        accentOverride: { genreColor: "#123456", rankColor: "#654321" },
+        analysisKey: "eff-gradient-manual",
+      }),
+    )
+    expect(metas).toHaveLength(1)
+    expect(metas[0]).toMatchObject({
+      gradientHex: "#123456",
+      gradientPaints: true,
+      provGradient: "manual",
+    })
+  })
+
+  it("gradient entry adds zero region decodes and zero pixel drift", async () => {
+    const scene = await mockScene(STD_W, STD_H, { r: 232, g: 200, b: 60 })
+    const input = baseInput({
+      posterBuf: scene,
+      badgeStyle: "shadow",
+      rankingBadgeStyle: "default",
+      queryExtra: null,
+      rankingEnabled: false,
+      blurEnabled: true,
+      tintStrength: 20,
+      analysisKey: "eff-gradient-cost",
+    })
+    const plain = await generatePosterBuffer({ ...input })
+    const plainCalls = regionCalls()
+    resetRegionCalls()
+    clearRegionStatsCache()
+    const { png } = await renderWithMeta({ ...input, analysisKey: "eff-gradient-cost-2" })
+    expect(sha(png)).toBe(sha(plain))
+    // Fresh key (no shared band cache): same bounded budget, no extra decode
+    // for the gradient entry (it reuses the tint + overlay already computed).
+    expect(regionCalls()).toBeLessThanOrEqual(plainCalls)
+  })
+})
+
 describe("onAccentMeta: observer parity and cost", () => {
   it("with/without observer outputs are SHA-identical", async () => {
     const scene = await mockScene(STD_W, STD_H, { r: 232, g: 200, b: 60 })

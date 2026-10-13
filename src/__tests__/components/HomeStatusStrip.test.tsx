@@ -66,3 +66,88 @@ describe("HomeStatusStrip spaces indicator", () => {
     expect(link).toHaveAttribute("href", "https://www.themoviedb.org/")
   })
 })
+
+describe("HomeStatusStrip TMDB attribution (Credits region)", () => {
+  const NOTICE =
+    "This product uses the TMDB API but is not endorsed or certified by TMDB."
+  const LOGO_SRC =
+    "/attribution/tmdb/blue_square_2-d537fb228cf3ded904ef09b136fe3fec72548ebc1fea3fbbd1ad9e36364db38b.svg"
+
+  it("shows the exact notice inside an accessible, never-hidden Credits region", async () => {
+    mockStatus({ multiUser: false, users: 0, maxUsers: 0 })
+    renderWithCtx(<HomeStatusStrip />)
+
+    const notice = await screen.findByText(NOTICE)
+
+    // No ancestor up to the strip <footer> may carry Tailwind's `hidden`
+    // utility: the notice must stay visible on mobile too.
+    let el: HTMLElement | null = notice
+    while (el) {
+      const tokens = (el.getAttribute("class") ?? "").split(/\s+/).filter(Boolean)
+      expect(tokens).not.toContain("hidden")
+      expect(tokens.some((c) => /(^|:)hidden$/.test(c))).toBe(false)
+      if (el.getAttribute("data-testid") === "home-status") break
+      el = el.parentElement
+    }
+
+    const region = screen.getByRole("region", { name: "Credits" })
+    expect(region).toContainElement(notice)
+  })
+
+  it("links the notice to themoviedb.org and serves the local official logo undistorted", async () => {
+    mockStatus({ multiUser: false, users: 0, maxUsers: 0 })
+    renderWithCtx(<HomeStatusStrip />)
+
+    const link = await screen.findByRole("link", { name: /This product uses the TMDB API/ })
+    expect(link).toHaveAttribute("href", "https://www.themoviedb.org/")
+    expect(link).toHaveTextContent(NOTICE)
+
+    const logo = screen.getByRole("img", { name: "The Movie Database (TMDB)" })
+    expect(logo).toHaveAttribute("src", LOGO_SRC)
+    // Integer attributes 18504 x 13340 equal the intrinsic ratio of the official
+    // file (viewBox 185.04 x 133.4 on both axes). Cross-multiplying asserts the
+    // ratio exactly, so no floating-point tolerance is needed. No browser layout
+    // is simulated here: JSDOM does not lay images out.
+    const width = Number(logo.getAttribute("width"))
+    const height = Number(logo.getAttribute("height"))
+    expect(width).toBe(18504)
+    expect(height).toBe(13340)
+    expect(width * 13340).toBe(height * 18504)
+  })
+
+  it("sits inline as a single strip: no second bar, no divider, no clipping", async () => {    mockStatus({ multiUser: false, users: 0, maxUsers: 0 })
+    const { container } = renderWithCtx(<HomeStatusStrip />)
+
+    await screen.findByText(NOTICE)
+
+    const strip = container.querySelector('[data-testid="home-status"]')
+    expect(strip).not.toBeNull()
+    // No horizontal divider element may separate the Credits region.
+    expect(strip!.querySelector("hr")).toBeNull()
+    // Single cohesive strip: left controls, Credits, right controls — in order.
+    const kids = Array.from(strip!.children)
+    const order = kids.map((el) => el.getAttribute("class") ?? "")
+    expect(order.length).toBe(3)
+    expect(order[0]).toMatch(/status-left/)
+    expect(order[1]).toMatch(/status-credits/)
+    expect(order[2]).toMatch(/status-right/)
+    const credits = strip!.querySelector(".status-credits")
+    expect(credits?.tagName).toBe("SECTION")
+  })
+
+  it("omits the decorative API/TMDB/Add-on label: status-left holds only the live badge", async () => {
+    mockStatus({ multiUser: false, users: 0, maxUsers: 0 })
+    const { container } = renderWithCtx(<HomeStatusStrip />)
+
+    await screen.findByText(NOTICE)
+
+    const strip = container.querySelector('[data-testid="home-status"]')
+    expect(strip).not.toBeNull()
+    // The visible decorative label and its divider are gone; the TMDB
+    // attribution lives solely in the Credits region (asserted above).
+    expect(strip!.querySelector(".status-meta")).toBeNull()
+    expect(strip!.querySelector(".status-divider")).toBeNull()
+    const left = strip!.querySelector(".status-left")
+    expect(left?.querySelector("a.status-live-badge")).not.toBeNull()
+  })
+})

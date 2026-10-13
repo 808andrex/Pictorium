@@ -714,6 +714,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
             topType: null,
             provGenre: "unknown",
             provRank: "unknown",
+            gradientHex: null,
+            gradientPaints: false,
+            provGradient: "unknown",
           }
       const json = JSON.stringify(body)
       const jsonEtag = `"${hashKey(json)}"`

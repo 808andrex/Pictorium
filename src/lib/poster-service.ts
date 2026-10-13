@@ -35,7 +35,7 @@ import { logoDefaultScaleFromAspect, FRESH_TITLE_LOGO_DEFAULT_SCALE } from "./lo
 import fs from "fs"
 import path from "path"
 import { estimateTextWidth, fontFamilyFor, escSvg, badgeBoxHeight, TOP_SHADOW_PAD } from "./badge-svg-shared"
-import { computeTopBadge, isNetworkStudio, type BadgeInput } from "./poster-badge"
+import { computeTopBadge, isNetworkStudio, shouldSuppressExtraTopBadgeForNetwork, type BadgeInput } from "./poster-badge"
 import { DEMO_SAMPLE_NETWORK } from "./demo-samples"
 import type { DateFormat } from "./release-badge"
 import type { SashBucket } from "./badge-priority"
@@ -2000,10 +2000,31 @@ export async function generatePosterBuffer(input: GenerationInput): Promise<Buff
   // Network: sempre visibile quando abilitato, subito sopra il logo film, quasi attaccato — SVG resta raw, TMDB fallback è A (ricolor + ombra) per non risultare scuro.
   const networkRawResult = networkLogoResult ? rawLogoResult : null
 
+  // An auto extra badge repeating the visibly drawn provider is redundant
+  // (M: "Sky" pill + NOW mark = same Sky information twice). The legacy
+  // branch below is HEAD behavior, kept byte-for-byte (manual custom text
+  // matching a legacy provider is still suppressed, as before). Only the
+  // Sky-family predicate guards on manual text (`manualOverride` inside
+  // `shouldSuppressExtraTopBadgeForNetwork`): manual Sky/NOW text keeps
+  // rendering next to the logo. A disabled/missing logo keeps the badge
+  // (useful, not redundant); rank/award/other families fall through
+  // untouched (Sky-family equivalence only, no substring heuristics).
   if (networkLogoResult && topBadge && topBadge.type === "extra") {
     const lbl = topBadge.label.toLowerCase().trim()
     const netName = networkLogoResult.matchedName.toLowerCase().trim()
     if (lbl === netName || lbl.includes(netName) || isNetworkStudio(topBadge.label)) {
+      topBadge = null
+    } else if (
+      shouldSuppressExtraTopBadgeForNetwork({
+        label: topBadge.label,
+        type: topBadge.type,
+        manualOverride: !!queryExtra,
+        networkLogo: {
+          networkKey: networkLogoResult.networkKey,
+          matchedName: networkLogoResult.matchedName,
+        },
+      })
+    ) {
       topBadge = null
     }
   }
@@ -3557,9 +3578,11 @@ export async function generatePosterBuffer(input: GenerationInput): Promise<Buff
   // Pure observer: reports the fills ACTUALLY passed to the builders above
   // (same variables, no second derivation, no extra decode, no pixel/key
   // changes). Std for the standard slots, shared adaptive for the active
-  // house presets, null for anything painting no automatic accent
-  // (non-consuming styles, custom presets with their own design, suppressed
-  // Fresh/Card chrome, fixed provider-glass/neutral glass).
+  // house presets, the SAME `blurTintHex` already mixed into the bottom
+  // gradient overlay for the gradient entry, null for anything painting no
+  // automatic accent (non-consuming styles, custom presets with their own
+  // design, suppressed Fresh/Card chrome, fixed provider-glass/neutral
+  // glass, disabled or zero-strength gradients).
   if (onAccentMeta) {
     try {
       const topComposited =
@@ -3601,6 +3624,25 @@ export async function generatePosterBuffer(input: GenerationInput): Promise<Buff
         if (!band) return "fallback-tint"
         return "extracted"
       }
+      // Gradient entry: the SAME `blurTintHex` already passed to `applyBlur`
+      // above (manual override, else the extracted scene tint, else the genre
+      // fallback) — the actual render decision, never a remembered color. It
+      // counts as painted only when the overlay really exists (blur enabled
+      // in every layout: Standard layers it, Fresh interleaves it, Card bakes
+      // it into the artwork) with a non-zero tint strength; a disabled or
+      // transparent gradient is honestly `not-painted`, never a fake hex.
+      const gradientPaintsEff =
+        !!blurOverlay && tintStrength > 0 && isValidHex(blurTintHex)
+      const manualGradient = accentOverride && isValidHex(accentOverride.genreColor)
+        ? accentOverride.genreColor
+        : null
+      const provGradient: EffectiveAccentMeta["provGradient"] = !gradientPaintsEff
+        ? "not-painted"
+        : manualGradient
+          ? "manual"
+          : sceneTintHex
+            ? "extracted"
+            : "fallback-genre"
       onAccentMeta({
         genreHex: genrePaintsEff ? (manualGenre ?? genreEffHex) : null,
         rankHex: topPaintsEff ? (manualRank ?? topEffHex) : null,
@@ -3609,6 +3651,9 @@ export async function generatePosterBuffer(input: GenerationInput): Promise<Buff
         topType: topBadge?.type ?? null,
         provGenre: provFor(genrePaintsEff, manualGenre, sceneTintHex, bottomBand),
         provRank: provFor(topPaintsEff, manualRank, sceneTintHex, topBand),
+        gradientHex: gradientPaintsEff ? blurTintHex : null,
+        gradientPaints: gradientPaintsEff,
+        provGradient,
       })
     } catch {
       // The observer must never break the render.

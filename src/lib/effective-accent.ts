@@ -45,7 +45,12 @@ export type AccentTopType = "rank" | "extra" | null
 /**
  * Minimal effective-accent metadata: the two hexes ACTUALLY painted as badge
  * fills (null when the band paints no automatic accent), per-side paint
- * flags, the top-badge kind, and per-side provenance. Deliberately narrow:
+ * flags, the top-badge kind, per-side provenance, plus the bottom-gradient
+ * (blur tint) hex ACTUALLY mixed into the rendered overlay — null unless the
+ * gradient really paints it (blur enabled with a non-zero tint strength).
+ * The gradient entry is the SAME tint hex the renderer passes to `applyBlur`
+ * (`blurTintHex`: manual override, else the extracted scene tint, else the
+ * genre fallback) — never a remembered or guessed color. Deliberately narrow:
  * no analysisKey, no cache key, no URLs/paths, no user UUIDs/hashes, no
  * provider keys, no band RGB, no luminances.
  */
@@ -57,6 +62,17 @@ export interface EffectiveAccentMeta {
   readonly topType: AccentTopType
   readonly provGenre: AccentProvenance
   readonly provRank: AccentProvenance
+  /**
+   * Bottom-gradient (blur tint) hex ACTUALLY painted, or null when the
+   * gradient paints no accent (blur disabled, zero tint strength, or no
+   * valid tint). Optional for header compatibility: legacy records predate
+   * the gradient entry and read as unknown (never as painted).
+   */
+  readonly gradientHex?: string | null
+  /** Whether the bottom gradient paints the automatic accent. */
+  readonly gradientPaints?: boolean
+  /** Provenance of the reported gradient side. */
+  readonly provGradient?: AccentProvenance
 }
 
 const HEX_RE = /^#[0-9a-fA-F]{6}$/
@@ -129,6 +145,16 @@ export function sanitizeEffectiveAccentMeta(raw: unknown): EffectiveAccentMeta |
     r.topType === "rank" || r.topType === "extra" ? r.topType : null
   let provGenre = coerceProvenance(r.provGenre)
   let provRank = coerceProvenance(r.provRank)
+  // Gradient side (additive, header-compatible): legacy records predate the
+  // entry (absent fields) and read as an honest unknown gradient — never as
+  // painted, never as a guessed color. An explicitly non-painting gradient
+  // keeps its `not-painted` provenance; a painted claim without a valid hex
+  // drops to unknown like the badge sides.
+  const gradientHex = coerceHex(r.gradientHex)
+  const gradientPaints = r.gradientPaints === true
+  const hasGradientFields =
+    r.gradientHex !== undefined || r.gradientPaints !== undefined || r.provGradient !== undefined
+  let provGradient: AccentProvenance = hasGradientFields ? coerceProvenance(r.provGradient) : "unknown"
   // A side that paints must carry a valid hex: without one the claim is
   // dropped to honest unknown (never a guessed color).
   if (genrePaints && genreHex === null) {
@@ -136,6 +162,17 @@ export function sanitizeEffectiveAccentMeta(raw: unknown): EffectiveAccentMeta |
   }
   if (topPaints && rankHex === null) {
     if (provRank !== "not-painted") provRank = "unknown"
+  }
+  // A gradient side holding no hex must not claim a painted provenance;
+  // a painted claim without a hex drops to honest unknown (never guessed).
+  if (gradientPaints && gradientHex === null) {
+    if (provGradient !== "not-painted") provGradient = "unknown"
+  }
+  if (gradientHex === null && provGradient !== "not-painted" && provGradient !== "unknown") {
+    provGradient = "unknown"
+  }
+  if (r.gradientHex !== undefined && r.gradientHex !== null && !isValidAccentHex(r.gradientHex)) {
+    if (provGradient !== "not-painted") provGradient = "unknown"
   }
   // A side holding no hex must not claim a painted provenance.
   if (genreHex === null && provGenre !== "not-painted" && provGenre !== "unknown") {
@@ -158,5 +195,8 @@ export function sanitizeEffectiveAccentMeta(raw: unknown): EffectiveAccentMeta |
     topType,
     provGenre,
     provRank,
+    gradientHex,
+    gradientPaints,
+    provGradient,
   }
 }

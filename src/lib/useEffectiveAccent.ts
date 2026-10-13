@@ -99,19 +99,24 @@ export interface AccentPickerDisplay {
   readonly bottomHex: string | null
   /** Top/rank effective hex actually painted (null when not painting). */
   readonly topHex: string | null
+  /** Bottom-gradient (blur tint) hex actually painted (null when not painting). */
+  readonly gradientHex: string | null
   /**
    * Picker reference: bottom by locality (the picker lives in the Genre
-   * card); top only when it is the sole accent painter. Null → placeholder.
+   * card); the bottom-zone gradient next (same zone); top only when it is
+   * the sole accent painter. Null → placeholder.
    */
   readonly pickerHex: string | null
 }
 
 /**
  * Pure picker-reference choice shared by the component and tests: bottom
- * wins by locality, top is the fallback, never a silent merged claim.
+ * wins by locality, then the bottom-zone gradient, then top as the fallback
+ * — never a silent merged claim, never the detected-but-unused base.
  */
 export function resolveAccentPickerDisplay(meta: EffectiveAccentMeta | null): AccentPickerDisplay {
   const bottomHex = meta?.genrePaints && meta.genreHex ? meta.genreHex : null
   const topHex = meta?.topPaints && meta.rankHex ? meta.rankHex : null
-  return { bottomHex, topHex, pickerHex: bottomHex ?? topHex ?? null }
+  const gradientHex = meta?.gradientPaints && meta.gradientHex ? meta.gradientHex : null
+  return { bottomHex, topHex, gradientHex, pickerHex: bottomHex ?? gradientHex ?? topHex ?? null }
 }

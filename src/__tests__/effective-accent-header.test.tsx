@@ -51,6 +51,9 @@ const META: EffectiveAccentMeta = {
   topType: "extra",
   provGenre: "extracted",
   provRank: "extracted",
+  gradientHex: "#2a9d8f",
+  gradientPaints: true,
+  provGradient: "extracted",
 }
 
 beforeEach(() => {
@@ -92,6 +95,45 @@ describe("accent header codec", () => {
     )
     expect(parsed).toEqual(META)
     expect(JSON.stringify(parsed)).not.toContain("s3cr3t")
+  })
+
+  it("legacy records without gradient fields parse as unknown gradient (never painted, never guessed)", () => {
+    const legacy = {
+      genreHex: null,
+      rankHex: null,
+      genrePaints: false,
+      topPaints: false,
+      topType: null,
+      provGenre: "not-painted",
+      provRank: "not-painted",
+    }
+    expect(parseEffectiveAccentHeader(JSON.stringify(legacy))).toEqual({
+      ...legacy,
+      gradientHex: null,
+      gradientPaints: false,
+      provGradient: "unknown",
+    })
+  })
+
+  it("malformed gradient paint claims coerce to unknown (never a fake hex)", () => {
+    const malformed = {
+      genreHex: null,
+      rankHex: null,
+      genrePaints: false,
+      topPaints: false,
+      topType: null,
+      provGenre: "not-painted",
+      provRank: "not-painted",
+      gradientHex: "not-a-hex",
+      gradientPaints: true,
+      provGradient: "extracted",
+    }
+    const parsed = parseEffectiveAccentHeader(JSON.stringify(malformed))
+    expect(parsed?.gradientHex).toBeNull()
+    expect(parsed?.provGradient).toBe("unknown")
+    // The paint flag mirrors the badge sides (kept, provenance dropped):
+    // the picker treats paints-without-hex as unknown usage, never unused.
+    expect(parsed?.gradientPaints).toBe(true)
   })
 
   it("uses a single shared header name", () => {

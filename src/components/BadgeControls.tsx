@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useId, useState } from "react"
 import { ChevronDown, Star, Trophy, Tv, Sparkles, Palette, Layers, Cloud, RotateCcw } from "lucide-react"
 import { usePSelector } from "@/lib/context"
 import { useT } from "@/lib/contexts/TranslationContext"
@@ -53,6 +53,10 @@ export function BadgeControls() {
   const [sourcesOpen, setSourcesOpen] = useState(false)
   const [editingValue, setEditingValue] = useState<string | null>(null)
   const [editText, setEditText] = useState("")
+  // Accessible names for the label-less controls below (accent picker row,
+  // rating-sources disclosure): stable IDs, no visual or handler change.
+  const accentLabelId = useId()
+  const sourcesPanelId = useId()
   // Remembered Card skin (transient UI only, never persisted): survives
   // classic/Fresh/Card switching, same rule as the standalone selector. A
   // saved skin hydrates it with no write. Hooks stay above the early return.
@@ -102,11 +106,27 @@ export function BadgeControls() {
   const autoReady = effective.status === "ready" && autoPickerHex != null
   const autoLoading = effective.status === "loading"
   // Bottom zone label: the picker lives in the genre card, so the bottom
-  // (genre) shade is the only named readout. The top shade is never shown
-  // as text — the picker simply carries its hex when it is the sole painter.
+  // (genre) shade is the named readout when it paints; the bottom-zone
+  // gradient tint is named only when no badge paints (its own line); the top
+  // shade is never shown as text — the picker simply carries its hex when it
+  // is the sole painter.
   const bottomManual = effective.meta?.provGenre === "manual" && display.bottomHex != null
+  // Confirmed-vs-unknown empty state (display-only): "paints nothing" holds
+  // only when every side positively reports non-painting. A legacy/stripped
+  // record carries an unknown gradient (fields absent, or a malformed paint
+  // claim the sanitizer coerced) — usage is UNKNOWN there, never unused.
+  const readyMeta = isCustomColor ? null : effective.meta
+  const noPaintClaim = !display.bottomHex && !display.topHex && !display.gradientHex
+  const allConfirmedOff =
+    readyMeta != null &&
+    readyMeta.genrePaints === false && readyMeta.provGenre === "not-painted" &&
+    readyMeta.topPaints === false && readyMeta.provRank === "not-painted" &&
+    readyMeta.gradientPaints === false && readyMeta.provGradient === "not-painted"
+  const confirmedNone = !isCustomColor && effective.status === "ready" && noPaintClaim && allConfirmedOff
+  const unknownNone = !isCustomColor && effective.status === "ready" && noPaintClaim && !allConfirmedOff
   // Native picker state: manual shows the exact manual hex; automatic shows
-  // the effective painted shade; loading/unknown shows an explicit
+  // the effective painted shade (bottom, else gradient, else top);
+  // loading/unknown shows an explicit
   // placeholder (never the base as actual). The chooser opens the native
   // control on the current placeholder as a clearly-labeled starting point
   // (opened only by the explicit manual action below) without writing
@@ -225,16 +245,19 @@ export function BadgeControls() {
 
   return (
     <div className="space-y-3.5 text-xs">
-      {/* CARD 1: Visibilità & Posizione Badge */}
-      <div className="bg-surface/50 border border-surface2/60 rounded-xl p-3 space-y-3 shadow-sm">
+      {/* Panel header: per-title scope (unchanged text, never a badge family) */}
+      <div className="px-1">
         <div className="flex items-center justify-between">
           <span className="font-semibold text-zinc-200 flex items-center gap-1.5">
             <Layers className="w-3.5 h-3.5 text-accent-orange" />
             {t("ui.badgeSectionPoster")}
           </span>
         </div>
-        <p className="text-[10px] text-zinc-500 italic -mt-1">{t("ui.badgePosterHint")}</p>
+        <p className="text-[10px] text-zinc-500 italic mt-0.5">{t("ui.badgePosterHint")}</p>
+      </div>
 
+      {/* FAMILY 1: Genere/Anno/Voti — activation, style/font, rating sources */}
+      <div data-testid="badge-family-genre" className="bg-surface/50 border border-surface2/60 rounded-xl p-3 space-y-3 shadow-sm">
         {/* Master Toggle Genere / Rating */}
         <div className="space-y-2">
           <div className="flex items-center justify-between py-1">
@@ -320,6 +343,8 @@ export function BadgeControls() {
                   <button
                     type="button"
                     onClick={() => setSourcesOpen((prev) => !prev)}
+                    aria-expanded={sourcesOpen}
+                    aria-controls={sourcesPanelId}
                     className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-surface2/70 hover:bg-surface2 text-zinc-200 hover:text-white border border-surface2 transition-all group cursor-pointer"
                   >
                     <span className="flex items-center gap-1.5 text-[11px] font-semibold">
@@ -336,7 +361,7 @@ export function BadgeControls() {
                   </button>
 
                   {sourcesOpen && (
-                    <div className="space-y-2 pt-0.5 animate-fade-in">
+                    <div id={sourcesPanelId} className="space-y-2 pt-0.5 animate-fade-in">
                       <div className="flex items-center justify-between px-0.5">
                         <span className="text-[10px] text-muted leading-tight">
                           {t("ui.ratingSourcesHint")}
@@ -401,10 +426,49 @@ export function BadgeControls() {
           )}
         </div>
 
-        <hr className="border-surface2/50" />
+        {/* Custom ratings: external row of the same ratings family (always
+            reachable, next to the genre master above). */}
+        <div className="flex items-center justify-between" title={t("ui.customRatingsHint")}>
+          <span className="text-zinc-300 font-medium flex items-center gap-1.5">
+            <Star className="w-3.5 h-3.5 text-teal-400" />
+            {t("ui.customRatings")}
+          </span>
+          <Toggle value={ed.customRatings} onChange={(v) => ed.setCustomRatings(v)} label={t("ui.customRatings")} />
+        </div>
 
-        {/* Badge superiore (master top badge: rank + extra, single winner).
-            No per-title sash: categories/priorities stay global in Settings. */}
+        {/* Genre badge style + font: same family as the activation above. */}
+        <div className="pt-2 border-t border-surface2/50 space-y-1.5">
+          <span className="text-[11px] text-muted font-medium block">{t("ui.styleGenreBadge")}</span>
+          <BadgeStyleSelector
+            value={ed.badgeStyle}
+            options={["shadow", "pill", "bar", "colored", "bordo", "vetro", "minimal"]}
+            // Stile "bar" non disponibile in landscape: il server lo degrada
+            // a shadow (stesso endpoint, preview WYSIWYG garantita).
+            disabled={ed.posterShape === "landscape" ? ["bar"] : []}
+            onChange={ed.setBadgeStyle}
+            t={t}
+            // Display-only preview tint: exact manual hex, else the effective
+            // bottom (genre) shade actually painted (never canonical).
+            accentColor={accentColor ?? display.bottomHex ?? display.topHex ?? null}
+          />
+        </div>
+
+        <div className="pt-2 border-t border-surface2/50 space-y-1.5">
+          <label className="text-[11px] text-muted font-medium block">
+            {t("ui.badgeFont")}
+          </label>
+          <BadgeFontSelector
+            value={ed.badgeFont}
+            onChange={ed.setBadgeFont}
+          />
+        </div>
+      </div>
+
+      {/* FAMILY 2: Ranking — activation and Nastro/Numero/Badge/Fresh/Card
+          together. Badge superiore (master top badge: rank + extra, single
+          winner). No per-title sash: categories/priorities stay global in
+          Settings. */}
+      <div data-testid="badge-family-ranking" className="bg-surface/50 border border-surface2/60 rounded-xl p-3 space-y-3 shadow-sm">
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <span className="text-zinc-300 font-medium flex items-center gap-1.5">
@@ -415,107 +479,48 @@ export function BadgeControls() {
           </div>
           <p className="text-[10px] text-muted italic leading-tight">{t("ui.singleBadgeHint")}</p>
 
-          <div className="flex items-center justify-between">
-            <span className="text-zinc-300 font-medium flex items-center gap-1.5">
-              <Sparkles className="w-3.5 h-3.5 text-purple-400" />
-              {t("ui.badgeQuality")}
+          {/* Classifica: single exclusive Nastro/Numero/Badge/Fresh/Card
+              presentation over the existing stored fields (no separate layout
+              card, no second renderer). Classic (Nastro/Numero/Badge) stages
+              posterLayout=standard plus its canonical rank style; Fresh stages
+              fresh+ranked with the enter-once offset reset; Card stages the
+              remembered skin + ranked with its skin subgroup. Ranked-only: no
+              all-posters scope choice (unranked titles fall back to Standard by
+              the unchanged server contract). No side control here: side is
+              global-only (defaults), so a per-title switch would preview a
+              choice the save cannot keep. */}
+          <div className="pt-2 border-t border-surface2/50 space-y-1.5">
+            <span className="text-[11px] text-muted font-medium flex items-center gap-1.5">
+              <Trophy className="w-3 h-3 text-amber-500" />
+              {t("ui.rankFamily")}
             </span>
-            <Toggle value={ed.badgeQuality} onChange={(v) => ed.setBadgeQuality(v)} label={t("ui.badgeQuality")} />
-          </div>
-
-          {ed.badgeQuality && (
-            <div className="pl-3 py-1 space-y-2.5 border-l-2 border-surface2 ml-1 animate-fade-in">
-              <div>
-                <label className="text-[11px] text-muted font-medium block mb-1">{t("ui.qualityBadgeStyle")}</label>
-                <BadgeStyleSelector
-                  value={ed.qualityBadgeStyle}
-                  options={["standard", "mono", "color", "knockout"]}
-                  onChange={ed.setQualityBadgeStyle}
-                  t={t}
-                />
-              </div>
-
-              {activeVideoFormats.length > 0 && (() => {
-                const hasDV = activeVideoFormats.includes("dv")
-                const hasAtmos = activeVideoFormats.includes("atmos")
-                const displayFormats = (hasDV && hasAtmos)
-                  ? ["dv+atmos", ...activeVideoFormats.filter((f) => f !== "dv" && f !== "atmos")]
-                  : activeVideoFormats
-
-                return (
-                  <div className="pt-1.5 border-t border-surface2/50 flex items-center justify-between">
-                    <div className="flex flex-col">
-                      <span className="text-[11px] text-zinc-300 font-medium">{t("ui.videoFormats")}</span>
-                      <span className="text-[10px] text-muted">{t("ui.videoFormatsAutoHint")}</span>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      {displayFormats.map((fmt) => (
-                        <span
-                          key={fmt}
-                          className="text-[10px] font-bold font-mono px-2 py-0.5 rounded bg-surface2/80 text-accent-orange border border-accent-orange/30 shadow-sm"
-                        >
-                          {fmt === "dv+atmos" ? "DV · ATMOS" : fmt === "hdr10plus" ? "HDR10+" : fmt.toUpperCase()}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )
-              })()}
-            </div>
-          )}
-
-          <div className="flex items-center justify-between" title={t("ui.customRatingsHint")}>
-            <span className="text-zinc-300 font-medium flex items-center gap-1.5">
-              <Star className="w-3.5 h-3.5 text-teal-400" />
-              {t("ui.customRatings")}
-            </span>
-            <Toggle value={ed.customRatings} onChange={(v) => ed.setCustomRatings(v)} label={t("ui.customRatings")} />
-          </div>
-
-          <div className="flex items-center justify-between">
-            <span className="text-zinc-300 font-medium flex items-center gap-1.5">
-              <Tv className="w-3.5 h-3.5 text-sky-400" />
-              {t("ui.networkLogo")}
-            </span>
-            <Toggle value={ed.networkLogo} onChange={(v) => ed.setNetworkLogo(v)} label={t("ui.networkLogo")} />
-          </div>
-
-          {ed.networkLogo && (
-            <div className="flex items-center justify-between gap-3" title={t("ui.networkLogoPosition")}>
-              <span className="text-zinc-400 font-medium text-[11px] pl-5">
-                {t("ui.networkLogoPosition")}
-              </span>
-              <div className="flex gap-1 flex-1 max-w-[190px]">
-                {(["auto", "top"] as const).map((pos) => (
-                  <button
-                    key={pos}
-                    type="button"
-                    onClick={() => ed.setNetworkLogoPosition(pos)}
-                    className={`flex-1 py-1 rounded-lg text-[11px] font-semibold transition-all duration-150 cursor-pointer ${
-                      ed.networkLogoPosition === pos
-                        ? "bg-white/20 text-white shadow-sm"
-                        : "bg-white/5 text-muted hover:bg-white/10 hover:text-zinc-200"
-                    }`}
-                  >
-                    {pos === "auto" ? t("ui.auto") : t("ui.networkLogoPositionTop")}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          <div className="flex items-center justify-between">
-            <span className="text-zinc-300 font-medium flex items-center gap-1.5">
-              <Cloud className="w-3.5 h-3.5 text-cyan-400" />
-              {t("ui.blurSection")}
-            </span>
-            <Toggle value={ed.posterShape === "landscape" ? ed.landscapeBlur.blurEnabled : ed.blurEnabled} onChange={(v) => { if (ed.posterShape === "landscape") ed.setLandscapeBlur({ blurEnabled: v }); else ed.setBlurEnabled(v) }} label={t("ui.blurSection")} />
+            <RankingAppearanceSelector
+              appearance={appearance}
+              variant={variant}
+              ribbonVariant={ribbonVariant}
+              onAppearance={handleAppearance}
+              onVariant={handleVariant}
+              onRibbonVariant={handleRibbonVariant}
+              presentation={presentation}
+              onPresentation={handlePresentation}
+              cardSkin={isCardSkin(ed.posterLayout) ? ed.posterLayout : rememberedSkin}
+              onCardSkin={handleCardSkin}
+            />
+            {(presentation === "fresh" || presentation === "card") && (
+              <p className="text-[10px] text-muted italic leading-tight">
+                {t(presentation === "card" ? "ui.posterLayoutScopeHint" : "ui.posterFreshScopeHint")}
+              </p>
+            )}
+            {(presentation === "nastro" || presentation === "numero") && (
+              <p className="text-[10px] text-muted italic leading-tight">{t("ui.ribbonPosition")}: {t("ui.settings")}</p>
+            )}
           </div>
         </div>
       </div>
 
-      {/* CARD 2: Badge Personalizzato & Classifica */}
-      <div className="bg-surface/50 border border-surface2/60 rounded-xl p-3 space-y-3 shadow-sm">
+      {/* FAMILY 3: Extra badges — automatic/custom choice + their style.
+          Ranking lives in its own family above (never mixed here). */}
+      <div data-testid="badge-family-extra" className="bg-surface/50 border border-surface2/60 rounded-xl p-3 space-y-3 shadow-sm">
         <div className="flex items-center justify-between gap-2">
           <span className="font-semibold text-zinc-200 flex items-center gap-1.5 shrink-0">
             <Sparkles className="w-3.5 h-3.5 text-amber-400" />
@@ -620,43 +625,6 @@ export function BadgeControls() {
           )}
         </div>
 
-        {/* Classifica: single exclusive Nastro/Numero/Badge/Fresh/Card
-            presentation over the existing stored fields (no separate layout
-            card, no second renderer). Classic (Nastro/Numero/Badge) stages
-            posterLayout=standard plus its canonical rank style; Fresh stages
-            fresh+ranked with the enter-once offset reset; Card stages the
-            remembered skin + ranked with its skin subgroup. Ranked-only: no
-            all-posters scope choice (unranked titles fall back to Standard by
-            the unchanged server contract). No side control here: side is
-            global-only (defaults), so a per-title switch would preview a
-            choice the save cannot keep. */}
-        <div className="pt-2 border-t border-surface2/50 space-y-1.5">
-          <span className="text-[11px] text-muted font-medium flex items-center gap-1.5">
-            <Trophy className="w-3 h-3 text-amber-500" />
-            {t("ui.rankFamily")}
-          </span>
-          <RankingAppearanceSelector
-            appearance={appearance}
-            variant={variant}
-            ribbonVariant={ribbonVariant}
-            onAppearance={handleAppearance}
-            onVariant={handleVariant}
-            onRibbonVariant={handleRibbonVariant}
-            presentation={presentation}
-            onPresentation={handlePresentation}
-            cardSkin={isCardSkin(ed.posterLayout) ? ed.posterLayout : rememberedSkin}
-            onCardSkin={handleCardSkin}
-          />
-          {(presentation === "fresh" || presentation === "card") && (
-            <p className="text-[10px] text-muted italic leading-tight">
-              {t(presentation === "card" ? "ui.posterLayoutScopeHint" : "ui.posterFreshScopeHint")}
-            </p>
-          )}
-          {(presentation === "nastro" || presentation === "numero") && (
-            <p className="text-[10px] text-muted italic leading-tight">{t("ui.ribbonPosition")}: {t("ui.settings")}</p>
-          )}
-        </div>
-
         {/* Informazioni sul titolo: own extra look, never a fallback.
             Without an explicit choice it shows the effective inherited style.
             Always reachable, even with the genre master off (like defaults). */}
@@ -680,45 +648,85 @@ export function BadgeControls() {
         </div>
       </div>
 
-      {/* CARD 3: Stile Genere & Colore d'Accento */}
-      <div className="bg-surface/50 border border-surface2/60 rounded-xl p-3 space-y-3 shadow-sm">
+      {/* FAMILY 4: Video quality — activation, style, detected formats */}
+      <div data-testid="badge-family-quality" className="bg-surface/50 border border-surface2/60 rounded-xl p-3 space-y-3 shadow-sm">
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-zinc-300 font-medium flex items-center gap-1.5">
+              <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+              {t("ui.badgeQuality")}
+            </span>
+            <Toggle value={ed.badgeQuality} onChange={(v) => ed.setBadgeQuality(v)} label={t("ui.badgeQuality")} />
+          </div>
+
+          {ed.badgeQuality && (
+            <div className="pl-3 py-1 space-y-2.5 border-l-2 border-surface2 ml-1 animate-fade-in">
+              <div>
+                <label className="text-[11px] text-muted font-medium block mb-1">{t("ui.qualityBadgeStyle")}</label>
+                <BadgeStyleSelector
+                  value={ed.qualityBadgeStyle}
+                  options={["standard", "mono", "color", "knockout"]}
+                  onChange={ed.setQualityBadgeStyle}
+                  t={t}
+                />
+              </div>
+
+              {activeVideoFormats.length > 0 && (() => {
+                const hasDV = activeVideoFormats.includes("dv")
+                const hasAtmos = activeVideoFormats.includes("atmos")
+                const displayFormats = (hasDV && hasAtmos)
+                  ? ["dv+atmos", ...activeVideoFormats.filter((f) => f !== "dv" && f !== "atmos")]
+                  : activeVideoFormats
+
+                return (
+                  <div className="pt-1.5 border-t border-surface2/50 flex items-center justify-between">
+                    <div className="flex flex-col">
+                      <span className="text-[11px] text-zinc-300 font-medium">{t("ui.videoFormats")}</span>
+                      <span className="text-[10px] text-muted">{t("ui.videoFormatsAutoHint")}</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      {displayFormats.map((fmt) => (
+                        <span
+                          key={fmt}
+                          className="text-[10px] font-bold font-mono px-2 py-0.5 rounded bg-surface2/80 text-accent-orange border border-accent-orange/30 shadow-sm"
+                        >
+                          {fmt === "dv+atmos" ? "DV · ATMOS" : fmt === "hdr10plus" ? "HDR10+" : fmt.toUpperCase()}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )
+              })()}
+            </div>
+          )}
+
+        </div>
+      </div>
+
+      {/* FAMILY 5: Common appearance — accent color, network logo and blur.
+          Shared look, deliberately separated from the badge families above. */}
+      <div data-testid="badge-family-common" className="bg-surface/50 border border-surface2/60 rounded-xl p-3 space-y-3 shadow-sm">
         <div className="flex items-center justify-between">
           <span className="font-semibold text-zinc-200 flex items-center gap-1.5">
             <Palette className="w-3.5 h-3.5 text-accent-orange" />
-            {t("ui.styleGenreBadge")}
+            {t("ui.commonAppearance")}
           </span>
         </div>
 
-        <BadgeStyleSelector
-          value={ed.badgeStyle}
-          options={["shadow", "pill", "bar", "colored", "bordo", "vetro", "minimal"]}
-          // Stile "bar" non disponibile in landscape: il server lo degrada
-          // a shadow (stesso endpoint, preview WYSIWYG garantita).
-          disabled={ed.posterShape === "landscape" ? ["bar"] : []}
-          onChange={ed.setBadgeStyle}
-          t={t}
-          // Display-only preview tint: exact manual hex, else the effective
-          // bottom (genre) shade actually painted (never canonical).
-          accentColor={accentColor ?? display.bottomHex ?? display.topHex ?? null}
-        />
-
-        <div className="pt-2 border-t border-surface2/50 space-y-1.5">
-          <label className="text-[11px] text-muted font-medium block">
-            {t("ui.badgeFont")}
-          </label>
-          <BadgeFontSelector
-            value={ed.badgeFont}
-            onChange={ed.setBadgeFont}
-          />
-        </div>
-
-        <div className="flex items-center justify-between gap-2 pt-2 border-t border-surface2/50">
+        {/* Automatic accent actually painted (ui.accentSharedBadge names the
+            badges AND the bottom-zone gradient — every painted zone shares
+            this reference): the native picker and the hex field share this
+            visible label as accessible name — display only, no color logic
+            change. */}
+        <span id={accentLabelId} className="text-[11px] text-muted font-medium block">{t("ui.accentSharedBadge")}</span>
+        <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 shrink-0">
             <input
               type="color"
               value={nativeValue.startsWith("#") && nativeValue.length === 7 ? nativeValue : "#555555"}
               onChange={(e) => { setManualChooser(false); setAccentColor(e.target.value) }}
               disabled={!nativeEnabled}
+              aria-labelledby={accentLabelId}
               title={isCustomColor ? t("ui.resetAutoColor") : t("ui.chooseManualColor")}
               className="w-6 h-6 rounded cursor-pointer border-0 bg-transparent [&::-webkit-color-swatch-wrapper]:p-0 [&::-webkit-color-swatch]:rounded shadow-sm shrink-0 disabled:cursor-not-allowed disabled:opacity-40"
             />
@@ -727,6 +735,7 @@ export function BadgeControls() {
               value={hexFieldValue}
               onChange={(e) => { const v = e.target.value; if (/^#[0-9a-fA-F]{6}$/.test(v)) { setManualChooser(false); setAccentColor(v) } }}
               onBlur={(e) => { if (!/^#[0-9a-fA-F]{6}$/.test(e.target.value)) e.target.value = hexFieldFallback }}
+              aria-labelledby={accentLabelId}
               className="editor-input w-24 text-center px-2 py-1 font-mono text-[11px] shrink-0"
               placeholder="#555555"
             />
@@ -758,10 +767,14 @@ export function BadgeControls() {
           </div>
         </div>
         {/* Effective-accent zone readout (display-only, localized): the picker
-            above shows the bottom/genre shade by locality (or the top shade
-            when it is the sole painter, with no text); only the bottom shade
-            is named here when it paints. Manual provenance is labeled
-            honestly and never written back to canonical state. */}
+            above shows the bottom/genre shade by locality, then the
+            bottom-zone gradient tint, then the top shade when it is the sole
+            painter (no text for the top-only case — the picker carries its
+            hex). Only painted zones are named here, each with its own actual
+            hex: the gradient counts as a painted zone, so an automatic color
+            used by the gradient alone is never reported as unused. Manual
+            provenance is labeled honestly and never written back to canonical
+            state. */}
         {!isCustomColor && effective.status === "ready" && display.bottomHex && (
           <p className="text-[10px] text-zinc-500 leading-snug font-mono">
             {bottomManual
@@ -769,9 +782,37 @@ export function BadgeControls() {
               : t("ui.accentAutoBottom", { hex: display.bottomHex })}
           </p>
         )}
-        {!isCustomColor && effective.status === "ready" && !display.bottomHex && !display.topHex && (
+        {/* Gradient zone: named whenever it paints a hex the badge readout
+            above does not already show — gradient-only (no badge paints) or a
+            genuinely different gradient tint next to a painted badge. When the
+            gradient shares the badge hex, the single line above already names
+            it (one concise readout, never a contradictory stack). */}
+        {!isCustomColor && effective.status === "ready" && display.gradientHex && display.gradientHex !== display.bottomHex && (
+          <p className="text-[10px] text-zinc-500 leading-snug font-mono">
+            {effective.meta?.provGradient === "manual"
+              ? t("ui.accentManualPainted", { hex: display.gradientHex })
+              : t("ui.accentAutoGradient", { hex: display.gradientHex })}
+          </p>
+        )}
+        {/* Confirmed empty state (display-only, localized): ONE concise
+            readout. Painting nothing is claimed only when every side
+            positively reports non-painting (see above). With a detected base
+            the single detected-but-unused line says it; without a base the
+            honest none line stays. Never a contradictory stack. */}
+        {confirmedNone && (
+          <p className={`text-[10px] text-zinc-500 leading-snug${autoAccentColor ? " font-mono" : ""}`}>
+            {autoAccentColor
+              ? t("ui.accentAutoDetectedUnused", { hex: autoAccentColor })
+              : t("ui.accentAutoNone")}
+          </p>
+        )}
+        {/* Unknown gradient (display-only, localized): a legacy/stripped
+            record carries no gradient entry (or a malformed paint claim), so
+            non-painting is NOT established — honest unavailable text instead
+            of "unused", never a guessed color, never a write. */}
+        {unknownNone && (
           <p className="text-[10px] text-zinc-500 leading-snug">
-            {t("ui.accentAutoNone")}
+            {t("ui.accentAutoUnavailable")}
           </p>
         )}
         {!isCustomColor && autoLoading && (
@@ -784,7 +825,52 @@ export function BadgeControls() {
             {autoAccentColor ? t("ui.accentAutoUnavailable") : t("ui.noDominantColor")}
           </p>
         )}
+
+        <div className="pt-2 border-t border-surface2/50 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-zinc-300 font-medium flex items-center gap-1.5">
+              <Tv className="w-3.5 h-3.5 text-sky-400" />
+              {t("ui.networkLogo")}
+            </span>
+            <Toggle value={ed.networkLogo} onChange={(v) => ed.setNetworkLogo(v)} label={t("ui.networkLogo")} />
+          </div>
+
+          {ed.networkLogo && (
+            <div className="flex items-center justify-between gap-3" title={t("ui.networkLogoPosition")}>
+              <span className="text-zinc-400 font-medium text-[11px] pl-5">
+                {t("ui.networkLogoPosition")}
+              </span>
+              <div className="flex gap-1 flex-1 max-w-[190px]">
+                {(["auto", "top"] as const).map((pos) => (
+                  <button
+                    key={pos}
+                    type="button"
+                    onClick={() => ed.setNetworkLogoPosition(pos)}
+                    className={`flex-1 py-1 rounded-lg text-[11px] font-semibold transition-all duration-150 cursor-pointer ${
+                      ed.networkLogoPosition === pos
+                        ? "bg-white/20 text-white shadow-sm"
+                        : "bg-white/5 text-muted hover:bg-white/10 hover:text-zinc-200"
+                    }`}
+                  >
+                    {pos === "auto" ? t("ui.auto") : t("ui.networkLogoPositionTop")}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="pt-2 border-t border-surface2/50">
+          <div className="flex items-center justify-between">
+            <span className="text-zinc-300 font-medium flex items-center gap-1.5">
+              <Cloud className="w-3.5 h-3.5 text-cyan-400" />
+              {t("ui.blurSection")}
+            </span>
+            <Toggle value={ed.posterShape === "landscape" ? ed.landscapeBlur.blurEnabled : ed.blurEnabled} onChange={(v) => { if (ed.posterShape === "landscape") ed.setLandscapeBlur({ blurEnabled: v }); else ed.setBlurEnabled(v) }} label={t("ui.blurSection")} />
+          </div>
+        </div>
       </div>
+
     </div>
   )
 }

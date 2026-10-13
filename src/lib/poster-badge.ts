@@ -70,6 +70,61 @@ export function isNetworkStudio(studioName: string | null): boolean {
 }
 
 /**
+ * Canonical Sky provider-family keys (bundled marks): `sky` covers Sky and
+ * NOW (same service, the NOW mark), `sky_cinema` keeps its own mark but
+ * stays in the family. Explicit set — never substring heuristics.
+ */
+const SKY_FAMILY_KEYS: ReadonlySet<string> = new Set(["sky", "sky_cinema"])
+
+/**
+ * True for names in the Sky provider family (Sky, Sky Cinema, NOW).
+ * Mirrors the sky branch of the network resolver
+ * (`network-svgs.ts:getNetworkKey`) without importing server-only modules:
+ * - "Sky Cinema" before the generic Sky match (own mark, same family);
+ * - SKY PerfecTV! (Japanese satellite) explicitly excluded;
+ * - `\bsky\b` boundary so "Skydance" never matches;
+ * - NOW only as the whole name or its head ("NOW", "NOW TV"), never as a
+ *   word anywhere (avoids "Don't Look Now" false positives).
+ */
+export function isSkyFamilyName(value: string | null | undefined): boolean {
+  const lower = (value ?? "").toLowerCase().trim()
+  if (!lower) return false
+  if (lower.includes("sky perfec")) return false
+  if (lower.includes("sky cinema")) return true
+  if (/\bsky\b/.test(lower)) return true
+  if (lower === "now" || lower.startsWith("now ")) return true
+  return false
+}
+
+export interface ProviderBadgeLogo {
+  readonly networkKey: string
+  readonly matchedName: string
+}
+
+/**
+ * True when an AUTO extra top badge repeats provider information already
+ * visibly represented by the rendered network logo. Narrow Sky-family
+ * equivalence only (same information twice: "Sky" pill + NOW/Sky mark):
+ * - rank badges, award labels and other families never match;
+ * - manual custom text (`queryExtra`) is never auto-suppressed;
+ * - a disabled or missing logo (null) keeps the badge (useful, not redundant).
+ */
+export function shouldSuppressExtraTopBadgeForNetwork(input: {
+  readonly label: string
+  readonly type: "extra" | "rank" | null
+  readonly manualOverride: boolean
+  readonly networkLogo: ProviderBadgeLogo | null
+}): boolean {
+  if (input.type !== "extra") return false
+  if (input.manualOverride) return false
+  const logo = input.networkLogo
+  if (!logo) return false
+  if (!isSkyFamilyName(input.label)) return false
+  if (SKY_FAMILY_KEYS.has(logo.networkKey.toLowerCase().trim())) return true
+  return isSkyFamilyName(logo.matchedName)
+}
+
+/**
  * Badge "Nuova stagione": serie TV con ultima messa in onda recente (<14gg)
  * ma prima messa in onda vecchia (altrimenti è "Nuova serie", non nuova stagione).
  * Con seasonCount > 1 usa `badge.newSeasonN`, che include il numero (es.

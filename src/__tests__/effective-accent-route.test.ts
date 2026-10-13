@@ -277,7 +277,7 @@ describe("GET accentmeta branch (same real handler)", () => {
     expect(body.provRank).toBe("unknown")
     // Minimal field set, no secrets.
     expect(Object.keys(body).sort()).toEqual(
-      ["genreHex", "genrePaints", "provGenre", "provRank", "rankHex", "status", "topPaints", "topType"].sort(),
+      ["genreHex", "genrePaints", "gradientHex", "gradientPaints", "provGradient", "provGenre", "provRank", "rankHex", "status", "topPaints", "topType"].sort(),
     )
     expect(JSON.stringify(body)).not.toContain("api_key")
     expect(res.headers.get("Cache-Control")).toContain("no-store")

@@ -118,9 +118,16 @@ describe("HomeHero", () => {
 })
 
 describe("HomeStatusStrip", () => {
-  it("renders operational state and service links", () => {
+  it("renders operational state and service links without the decorative meta label", () => {
     renderWithCtx(<HomeStatusStrip />)
-    expect(screen.getByText("ui.statusMeta")).toBeInTheDocument()
+    // The decorative "API poster · TMDB · Add-on" label was removed: the TMDB
+    // attribution lives solely in the Credits region (exact legal notice).
+    expect(screen.queryByText("ui.statusMeta")).toBeNull()
+    expect(
+      screen.getByText(
+        "This product uses the TMDB API but is not endorsed or certified by TMDB.",
+      ),
+    ).toBeInTheDocument()
     expect(screen.getByRole("link", { name: "ui.statusTitle" })).toHaveAttribute("href", "/status")
   })
 
