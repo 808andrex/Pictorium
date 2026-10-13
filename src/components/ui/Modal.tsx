@@ -17,6 +17,10 @@ interface ModalProps {
   closeOnBackdrop?: boolean
   /** id dell'elemento titolo per aria-labelledby. */
   labelledBy?: string
+  /** id dell'elemento descrizione per aria-describedby. */
+  describedBy?: string
+  /** data-testid del pannello (per i test mirati). */
+  testId?: string
   className?: string
   /** Override classi overlay (default z-50): la zoom preview settings deve
    *  stare sopra il dialog settings (z-[80]). */
@@ -30,7 +34,7 @@ interface ModalProps {
  */
 export function Modal({
   isOpen, onClose, closeOnEscape = true, closeOnBackdrop = true,
-  labelledBy, className = "", overlayClassName, children,
+  labelledBy, describedBy, testId, className = "", overlayClassName, children,
 }: ModalProps) {
   const panelRef = useRef<HTMLDivElement>(null)
 
@@ -73,7 +77,14 @@ export function Modal({
     return () => {
       window.removeEventListener("keydown", handleKeyDown, true)
       document.body.style.overflow = ""
-      previouslyFocused?.focus()
+      // Restore focus only when it is still inside the closing dialog (or
+      // nowhere): a superseding dialog (settings exit-confirm over the
+      // preview zoom) already moved focus elsewhere — stealing it back here
+      // would break the new dialog's initial focus.
+      const active = document.activeElement
+      if (!active || active === document.body || (panel && panel.contains(active))) {
+        previouslyFocused?.focus()
+      }
       window.scrollTo(scrollX, scrollY)
     }
   }, [isOpen, onClose, closeOnEscape])
@@ -85,12 +96,14 @@ export function Modal({
       role="dialog"
       aria-modal="true"
       aria-labelledby={labelledBy}
+      aria-describedby={describedBy}
       onClick={(e) => { if (closeOnBackdrop && e.target === e.currentTarget) onClose() }}
       className={overlayClassName ?? "fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-md animate-fade-in"}
     >
       <div
         ref={panelRef}
         tabIndex={-1}
+        data-testid={testId}
         className={`relative outline-none w-full max-w-lg rounded-2xl border border-white/10 bg-surface/95 p-6 shadow-2xl space-y-5 select-text animate-modal-panel-in ${className}`}
       >
         {children}

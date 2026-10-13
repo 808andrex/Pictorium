@@ -1,0 +1,324 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { fireEvent, screen, within, act } from "@testing-library/react"
+import { createElement } from "react"
+import { SettingsPanel } from "@/components/SettingsPanel"
+import { renderWithCtx } from "@/__tests__/test-utils"
+import { resetGuestGuardForTests } from "@/lib/guest-guard"
+import { __resetAdminTokenForTests } from "@/lib/admin-token"
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }),
+}))
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() } }))
+
+let puts: { url: string; body: Record<string, unknown> }[]
+
+function stubFetch() {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: unknown, init?: { method?: string; body?: string }) => {
+      const u = String(url)
+      if (init?.method === "PUT" && u.includes("/api/defaults")) {
+        puts.push({ url: u, body: JSON.parse(init.body as string) })
+        return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({}) }
+      }
+      if (u.includes("/api/defaults/presets")) {
+        return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ presets: [] }) }
+      }
+      if (u.includes("/api/custom-rating/test")) {
+        return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ ok: true }) }
+      }
+      return { ok: false, status: 404, headers: { get: () => null }, json: async () => ({}) }
+    }),
+  )
+}
+
+/** Transport-level fake XHR: serves the real preview blob path in jsdom. */
+class FakeXHR {
+  static urls: string[] = []
+  status = 200
+  response: Blob | null = null
+  responseType = ""
+  timeout = 0
+  onprogress: ((e: never) => void) | null = null
+  onload: (() => void) | null = null
+  onerror: (() => void) | null = null
+  ontimeout: (() => void) | null = null
+  open(_method: string, url: string) {
+    FakeXHR.urls.push(url)
+  }
+  send() {
+    queueMicrotask(() => {
+      this.response = new Blob(["fake-poster"], { type: "image/png" })
+      this.onload?.()
+    })
+  }
+  abort() {}
+}
+
+function renderPanel() {
+  return renderWithCtx(
+    createElement(SettingsPanel, {
+      setSettingsOpen: () => {},
+      exportData: () => {},
+      importData: () => {},
+    }),
+  )
+}
+
+function setMobileWidth(w: number) {
+  Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: w })
+}
+
+beforeEach(() => {
+  localStorage.clear()
+  puts = []
+  vi.clearAllMocks()
+  __resetAdminTokenForTests()
+  resetGuestGuardForTests()
+  stubFetch()
+  setMobileWidth(390)
+})
+
+describe("settings mobile floating preview (authorized overlay contract)", () => {
+  it("default float: snapped top-right overlay, no reserved section, single owner, correct ratio", async () => {
+    renderPanel()
+    await screen.findByTestId("presets-panel")
+    const preview = screen.getByTestId("settings-preview")
+    const controls = screen.getByTestId("settings-controls")
+    // Floating overlay (out of flow) — never a reserved in-flow section.
+    expect(preview).toHaveAttribute("data-floating", "true")
+    expect(preview).toHaveAttribute("data-corner", "tr")
+    expect(preview.className).toMatch(/absolute/)
+    // DOM order is preview-then-controls (matches visual/focus order).
+    expect(preview.compareDocumentPosition(controls) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    // Controls own the body height (sole scroller); the float consumes none.
+    expect(controls.className).toMatch(/flex-1/)
+    expect(controls.className).toMatch(/overflow-y-auto/)
+    // Single mounted preview owner: exactly one media node.
+    expect(screen.getAllByTestId("defaults-preview-media")).toHaveLength(1)
+    // Portrait keeps the correct ratio/bounds (small real poster).
+    const media = screen.getByTestId("defaults-preview-media")
+    expect(media.className).toMatch(/aspect-\[2\/3\]/)
+    // Toolbar: minimize + corner cycle, labelled 44px targets (no tiny close).
+    const minimize = screen.getByTestId("floating-preview-minimize")
+    const corner = screen.getByTestId("floating-preview-corner")
+    expect(minimize).toHaveAttribute("aria-label", "ui.previewCollapse")
+    expect(corner).toHaveAttribute("aria-label", "ui.previewCornerCycle")
+    expect(minimize.className).toMatch(/min-h-\[44px\]/)
+    expect(corner.className).toMatch(/min-h-\[44px\]/)
+    // No legacy strip collapse toggle.
+    expect(screen.queryByTestId("defaults-preview-collapse")).toBeNull()
+    // Footer + save reachable (float lives above the footer, never over it).
+    expect(screen.getByTestId("settings-save").className).toMatch(/min-h-\[44px\]/)
+    const footer = screen.getByTestId("settings-save").closest("div[class*='settings-dialog-footer']")
+    expect(footer?.className).toMatch(/safe-area-inset-bottom/)
+    expect(puts).toHaveLength(0)
+  })
+
+  it("landscape edit target keeps video bounds without duplicating the preview", async () => {
+    renderPanel()
+    await screen.findByTestId("presets-panel")
+    fireEvent.click(within(screen.getByTestId("format-target-selector")).getByText("ui.posterShapeLandscape"))
+    const media = screen.getByTestId("defaults-preview-media")
+    expect(media.className).toMatch(/aspect-video/)
+    expect(screen.getAllByTestId("defaults-preview-media")).toHaveLength(1)
+    // Wider float card for the 16/9 frame, still corner-snapped.
+    expect(screen.getByTestId("settings-preview")).toHaveAttribute("data-corner", "tr")
+    // Shape switch stages nothing by itself: no PUT, draft intact.
+    expect(puts).toHaveLength(0)
+  })
+
+  it("minimize/restore keeps the single owner mounted with no PUT, surviving tab switches", async () => {
+    renderPanel()
+    await screen.findByTestId("presets-panel")
+    const media = () => screen.getByTestId("defaults-preview-media")
+    // Minimize: owner stays mounted under hidden (no refetch on restore).
+    fireEvent.click(screen.getByTestId("floating-preview-minimize"))
+    expect(media().closest("div.hidden")).not.toBeNull()
+    expect(screen.getByTestId("floating-preview-restore")).toHaveAttribute("aria-label", "ui.previewExpand")
+    expect(screen.queryByTestId("floating-preview-minimize")).toBeNull()
+    expect(puts).toHaveLength(0)
+    // A deliberate minimize survives tab switches (state lives in the panel):
+    // secondary tabs unmount the float, returning restores it minimized.
+    fireEvent.click(screen.getByTestId("settings-secondary-prefs"))
+    expect(screen.queryByTestId("settings-preview")).toBeNull()
+    fireEvent.click(screen.getByRole("tab", { name: "ui.settingsTabPreset" }))
+    expect(screen.getByTestId("floating-preview-restore")).toBeInTheDocument()
+    expect(media().closest("div.hidden")).not.toBeNull()
+    // Restore: same single owner, still no PUT.
+    fireEvent.click(screen.getByTestId("floating-preview-restore"))
+    expect(media().closest("div.hidden")).toBeNull()
+    expect(screen.getAllByTestId("defaults-preview-media")).toHaveLength(1)
+    expect(puts).toHaveLength(0)
+  })
+
+  it("corner cycle moves clockwise pointer + keyboard with corner state surviving resize", async () => {
+    renderPanel()
+    await screen.findByTestId("presets-panel")
+    const preview = () => screen.getByTestId("settings-preview")
+    expect(preview()).toHaveAttribute("data-corner", "tr")
+    // Pointer cycle: tr -> br -> bl.
+    fireEvent.click(screen.getByTestId("floating-preview-corner"))
+    expect(preview()).toHaveAttribute("data-corner", "br")
+    fireEvent.click(screen.getByTestId("floating-preview-corner"))
+    expect(preview()).toHaveAttribute("data-corner", "bl")
+    // Keyboard cycle: focus + Enter continues bl -> tl.
+    const cycle = screen.getByTestId("floating-preview-corner")
+    cycle.focus()
+    fireEvent.keyDown(cycle, { key: "Enter" })
+    fireEvent.click(cycle)
+    expect(preview()).toHaveAttribute("data-corner", "tl")
+    expect(puts).toHaveLength(0)
+    // Resize to desktop: static column (no toolbar), corner remembered.
+    setMobileWidth(1280)
+    act(() => { window.dispatchEvent(new Event("resize")) })
+    expect(screen.getByTestId("settings-preview")).toHaveAttribute("data-floating", "false")
+    expect(screen.queryByTestId("floating-preview-corner")).toBeNull()
+    expect(screen.getAllByTestId("defaults-preview-media")).toHaveLength(1)
+    // Back to mobile: same corner, same single owner.
+    setMobileWidth(390)
+    act(() => { window.dispatchEvent(new Event("resize")) })
+    expect(screen.getByTestId("settings-preview")).toHaveAttribute("data-corner", "tl")
+    expect(screen.getByTestId("floating-preview-corner")).toBeInTheDocument()
+    expect(puts).toHaveLength(0)
+  })
+
+  it("desktop keeps the static preview column with mobile-only 44px format targets", async () => {
+    setMobileWidth(1280)
+    renderPanel()
+    await screen.findByTestId("presets-panel")
+    act(() => { window.dispatchEvent(new Event("resize")) })
+    expect(screen.getByTestId("settings-preview")).toHaveAttribute("data-floating", "false")
+    expect(screen.queryByTestId("floating-preview-minimize")).toBeNull()
+    expect(screen.getByTestId("defaults-preview-media").className).toMatch(/aspect-\[2\/3\]/)
+    // Format buttons: 44px floor on mobile, natural height on desktop.
+    for (const btn of within(screen.getByTestId("format-target-selector")).getAllByRole("button")) {
+      expect(btn.className).toMatch(/min-h-\[44px\]/)
+      expect(btn.className).toMatch(/md:min-h-0/)
+    }
+  })
+})
+
+describe("settings mobile floating drag vs tap (transport mocks, real blob path)", () => {
+  beforeEach(() => {
+    FakeXHR.urls = []
+    let blobN = 0
+    vi.stubGlobal("XMLHttpRequest", FakeXHR)
+    Object.assign(URL, {
+      createObjectURL: vi.fn(() => `blob:fake-${++blobN}`),
+      revokeObjectURL: vi.fn(),
+    })
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    stubFetch()
+  })
+
+  it("tap on the thumbnail opens the large zoom; Escape closes without PUT", async () => {
+    renderPanel()
+    await screen.findByTestId("presets-panel")
+    const zoomOpen = await screen.findByTestId("defaults-preview-zoom-open")
+    expect(FakeXHR.urls.length).toBeGreaterThan(0)
+    expect(FakeXHR.urls[0]).toContain("/api/poster/")
+    // Tap (press without movement) opens the shared zoom modal.
+    fireEvent.click(zoomOpen)
+    expect(screen.getAllByRole("dialog")).toHaveLength(2)
+    // Full image in the enlarged view, correct ratio, uncropped fit.
+    const enlarged = screen.getAllByAltText("Avatar")[1] as HTMLImageElement
+    expect(enlarged.className).toMatch(/object-contain/)
+    // Escape closes the zoom only (panel stays, no PUT, no discard).
+    fireEvent.keyDown(enlarged.closest('[role="dialog"]')!, { key: "Escape" })
+    expect(screen.getAllByRole("dialog")).toHaveLength(1)
+    expect(screen.getByTestId("settings-preview")).toBeInTheDocument()
+    expect(puts).toHaveLength(0)
+  })
+
+  it("drag snaps to the nearest corner and never activates the zoom", async () => {
+    renderPanel()
+    await screen.findByTestId("presets-panel")
+    const zoomOpen = await screen.findByTestId("defaults-preview-zoom-open")
+    const float = screen.getByTestId("settings-preview")
+    expect(float).toHaveAttribute("data-corner", "tr")
+    // Small movement under the threshold is still a tap (zoom opens).
+    fireEvent.pointerDown(zoomOpen, { pointerId: 1, pointerType: "mouse", button: 0, clientX: 100, clientY: 100 })
+    fireEvent.pointerMove(zoomOpen, { pointerId: 1, pointerType: "mouse", clientX: 104, clientY: 103 })
+    fireEvent.pointerUp(zoomOpen, { pointerId: 1, pointerType: "mouse", clientX: 104, clientY: 103 })
+    expect(float).toHaveAttribute("data-corner", "tr")
+    fireEvent.click(zoomOpen)
+    expect(screen.getAllByRole("dialog")).toHaveLength(2)
+    fireEvent.keyDown(document.body, { key: "Escape" })
+    expect(screen.getAllByRole("dialog")).toHaveLength(1)
+    // Real drag: press, move past the threshold, release bottom-left.
+    // jsdom rects are zero: stub the body container box so the snap quadrant
+    // is deterministic (release at 60,480 of a 390x568 box -> bl).
+    const container = float.parentElement!
+    const rect = { x: 0, y: 0, left: 0, top: 0, right: 390, bottom: 568, width: 390, height: 568, toJSON: () => ({}) }
+    vi.spyOn(container, "getBoundingClientRect").mockReturnValue(rect as DOMRect)
+    fireEvent.pointerDown(float, { pointerId: 2, pointerType: "mouse", button: 0, clientX: 300, clientY: 120 })
+    fireEvent.pointerMove(float, { pointerId: 2, pointerType: "mouse", clientX: 200, clientY: 200 })
+    fireEvent.pointerMove(float, { pointerId: 2, pointerType: "mouse", clientX: 60, clientY: 480 })
+    fireEvent.pointerUp(float, { pointerId: 2, pointerType: "mouse", clientX: 60, clientY: 480 })
+    expect(float).toHaveAttribute("data-corner", "bl")
+    // The post-drag click is swallowed: no zoom opens.
+    fireEvent.click(zoomOpen)
+    expect(screen.getAllByRole("dialog")).toHaveLength(1)
+    // Same single owner throughout, nothing staged.
+    expect(screen.getAllByTestId("defaults-preview-media")).toHaveLength(1)
+    expect(puts).toHaveLength(0)
+  })
+})
+
+describe("settings mobile resize + save contract", () => {
+  it("single owner across resize: draft, tab and shape survive with one dialog and no PUT on navigation", async () => {
+    renderPanel()
+    await screen.findByTestId("poster-style-apple")
+    fireEvent.click(screen.getByTestId("poster-style-apple"))
+    fireEvent.click(screen.getByRole("tab", { name: "ui.settingsTabBadge" }))
+    fireEvent.click(within(screen.getByTestId("format-target-selector")).getByText("ui.posterShapeLandscape"))
+    expect(puts).toHaveLength(0)
+    expect(screen.getAllByRole("dialog")).toHaveLength(1)
+    setMobileWidth(1280)
+    act(() => { window.dispatchEvent(new Event("resize")) })
+    expect(screen.getAllByRole("dialog")).toHaveLength(1)
+    expect(screen.getByRole("tab", { name: "ui.settingsTabBadge" })).toHaveAttribute("aria-selected", "true")
+    expect(
+      within(screen.getByTestId("format-target-selector")).getByText("ui.posterShapeLandscape").closest("button"),
+    ).toHaveAttribute("aria-pressed", "true")
+    expect(screen.getByTestId("settings-save")).not.toBeDisabled()
+    setMobileWidth(390)
+    act(() => { window.dispatchEvent(new Event("resize")) })
+    expect(screen.getAllByRole("dialog")).toHaveLength(1)
+    expect(screen.getByTestId("settings-save")).not.toBeDisabled()
+    expect(screen.getAllByTestId("defaults-preview-media")).toHaveLength(1)
+    expect(puts).toHaveLength(0)
+    // One global Save persists the staged draft with a single PUT and stays put.
+    fireEvent.click(screen.getByTestId("settings-save"))
+    await screen.findByText("ui.synced")
+    expect(puts).toHaveLength(1)
+    expect(screen.getByRole("tab", { name: "ui.settingsTabBadge" })).toHaveAttribute("aria-selected", "true")
+  })
+
+  it("preview family sync: entering a style card narrows the preview without saving", async () => {
+    // The editing-family chip lives in the full desktop chrome (the mobile
+    // float stays a pure thumbnail); run at desktop width.
+    setMobileWidth(1280)
+    renderPanel()
+    await screen.findByTestId("presets-panel")
+    fireEvent.click(screen.getByRole("tab", { name: "ui.settingsTabBadge" }))
+    const genreGate = screen.getByTestId("badge-genre-style")
+    const focusable = within(genreGate).getAllByRole("button")[0]
+    fireEvent.focus(focusable)
+    // Family chip reflects the narrowed preview-only family; nothing persisted.
+    expect(screen.getByTestId("defaults-preview-editing")).toBeInTheDocument()
+    expect(puts).toHaveLength(0)
+    // Reset returns to the full auto preview when offered.
+    const reset = screen.queryByTestId("defaults-preview-reset-family")
+    if (reset) {
+      fireEvent.click(reset)
+      expect(screen.getByTestId("defaults-preview-editing")).toHaveTextContent("ui.previewEditingAuto")
+      expect(puts).toHaveLength(0)
+    }
+  })
+})

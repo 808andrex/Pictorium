@@ -1,8 +1,9 @@
 import { z } from "zod"
-import { BADGE_STYLES, RANKING_BADGE_STYLES, EXTRA_BADGE_STYLES, EXTRA_BADGE_FOLLOW_RANK, QUALITY_BADGE_STYLES, BADGE_FONTS, SEPARATE_RATINGS_STYLES, DEFAULT_AGE_BADGE_STYLE, isAgeBadgeStyle, DEFAULT_BADGE_FONT, isBadgeFont, DEFAULT_QUALITY_BADGE_STYLE, isQualityBadgeStyle, isExtraBadgeStyle, isExtraFollowRank, DEFAULT_QUALITY_BADGE_OFFSET_X_LANDSCAPE, DEFAULT_QUALITY_BADGE_OFFSET_Y_LANDSCAPE } from "./badge-styles"
+import { BADGE_STYLES, RANKING_BADGE_STYLES, EXTRA_BADGE_STYLES, EXTRA_BADGE_FOLLOW_RANK, QUALITY_BADGE_STYLES, AGE_BADGE_STYLES, BADGE_FONTS, SEPARATE_RATINGS_STYLES, DEFAULT_AGE_BADGE_STYLE, isAgeBadgeStyle, DEFAULT_BADGE_FONT, isBadgeFont, DEFAULT_QUALITY_BADGE_STYLE, isQualityBadgeStyle, isExtraBadgeStyle, isExtraFollowRank, DEFAULT_QUALITY_BADGE_OFFSET_X_LANDSCAPE, DEFAULT_QUALITY_BADGE_OFFSET_Y_LANDSCAPE } from "./badge-styles"
 import { KNOWN_VIDEO_FORMATS, isVideoFormat, type VideoFormat } from "./av-specs"
 import { SASH_BUCKETS } from "./badge-priority"
 import { DEFAULT_AGE_COUNTRY, normalizeCertificationCountry } from "./certification"
+import { DEFAULT_POSTER_FRESH_SCOPE, DEFAULT_POSTER_LAYOUT, POSTER_FRESH_SCOPES, POSTER_LAYOUTS } from "./types"
 import type { LandscapeServerDefaults } from "./server-defaults"
 
 const percent = z.number().finite().min(0).max(100)
@@ -44,6 +45,15 @@ const landscapeSchema = z.object({
   networkLogo: z.boolean().optional(), networkLogoPosition: z.enum(["auto", "top"]).optional(),
   preRelease: z.boolean().optional(),
   ribbonEnabled: z.boolean().optional(), ribbonSide: z.enum(["left", "right"]).optional(),
+  // Personal-owned appearance keys (same backend names/enums as the API
+  // schema, validation only): the edited shape's own ranking presentation
+  // and classification. Nullable-optional like the other inheriting profile
+  // keys: absent/null = inherit the flat at render (`land ?? flat` chains).
+  posterLayout: z.enum(POSTER_LAYOUTS).nullable().optional(),
+  posterFreshScope: z.enum(POSTER_FRESH_SCOPES).nullable().optional(),
+  ageBadge: z.boolean().nullable().optional(),
+  ageCountry: z.string().max(8).nullable().optional(),
+  ageBadgeStyle: z.enum(AGE_BADGE_STYLES).nullable().optional(),
 }).strict()
 
 /** Only visual defaults: credentials, providers, catalogs and region never enter a preset. */
@@ -51,6 +61,15 @@ export const visualPresetValuesSchema = z.object({
   defaultGlobalBadges: z.boolean(), defaultRankingBadges: z.boolean(),
   defaultBadgeGenre: z.boolean(), defaultBadgeYear: z.boolean(), defaultBadgeRating: z.boolean(), defaultBadgeQuality: z.boolean(),
   defaultCustomRatings: z.boolean(), defaultSeparateRatings: z.boolean(),
+  // Personal-owned classification (same backend names/enums as the API
+  // schema, validation only): the edited shape's own age badge. Optional so
+  // legacy presets without the keys stay valid; missing fills the canonical
+  // factory value at parse (off/IT/standard, like useDefaults) — never the
+  // live previous look. Explicit values (including a null style, which
+  // renders fail-closed as standard) are honored verbatim.
+  defaultAgeBadge: z.boolean().default(false),
+  defaultAgeCountry: z.string().max(8).default(DEFAULT_AGE_COUNTRY),
+  defaultAgeBadgeStyle: z.enum(AGE_BADGE_STYLES).nullable().default(DEFAULT_AGE_BADGE_STYLE),
   defaultRatingSources: z.array(z.string().max(20)).max(20),
   defaultSashOrder: z.array(z.enum(SASH_BUCKETS)).max(SASH_BUCKETS.length),
   defaultBadgeStyle: z.enum(BADGE_STYLES), defaultRankingBadgeStyle: z.enum(RANKING_BADGE_STYLES),
@@ -67,6 +86,12 @@ export const visualPresetValuesSchema = z.object({
   defaultExtraBadgeScale: scale.nullable().optional(),
   defaultExtraBadgeOffsetX: offset.nullable().optional(),
   defaultExtraBadgeOffsetY: offset.nullable().optional(),
+  // Personal-owned standalone extra style (same backend name/enum as the API
+  // schema, validation only): the edited shape's own extra-badge look.
+  // Optional for legacy presets; missing fills the legacy `null` (follow the
+  // target's own rank — pixel-identical, never the live previous style), so
+  // legacy preview URLs stay byte-identical (no `xbs` param).
+  defaultExtraBadgeStyle: z.union([z.enum(EXTRA_BADGE_STYLES), z.literal(EXTRA_BADGE_FOLLOW_RANK)]).nullable().default(null),
   defaultGenreBadgeScale: scale, defaultGenreBadgeOffsetX: offset, defaultGenreBadgeOffsetY: offset,
   defaultQualityBadgeScale: scale, defaultQualityBadgeOffsetX: offset, defaultQualityBadgeOffsetY: offset,
   // Scala separati aggiunta dopo: default(130) per i preset salvati senza campo
@@ -84,6 +109,12 @@ export const visualPresetValuesSchema = z.object({
   // (legacy senza campo) né forzare lo stato editor; null/assente = eredita.
   defaultNetworkLogoFollowTitle: z.boolean().nullable().optional(),
   defaultRibbonEnabled: z.boolean(), defaultRibbonSide: z.enum(["left", "right"]),
+  // Personal-owned ranking presentation (same backend names/enums as the API
+  // schema, validation only): the edited shape's own layout/scope. Optional
+  // for legacy presets; missing fills the canonical factory value (standard
+  // + ranked, like useDefaults) — never the live previous look.
+  defaultPosterLayout: z.enum(POSTER_LAYOUTS).default(DEFAULT_POSTER_LAYOUT),
+  defaultPosterFreshScope: z.enum(POSTER_FRESH_SCOPES).default(DEFAULT_POSTER_FRESH_SCOPE),
   defaultPosterShape: z.enum(["poster", "landscape"]), defaultLogoAlign: z.enum(["left", "center"]).nullable(),
   defaultPortraitFitEnabled: z.boolean(), defaultLandscapeFitEnabled: z.boolean(),
   landscape: landscapeSchema,
@@ -245,7 +276,7 @@ export function normalizePresetExtraTuning<T extends ExtraNormalizableSnapshot>(
   return ordered as T
 }
 
-export function captureVisualPreset(source: VisualPresetValues): VisualPresetValues {
+export function captureVisualPreset(source: z.input<typeof visualPresetValuesSchema>): VisualPresetValues {
   return visualPresetValuesSchema.parse(Object.fromEntries(
     Object.keys(visualPresetValuesSchema.shape).map((key) => [
       key,
@@ -324,6 +355,104 @@ export const PRESET_FLAT_TO_LANDSCAPE: Record<string, keyof LandscapeServerDefau
 }
 
 /**
+ * Personal-owned flat→profile key map (task: personal preset independence).
+ * PRESET_FLAT_TO_LANDSCAPE above is the frozen ready/per-title contract and
+ * stays byte-identical; personal presets additionally own their edited
+ * shape's ranking presentation (layout/scope), standalone extra style and
+ * classification (age trio) — the exact omitted appearance fields. Deliberately
+ * NOT owned (stay outside personal apply, preserved verbatim like ready):
+ * - `defaultRatingSources`: global vote-source selection (no profile key);
+ * - `defaultLogoAlign`: global toggle with a per-shape auto contract;
+ * - `defaultPosterShape`/fit flags/region/userId/credentials/provider
+ *   config/catalogs: delivery and global preferences, never preset content.
+ */
+export const PERSONAL_FLAT_TO_LANDSCAPE: Record<string, keyof LandscapeServerDefaults> = {
+  ...PRESET_FLAT_TO_LANDSCAPE,
+  defaultExtraBadgeStyle: "extraBadgeStyle",
+  defaultPosterLayout: "posterLayout",
+  defaultPosterFreshScope: "posterFreshScope",
+  defaultAgeBadge: "ageBadge",
+  defaultAgeCountry: "ageCountry",
+  defaultAgeBadgeStyle: "ageBadgeStyle",
+}
+
+/**
+ * Deterministic canonical fallback for personal presets missing owned
+ * appearance fields (legacy snapshots predate the keys): the EXISTING factory
+ * source (same values as useDefaults DEFAULT_FLAT_DEFAULTS) — layout
+ * standard, scope ranked, extra legacy null (follow the target's own rank),
+ * age off/IT/standard. Never the live previous look, never a name heuristic.
+ * Pure; only `undefined` (and unresolvable age countries) are filled —
+ * explicit stored values, including explicit `null`s, are honored verbatim.
+ * The landscape profile keeps its sparse inherit contract, except the
+ * standalone extra style: an inheriting profile over a legacy flat
+ * materializes the explicit shape-local follow-own-rank sentinel
+ * (pixel-identical today, leak-proof later — the same marker
+ * `canonicalInheritFreeze("extraBadgeStyle", …)` produces); an inheriting
+ * profile over a concrete flat stays absent (follows the flat). Idempotent:
+ * parsed snapshots (schema defaults already filled) pass through unchanged.
+ */
+export function normalizePersonalPreset<T extends VisualPresetValues>(values: T): T {
+  const v = { ...(values as unknown as Record<string, unknown>) }
+  if (v.defaultPosterLayout === undefined) v.defaultPosterLayout = DEFAULT_POSTER_LAYOUT
+  if (v.defaultPosterFreshScope === undefined) v.defaultPosterFreshScope = DEFAULT_POSTER_FRESH_SCOPE
+  if (v.defaultExtraBadgeStyle === undefined) v.defaultExtraBadgeStyle = null
+  if (v.defaultAgeBadge === undefined) v.defaultAgeBadge = false
+  if (v.defaultAgeCountry === undefined || normalizeCertificationCountry(v.defaultAgeCountry) == null) {
+    v.defaultAgeCountry = DEFAULT_AGE_COUNTRY
+  }
+  if (v.defaultAgeBadgeStyle === undefined) v.defaultAgeBadgeStyle = DEFAULT_AGE_BADGE_STYLE
+  const land = { ...((v.landscape ?? {}) as Record<string, unknown>) }
+  const profEx = land.extraBadgeStyle
+  if (!isExtraFollowRank(profEx) && !isExtraBadgeStyle(typeof profEx === "string" ? profEx : null)) {
+    const flatEx = v.defaultExtraBadgeStyle
+    if (
+      flatEx === null || flatEx === undefined ||
+      (!isExtraBadgeStyle(typeof flatEx === "string" ? flatEx : null) && !isExtraFollowRank(flatEx))
+    ) {
+      land.extraBadgeStyle = EXTRA_BADGE_FOLLOW_RANK
+    } else if (profEx === null || profEx === undefined) {
+      // Inherit profile over a concrete stored flat owns the stored flat
+      // (never the live previous look): materialize it so the later
+      // flat-then-raw overlay cannot leave a null that follows live.
+      land.extraBadgeStyle = flatEx
+    }
+  }
+  // Personal independence: true-inherit nullable profile keys resolve
+  // against the STORED snapshot flats here (never live). Reuses the same
+  // inherit contract as resolveEffectiveLandscape (NULL_INHERIT +
+  // SHAPE_NULL_INHERIT + standalone extra + owned age pair); logo
+  // scale/offsets and extra tuning nulls are intentionally excluded (their
+  // null is an explicit auto/zero shape-local choice that wins).
+  const inheritFlatToLand: Array<[string, string]> = [
+    ["defaultBadgeFont", "badgeFont"],
+    ["defaultQualityBadgeStyle", "qualityBadgeStyle"],
+    ["defaultVideoFormats", "videoFormats"],
+    ["defaultPosterLayout", "posterLayout"],
+    ["defaultPosterFreshScope", "posterFreshScope"],
+    ["defaultNetworkLogoFollowTitle", "networkLogoFollowTitle"],
+    ["defaultAgeBadgeStyle", "ageBadgeStyle"],
+    ["defaultAgeBadge", "ageBadge"],
+    ["defaultAgeCountry", "ageCountry"],
+  ]
+  for (const [flatKey, landKey] of inheritFlatToLand) {
+    const raw = land[landKey]
+    const flatV = v[flatKey]
+    if (raw === null && flatV !== undefined) {
+      if (flatV === null && landKey === "ageBadgeStyle") {
+        land[landKey] = DEFAULT_AGE_BADGE_STYLE
+      } else if (flatV !== null) {
+        land[landKey] = Array.isArray(flatV) ? [...flatV] : flatV
+      }
+    } else if (landKey === "ageCountry" && raw !== undefined && raw !== null && normalizeCertificationCountry(raw) == null && flatV !== undefined) {
+      land[landKey] = flatV
+    }
+  }
+  v.landscape = land
+  return v as T
+}
+
+/**
  * Portrait projection: mapped flat keys ONLY (allowlist, not all flats).
  * Excluded and why:
  * - `landscape`: the other orientation profile — portrait never writes it
@@ -335,13 +464,30 @@ export const PRESET_FLAT_TO_LANDSCAPE: Record<string, keyof LandscapeServerDefau
  * (Credentials/providers/catalogs/region/date-format were never in presets.)
  */
 export function portraitPresetPatch(values: VisualPresetValues): Partial<VisualPresetValues> {
+  return portraitPatchWithMap(values, PRESET_FLAT_TO_LANDSCAPE)
+}
+
+function portraitPatchWithMap(
+  values: VisualPresetValues,
+  map: Record<string, keyof LandscapeServerDefaults>,
+): Partial<VisualPresetValues> {
   const source = values as unknown as Record<string, unknown>
   const out: Record<string, unknown> = {}
-  for (const flatKey of Object.keys(PRESET_FLAT_TO_LANDSCAPE)) {
+  for (const flatKey of Object.keys(map)) {
     const v = source[flatKey]
     if (v !== undefined) out[flatKey] = v
   }
   return out as Partial<VisualPresetValues>
+}
+
+/**
+ * Personal portrait projection: the preset contract PLUS the owned
+ * appearance flats (layout/scope/extra-style/age), canonically normalized
+ * first so legacy snapshots without the keys resolve to the factory values
+ * instead of inheriting the live previous look. Globals stay excluded.
+ */
+export function personalPortraitPatch(values: VisualPresetValues): Partial<VisualPresetValues> {
+  return portraitPatchWithMap(normalizePersonalPreset(values), PERSONAL_FLAT_TO_LANDSCAPE)
 }
 
 /**
@@ -351,9 +497,16 @@ export function portraitPresetPatch(values: VisualPresetValues): Partial<VisualP
  * (inherit flats at render via `effectiveDefaultsForShape`).
  */
 export function landscapeProfilePatch(values: VisualPresetValues): Partial<LandscapeServerDefaults> {
+  return landscapeProfilePatchWithMap(values, PRESET_FLAT_TO_LANDSCAPE)
+}
+
+function landscapeProfilePatchWithMap(
+  values: VisualPresetValues,
+  map: Record<string, keyof LandscapeServerDefaults>,
+): Partial<LandscapeServerDefaults> {
   const patch: Record<string, unknown> = {}
   const flatFixed = isFlatFixedLayer(values as unknown as Record<string, unknown>)
-  for (const [flatKey, landKey] of Object.entries(PRESET_FLAT_TO_LANDSCAPE)) {
+  for (const [flatKey, landKey] of Object.entries(map)) {
     if (flatFixed && NO_FLAT_DERIVED_LANDSCAPE_KEYS.has(landKey)) continue
     const v = (values as Record<string, unknown>)[flatKey]
     if (v !== undefined) patch[landKey] = v
@@ -366,9 +519,31 @@ export function landscapeProfilePatch(values: VisualPresetValues): Partial<Lands
   return patch as Partial<LandscapeServerDefaults>
 }
 
-/** Reverse lookup for effective resolution (profile key -> flat key). */
+/**
+ * Personal landscape apply patch: the preset contract PLUS the owned
+ * appearance keys (layout/scope/extra-style/age), canonically normalized
+ * first so legacy snapshots resolve to the factory values instead of
+ * inheriting the live previous look. Flats/globals stay byte-identical.
+ */
+export function personalLandscapeProfilePatch(values: VisualPresetValues): Partial<LandscapeServerDefaults> {
+  return landscapeProfilePatchWithMap(normalizePersonalPreset(values), PERSONAL_FLAT_TO_LANDSCAPE)
+}
+
+/**
+ * Reverse lookup for effective resolution (profile key -> flat key).
+ * Derived from the personal map (a superset of the preset contract) so the
+ * owned appearance keys resolve profile-override ?? flat like every other
+ * visual — EXCEPT the standalone extra style, which stays profile-only here:
+ * its flat legacy (`null`) must keep rendering the own-rank fallback through
+ * the existing ownership guard instead of materializing a new effective
+ * value (per-title landscape preservation and legacy preview URLs depend on
+ * it; personal apply carries the sentinel explicitly via normalize).
+ */
+const PERSONAL_REVERSE_EXCLUDED = new Set(["extraBadgeStyle"])
 const LANDSCAPE_TO_FLAT: Record<string, string> = Object.fromEntries(
-  Object.entries(PRESET_FLAT_TO_LANDSCAPE).map(([flatKey, landKey]) => [landKey, flatKey]),
+  Object.entries(PERSONAL_FLAT_TO_LANDSCAPE)
+    .filter(([, landKey]) => !PERSONAL_REVERSE_EXCLUDED.has(landKey))
+    .map(([flatKey, landKey]) => [landKey, flatKey]),
 )
 
 /**
@@ -383,7 +558,20 @@ const LANDSCAPE_TO_FLAT: Record<string, string> = Object.fromEntries(
  * wins over the flat instead of falling through. Keep in sync with the
  * poster-url normalization list.
  */
-const NULL_INHERIT_LANDSCAPE_KEYS = new Set(["badgeFont", "qualityBadgeStyle", "videoFormats"])
+const NULL_INHERIT_LANDSCAPE_KEYS = new Set([
+  "badgeFont",
+  "qualityBadgeStyle",
+  "videoFormats",
+  // Personal-owned ranking presentation: explicit `null` renders exactly
+  // like an absent key in every `land ?? flat` chain (builder, poster-config,
+  // route), so it counts as inheriting here too — the effective resolution
+  // falls through to the flat and the independence boundary freezes it
+  // instead of leaking later portrait edits into it. (Age keys keep the
+  // established explicit-null convention of `isLandscapeKeyPresent`; the
+  // personal apply path handles their null fallback separately.)
+  "posterLayout",
+  "posterFreshScope",
+])
 
 /**
  * Network fixed coords never derive from the flat into the landscape
@@ -472,16 +660,58 @@ export function resolveEffectiveLandscape(values: VisualPresetValues): VisualPre
  * must merge the raw profile in (UI does), never a schema-stripped copy.
  */
 export function applyPortraitIsolated(current: VisualPresetValues, preset: VisualPresetValues): VisualPresetValues {
+  return applyPortraitIsolatedWithMap(current, preset, PRESET_FLAT_TO_LANDSCAPE)
+}
+
+/**
+ * Personal portrait apply: the preset contract PLUS the owned appearance
+ * flats (layout/scope/extra-style/age), canonically normalized first, with
+ * the same other-shape effective freeze — the edited portrait owns its full
+ * visual recipe while the landscape effective output cannot move. Globals
+ * and delivery stay byte-identical.
+ */
+export function applyPersonalPortraitIsolated(current: VisualPresetValues, preset: VisualPresetValues): VisualPresetValues {
+  return applyPortraitIsolatedWithMap(
+    current,
+    normalizePersonalPreset(preset),
+    PERSONAL_FLAT_TO_LANDSCAPE,
+    personalNullInheritKeys(),
+  )
+}
+
+/**
+ * Null-inherit keys for the personal portrait freeze: the shared
+ * `SHAPE_NULL_INHERIT_KEYS` PLUS the owned age keys. Rationale: every render
+ * chain reads these profile keys as `land ?? flat`, so a live `null` renders
+ * exactly like an absent key (follow the flat) — freezing the pre-edit flat
+ * into it is pixel-identical and leak-proof. The shared helpers keep the
+ * established explicit-null convention for age (`isLandscapeKeyPresent`,
+ * API backfill); only the personal edited-shape isolation — whose contract
+ * is "the other shape's effective output cannot move, including
+ * absent/null fallbacks" — treats them as inheriting here. Lazy (function,
+ * not module-level const): `SHAPE_NULL_INHERIT_KEYS` is defined further
+ * below in this module.
+ */
+function personalNullInheritKeys(): ReadonlySet<string> {
+  return new Set([...SHAPE_NULL_INHERIT_KEYS, "ageBadge", "ageCountry"])
+}
+
+function applyPortraitIsolatedWithMap(
+  current: VisualPresetValues,
+  preset: VisualPresetValues,
+  map: Record<string, keyof LandscapeServerDefaults>,
+  inheritKeys: ReadonlySet<string> = SHAPE_NULL_INHERIT_KEYS,
+): VisualPresetValues {
   const cur = current as unknown as Record<string, unknown>
   const pre = preset as unknown as Record<string, unknown>
   const landscape = { ...((cur.landscape as Record<string, unknown> | undefined) ?? {}) }
   // Mai congelare coordinate assolute da un flat fixed (né verso un preset
   // fixed): creerebbero un fixed landscape finto con valori portrait.
   const skipCoords = isFlatFixedLayer(cur) || isFlatFixedLayer(pre)
-  for (const [flatKey, landKey] of Object.entries(PRESET_FLAT_TO_LANDSCAPE)) {
+  for (const [flatKey, landKey] of Object.entries(map)) {
     if (skipCoords && NO_FLAT_DERIVED_LANDSCAPE_KEYS.has(landKey)) continue
     const inherited = landscape[landKey] === undefined ||
-      (landscape[landKey] === null && (SHAPE_NULL_INHERIT_KEYS.has(landKey as string) || landKey === "extraBadgeStyle"))
+      (landscape[landKey] === null && (inheritKeys.has(landKey as string) || landKey === "extraBadgeStyle"))
     if (inherited && pre[flatKey] !== undefined && cur[flatKey] !== undefined && !presetValuesEqual(pre[flatKey], cur[flatKey])) {
       // Inherit-key flats with no concrete value freeze the canonical
       // pre-edit effective (a raw `null` would keep following, not freeze).
@@ -489,7 +719,7 @@ export function applyPortraitIsolated(current: VisualPresetValues, preset: Visua
       // sentinel (follow own rank); logoAlign freezes its landscape
       // auto ("left").
       const curV = cur[flatKey]
-      if ((curV === null || curV === undefined) && (SHAPE_NULL_INHERIT_KEYS.has(landKey as string) || landKey === "extraBadgeStyle")) {
+      if ((curV === null || curV === undefined) && (inheritKeys.has(landKey as string) || landKey === "extraBadgeStyle")) {
         const frozen = canonicalInheritFreeze(landKey as string, curV)
         if (frozen.freeze) landscape[landKey] = frozen.value
       } else {
@@ -497,7 +727,7 @@ export function applyPortraitIsolated(current: VisualPresetValues, preset: Visua
       }
     }
   }
-  return { ...current, ...portraitPresetPatch(preset), landscape } as unknown as VisualPresetValues
+  return { ...current, ...portraitPatchWithMap(preset, map), landscape } as unknown as VisualPresetValues
 }
 
 /**
@@ -512,6 +742,178 @@ export function applyLandscapeIsolated(current: VisualPresetValues, preset: Visu
   const currentLand = { ...(((current.landscape ?? {}) as unknown) as Record<string, unknown>) }
   const patch = landscapeProfilePatch(preset) as unknown as Record<string, unknown>
   return { ...current, landscape: { ...currentLand, ...patch } } as unknown as VisualPresetValues
+}
+
+/**
+ * Personal landscape apply: profile ONLY (current profile extras preserved
+ * underneath, normalized snapshot wins on top), flats/globals/delivery
+ * byte-identical — portrait effective output cannot move. The normalized
+ * snapshot carries the owned appearance keys (layout/scope/extra-style/age),
+ * so the edited landscape owns its full visual recipe instead of inheriting
+ * the live portrait look.
+ */
+export function applyPersonalLandscapeIsolated(current: VisualPresetValues, preset: VisualPresetValues): VisualPresetValues {
+  const currentLand = { ...(((current.landscape ?? {}) as unknown) as Record<string, unknown>) }
+  const patch = personalLandscapeProfilePatch(preset) as unknown as Record<string, unknown>
+  return { ...current, landscape: { ...currentLand, ...patch } } as unknown as VisualPresetValues
+}
+
+/**
+ * Ready-preset age opt-out (the six built-in/quick looks only — Apple,
+ * BetterPoster, RPDB, Essential, Ratings, Full; NEVER personal user-authored
+ * presets, whose stored content applies verbatim).
+ *
+ * The preset contract (`visualPresetValuesSchema`) predates the age trio, so
+ * ready presets carry no age keys and applying one preserves the live age
+ * state — a previously enabled classification visibly leaks into the preset
+ * look and its real thumbnail. This overlay forces the classification OFF in
+ * the EDITED shape only, after the usual isolated projection:
+ * - portrait: flat `defaultAgeBadge = false`; an inheriting landscape profile
+ *   (absent/non-boolean `ageBadge`) freezes the pre-edit live flat first —
+ *   the same rule as the portrait age setter — so the other shape's effective
+ *   output cannot move. An explicit profile value (including `false`) stays.
+ * - landscape: profile `ageBadge = false`; flats stay byte-identical.
+ *
+ * Delivery shape, age country/style and every other key pass through
+ * untouched; Information can still re-enable the badge manually afterwards.
+ * Pure; snapshots are editor-shaped records (`default*` flats + `landscape`
+ * profile), never persisted here (callers stage via the single global Save).
+ */
+export function withReadyPresetAgeOff(
+  live: { defaultAgeBadge?: unknown; landscape?: unknown },
+  isolated: Record<string, unknown>,
+  shape: "portrait" | "landscape",
+): Record<string, unknown> {
+  if (shape === "landscape") {
+    const land = { ...((isolated.landscape ?? {}) as Record<string, unknown>) }
+    land.ageBadge = false
+    return { ...isolated, landscape: land }
+  }
+  const liveLand = ((live.landscape ?? {}) as Record<string, unknown>)
+  const isoLand = { ...(((isolated.landscape ?? liveLand) as Record<string, unknown>)) }
+  if (typeof isoLand.ageBadge !== "boolean") {
+    isoLand.ageBadge = typeof live.defaultAgeBadge === "boolean" ? live.defaultAgeBadge : false
+  }
+  return { ...isolated, defaultAgeBadge: false, landscape: isoLand }
+}
+
+/**
+ * Ready-preset canonical layout (the six built-in/quick looks only — Apple,
+ * BetterPoster, RPDB, Essential, Ratings, Full; NEVER personal user-authored
+ * presets, whose stored content applies verbatim).
+ *
+ * Fresh/Card are mutually exclusive ranking presentations (like
+ * Nastro/Numero/Badge): selecting a ready canonical preset restores its OWN
+ * ranking mode — Standard — instead of inheriting the current Fresh/Card.
+ * The preset contract carries no layout keys, so this overlay forces
+ * Standard in the EDITED shape only, after the usual isolated projection:
+ * - portrait: flat `defaultPosterLayout = "standard"`; an inheriting
+ *   landscape profile (absent `posterLayout`) freezes the pre-edit live
+ *   effective first — the same rule as the portrait age setter — so the
+ *   other shape's effective output cannot move. An explicit profile value
+ *   (including Fresh/Card skins) stays.
+ * - landscape: profile `posterLayout = "standard"`; flats stay byte-identical.
+ *
+ * Fresh scope, delivery shape and every other key pass through untouched;
+ * entering Fresh afterwards still runs its neutral entry reset. Pure;
+ * snapshots are editor-shaped records, never persisted here (callers stage
+ * via the single global Save; thumbnails share the same projection).
+ */
+export function withReadyPresetLayoutStandard(
+  live: { defaultPosterLayout?: unknown; landscape?: unknown },
+  isolated: Record<string, unknown>,
+  shape: "portrait" | "landscape",
+): Record<string, unknown> {
+  if (shape === "landscape") {
+    const land = { ...((isolated.landscape ?? {}) as Record<string, unknown>) }
+    land.posterLayout = "standard"
+    return { ...isolated, landscape: land }
+  }
+  const liveLand = ((live.landscape ?? {}) as Record<string, unknown>)
+  const isoLand = { ...(((isolated.landscape ?? liveLand) as Record<string, unknown>)) }
+  // Inherit means absent AND explicit null: every effective chain reads
+  // `land.posterLayout ?? flat` (validation: nullable optional, absent/null =
+  // follow the flat), so a null profile follows the flat exactly like an
+  // absent one. Freeze the pre-edit effective flat, or the edited flat would
+  // move the other shape's effective (fresh->standard leak).
+  if (isoLand.posterLayout === undefined || isoLand.posterLayout === null) {
+    const eff = (liveLand.posterLayout ?? (live as Record<string, unknown>).defaultPosterLayout) as unknown
+    if (eff !== undefined && eff !== null) isoLand.posterLayout = eff
+  }
+  return { ...isolated, defaultPosterLayout: "standard", landscape: isoLand }
+}
+
+/**
+ * Whether the EDITED shape effectively renders Standard (`land ?? flat`):
+ * portrait reads the flat, landscape the profile override with flat
+ * fallback. Gates the ready-preset highlight so a Fresh/Card draft with
+ * matching badge visuals never claims a Standard tile. Pure read.
+ */
+export function isTargetLayoutStandard(
+  source: { defaultPosterLayout?: unknown; landscape?: unknown },
+  shape: "portrait" | "landscape",
+): boolean {
+  if (shape === "landscape") {
+    const land = ((source.landscape ?? {}) as Record<string, unknown>)
+    return (land.posterLayout ?? source.defaultPosterLayout) === "standard"
+  }
+  return source.defaultPosterLayout === "standard"
+}
+
+/**
+ * Ready Fresh canonical layout (the single Fresh look only — NEVER the six
+ * Standard looks, NEVER personal user-authored presets).
+ *
+ * The Fresh export predates layout/scope, so this overlay forces
+ * `fresh` + `ranked` in the EDITED shape only, after the usual isolated
+ * projection (same freeze rule as the Standard overlay, mirrored):
+ * - portrait: flats own `fresh`/`ranked`; an inheriting landscape profile
+ *   (absent/null `posterLayout`/`posterFreshScope`) freezes the pre-edit
+ *   live effective first, so the other shape's effective output cannot move.
+ *   An explicit profile value stays.
+ * - landscape: profile owns `fresh`/`ranked`; flats stay byte-identical.
+ *
+ * Pure; snapshots are editor-shaped records, never persisted here.
+ */
+export function withReadyPresetLayoutFresh(
+  live: { defaultPosterLayout?: unknown; defaultPosterFreshScope?: unknown; landscape?: unknown },
+  isolated: Record<string, unknown>,
+  shape: "portrait" | "landscape",
+): Record<string, unknown> {
+  if (shape === "landscape") {
+    const land = { ...((isolated.landscape ?? {}) as Record<string, unknown>) }
+    land.posterLayout = "fresh"
+    land.posterFreshScope = "ranked"
+    return { ...isolated, landscape: land }
+  }
+  const liveLand = ((live.landscape ?? {}) as Record<string, unknown>)
+  const isoLand = { ...(((isolated.landscape ?? liveLand) as Record<string, unknown>)) }
+  if (isoLand.posterLayout === undefined || isoLand.posterLayout === null) {
+    const eff = (liveLand.posterLayout ?? (live as Record<string, unknown>).defaultPosterLayout) as unknown
+    if (eff !== undefined && eff !== null) isoLand.posterLayout = eff
+  }
+  if (isoLand.posterFreshScope === undefined || isoLand.posterFreshScope === null) {
+    const effScope = (liveLand.posterFreshScope ?? (live as Record<string, unknown>).defaultPosterFreshScope) as unknown
+    if (effScope !== undefined && effScope !== null) isoLand.posterFreshScope = effScope
+  }
+  return { ...isolated, defaultPosterLayout: "fresh", defaultPosterFreshScope: "ranked", landscape: isoLand }
+}
+
+/**
+ * Whether the EDITED shape effectively renders Fresh (`land ?? flat`):
+ * portrait reads the flat, landscape the profile override with flat
+ * fallback. Gates the Fresh ready-tile highlight so a Standard draft with
+ * matching badge visuals never claims the Fresh tile. Pure read.
+ */
+export function isTargetLayoutFresh(
+  source: { defaultPosterLayout?: unknown; landscape?: unknown },
+  shape: "portrait" | "landscape",
+): boolean {
+  if (shape === "landscape") {
+    const land = ((source.landscape ?? {}) as Record<string, unknown>)
+    return (land.posterLayout ?? source.defaultPosterLayout) === "fresh"
+  }
+  return source.defaultPosterLayout === "fresh"
 }
 
 /**

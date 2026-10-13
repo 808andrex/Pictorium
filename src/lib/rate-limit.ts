@@ -65,6 +65,10 @@ const limits: Record<string, BucketConfig> = {
   // contenuto come tmdb, refill uguale. La quota Fanart è stretta: la cache
   // 24h/10min della route assorbe i ricaricamenti.
   fanart:   { maxTokens: 60,  refillRate: 5,  refillWindow: 1000 },
+  // TVDB artworks gallery: la UI ne fa una per apertura sezione a titolo
+  // (lazy, come Fanart) — stessi burst/refill. La cache 6h/10min della route
+  // assorbe i ricaricamenti; la quota TVDB resta protetta dal breaker.
+  tvdb:      { maxTokens: 60,  refillRate: 5,  refillWindow: 1000 },
   // PIN auth: tentativi di brute-force su 4-8 cifre — burst contenuto e
   // refill lento (20 burst, ~2/s sostenuti). La protezione reale viene da
   // PIN min 6 cifre + rotazione sessionSecret a ogni setPin.

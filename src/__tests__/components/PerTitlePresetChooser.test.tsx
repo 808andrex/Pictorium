@@ -1,8 +1,8 @@
 /**
  * PerTitlePresetChooser (task 2, UI):
  * collapsed quick-preset disclosure in single-poster customization. Closed by
- * default and keyboard operable; expanding shows the three built-in full
- * looks plus the saved personal presets for the current orientation (lazy
+ * default and keyboard operable; expanding shows the seven canonical ready
+ * looks (same source as the global Preset-tab gallery) plus the saved
  * GET /api/defaults/presets?shape=). Every apply goes through the per-title
  * action only — never the global-defaults applier, never autosave. Stale
  * orientation/user responses are never shown nor clickable; the saved list
@@ -18,11 +18,16 @@ import { PictoriumProvider, type PictoriumCtx } from "@/lib/context"
 import { PosterEditorProvider, usePosterEditor, type PosterEditorCtx } from "@/lib/contexts/PosterEditorContext"
 import { ThemeProvider } from "@/lib/contexts/ThemeContext"
 import { http } from "@/lib/http"
+import { t as suiteT } from "@/lib/i18n"
+import { consumeSettingsTab } from "@/lib/settings-tab"
 import { MOCK_CTX, renderWithCtx } from "@/__tests__/test-utils"
+import itDictionary from "@/lib/translations/it.json"
 import {
   APPLE_VISUAL_DEFAULTS,
   BETTER_POSTER_VISUAL_DEFAULTS,
+  FRESH_VISUAL_DEFAULTS,
 } from "@/lib/default-visual-presets"
+import { quickLookDesired } from "@/lib/quick-visual-presets"
 import type { VisualPreset } from "@/lib/visual-presets"
 import type { SearchResult, TMDBImage } from "@/lib/types"
 
@@ -31,6 +36,40 @@ vi.mock("@/lib/http", async (importOriginal) => {
   return { ...actual, http: vi.fn() }
 })
 const httpMock = vi.mocked(http)
+
+/**
+ * Ready-label localization (same seven global keys as the Preset-tab
+ * gallery, `t(labelKey)`): the suite-wide i18n mock only carries three of
+ * them, so this suite scopes the REAL Italian dictionary to exactly those
+ * seven label keys. Every other key keeps the suite key-echo behavior
+ * (notably `ui.perTitleAgeGlobalNote`), and the global mock is untouched —
+ * the Badge-tab quick-look suite still relies on those key echoes.
+ */
+const READY_LABEL_KEYS = [
+  "ui.configPresetApple",
+  "ui.configPresetBetterPoster",
+  "ui.configPresetRpdb",
+  "ui.configPresetEssential",
+  "ui.configPresetRatings",
+  "ui.configPresetFull",
+  "ui.configPresetFresh",
+] as const
+
+const readyItLabels: Record<string, string> = Object.fromEntries(
+  READY_LABEL_KEYS.map((k) => [k, (itDictionary as Record<string, string>)[k]]),
+)
+
+function chooserT(key: string, params?: Record<string, string | number>): string {
+  const hit = readyItLabels[key]
+  if (typeof hit === "string" && hit.length > 0) {
+    let val = hit
+    if (params) {
+      for (const [k, v] of Object.entries(params)) val = val.replace(`{${k}}`, String(v))
+    }
+    return val
+  }
+  return suiteT(key, params)
+}
 
 const hub: {
   setShape?: (s: "portrait" | "landscape") => void
@@ -77,7 +116,7 @@ function Harness({ shape = "portrait", userId = null, ctxOverrides }: HarnessPro
     hub.setShape = setLiveShape
     hub.setUserId = setLiveUserId
   }, [])
-  const ctx: PictoriumCtx = { ...MOCK_CTX, ...ctxOverrides, currentUserId: liveUserId }
+  const ctx: PictoriumCtx = { ...MOCK_CTX, t: chooserT, ...ctxOverrides, currentUserId: liveUserId }
   return (
     <ThemeProvider>
       <PosterEditorProvider>
@@ -139,6 +178,7 @@ function toggle() {
 }
 
 async function openChooser(u: ReturnType<typeof userEvent.setup>) {
+  // Closed by default: every suite opens explicitly through the real toggle.
   await u.click(toggle())
   expect(toggle()).toHaveAttribute("aria-expanded", "true")
 }
@@ -168,29 +208,78 @@ const LOGO: TMDBImage = {
 }
 
 describe("PerTitlePresetChooser disclosure", () => {
-  it("starts closed, fetches nothing, and opens/closes via keyboard and click", async () => {
+  it("starts closed with no fetch, and opens via click/Enter/Space with all seven looks", async () => {
     const u = userEvent.setup()
     render(<Harness />)
+    // Closed by default: the heading stays visible and operable, the body is
+    // unmounted, and the saved list never fetches while closed.
     expect(toggle()).toHaveAttribute("aria-expanded", "false")
-    expect(screen.queryByText("BetterPoster")).not.toBeInTheDocument()
+    expect(screen.queryByText("Stile BetterPoster")).not.toBeInTheDocument()
+    expect(screen.queryByText("Stile Apple")).not.toBeInTheDocument()
+    expect(screen.queryByText("Essenziale")).not.toBeInTheDocument()
     expect(calls.filter((c) => c.includes("/api/defaults/presets"))).toHaveLength(0)
 
-    // Keyboard open: focus + Enter activates the native disclosure button.
-    toggle().focus()
-    await u.keyboard("[Enter]")
+    // Click open: all seven canonical ready looks (same source as the global
+    // gallery, same Italian dictionary names via t(labelKey)).
+    await u.click(toggle())
     expect(toggle()).toHaveAttribute("aria-expanded", "true")
     const controls = toggle().getAttribute("aria-controls")
     expect(controls).toBeTruthy()
     expect(document.getElementById(controls!)).not.toBeNull()
-    expect(screen.getByText("BetterPoster")).toBeInTheDocument()
-    expect(screen.getByText("RPDB")).toBeInTheDocument()
-    expect(screen.getByText("Apple")).toBeInTheDocument()
+    for (const name of ["Stile Apple", "Stile BetterPoster", "Stile RPDB", "Essenziale", "Voti", "Completo", "Fresh"]) {
+      expect(screen.getByText(name)).toBeInTheDocument()
+    }
+    // Honest scope: title-only plus the global-owned age note.
+    expect(screen.getByTestId("per-title-age-note")).toHaveTextContent("ui.perTitleAgeGlobalNote")
     expect(calls.filter((c) => c.includes("/api/defaults/presets?shape=portrait"))).toHaveLength(1)
 
     // Collapse via click unmounts the body (lazy list torn down).
     await u.click(toggle())
     expect(toggle()).toHaveAttribute("aria-expanded", "false")
-    expect(screen.queryByText("BetterPoster")).not.toBeInTheDocument()
+    expect(screen.queryByText("Stile BetterPoster")).not.toBeInTheDocument()
+
+    // Keyboard reopen: focus + Enter activates the native disclosure button.
+    toggle().focus()
+    await u.keyboard("[Enter]")
+    expect(toggle()).toHaveAttribute("aria-expanded", "true")
+    expect(screen.getByText("Stile BetterPoster")).toBeInTheDocument()
+
+    // Collapse again, then Space opens too (native button behavior).
+    await u.click(toggle())
+    expect(toggle()).toHaveAttribute("aria-expanded", "false")
+    toggle().focus()
+    await u.keyboard(" ")
+    expect(toggle()).toHaveAttribute("aria-expanded", "true")
+    expect(screen.getByText("Stile Apple")).toBeInTheDocument()
+  })
+
+  it("close/reopen keeps data with read-only semantics (lazy GETs only, no PUT, no stored flag)", async () => {
+    const u = userEvent.setup()
+    render(<Harness />)
+    await openChooser(u)
+    await resolvePending(0, [entry("Mine", "33333333-3333-4333-8333-333333333333")])
+    expect(await screen.findByRole("button", { name: "Mine" })).toBeInTheDocument()
+
+    // Collapse unmounts the body, reopen lazily refetches for the same target.
+    await u.click(toggle())
+    expect(toggle()).toHaveAttribute("aria-expanded", "false")
+    await openChooser(u)
+    expect(pending).toHaveLength(2)
+    await resolvePending(1, [entry("Mine", "33333333-3333-4333-8333-333333333333")])
+    expect(await screen.findByRole("button", { name: "Mine" })).toBeInTheDocument()
+
+    // Read-only disclosure: every request is a lazy saved-list GET, never a
+    // PUT; the open state is never persisted (no disclosure storage key).
+    expect(calls.every((c) => c.startsWith("/api/defaults/presets?shape="))).toBe(true)
+    for (const [, options] of httpMock.mock.calls) {
+      expect((options as { method?: string } | undefined)?.method ?? "GET").not.toBe("PUT")
+    }
+    const storedKeys: string[] = []
+    for (let i = 0; i < window.localStorage.length; i += 1) {
+      const key = window.localStorage.key(i)
+      if (key) storedKeys.push(key)
+    }
+    expect(storedKeys.filter((k) => /disclosure|per-title-preset-open/i.test(k))).toHaveLength(0)
   })
 })
 
@@ -206,7 +295,7 @@ describe("PerTitlePresetChooser apply", () => {
     const applySpy = vi.spyOn(hub.ed!, "applyPerTitleVisualPreset")
     const globalSpy = vi.spyOn(hub.ed!, "applyVisualPreset")
 
-    await u.click(screen.getByRole("button", { name: "BetterPoster" }))
+    await u.click(screen.getByRole("button", { name: "Stile BetterPoster" }))
 
     expect(applySpy).toHaveBeenCalledTimes(1)
     expect(applySpy).toHaveBeenCalledWith(BETTER_POSTER_VISUAL_DEFAULTS, LOGO)
@@ -246,13 +335,37 @@ describe("PerTitlePresetChooser apply", () => {
     expect(defaultsSnapshot(hub.ed!)).toEqual(beforeDefaults)
   })
 
+  it("applies quick looks and Fresh through the per-title action (canonical recipes)", async () => {
+    const u = userEvent.setup()
+    render(<Harness ctxOverrides={{ selectedLogo: LOGO }} />)
+    await openChooser(u)
+    await resolvePending(0, [])
+
+    const applySpy = vi.spyOn(hub.ed!, "applyPerTitleVisualPreset")
+    const globalSpy = vi.spyOn(hub.ed!, "applyVisualPreset")
+
+    // Essential resolves the canonical quick-look recipe (badge patch +
+    // transform reset — never live previous values), Fresh its faithful
+    // snapshot; both stay per-title (no global apply).
+    await u.click(screen.getByRole("button", { name: "Essenziale" }))
+    expect(applySpy).toHaveBeenLastCalledWith(quickLookDesired("essential", true), LOGO)
+    // The apply re-renders the provider with a new context identity: re-spy
+    // the live object so the second click is observed on the current ed.
+    const applySpy2 = vi.spyOn(hub.ed!, "applyPerTitleVisualPreset")
+    await u.click(screen.getByRole("button", { name: "Fresh" }))
+    expect(applySpy2).toHaveBeenLastCalledWith(FRESH_VISUAL_DEFAULTS, LOGO)
+    expect(applySpy).toHaveBeenCalledTimes(1)
+    expect(applySpy2).toHaveBeenCalledTimes(1)
+    expect(globalSpy).not.toHaveBeenCalled()
+  })
+
   it("shows no active-preset highlight (no sticky selection state)", async () => {
     const u = userEvent.setup()
     render(<Harness />)
     await openChooser(u)
     await resolvePending(0, [entry("Mine", "33333333-3333-4333-8333-333333333333")])
-    await u.click(screen.getByRole("button", { name: "BetterPoster" }))
-    for (const name of ["BetterPoster", "RPDB", "Apple", "Mine"]) {
+    await u.click(screen.getByRole("button", { name: "Stile BetterPoster" }))
+    for (const name of ["Stile BetterPoster", "Stile RPDB", "Stile Apple", "Essenziale", "Voti", "Completo", "Fresh", "Mine"]) {
       const btn = screen.getByRole("button", { name })
       expect(btn).not.toHaveAttribute("aria-pressed")
       expect(btn.getAttribute("class") ?? "").not.toMatch(/active|selected/)
@@ -326,7 +439,7 @@ describe("PerTitlePresetChooser saved-list states", () => {
     expect(await screen.findByRole("alert")).toBeInTheDocument()
     // Built-ins stay usable while the saved list failed.
     const applySpy = vi.spyOn(hub.ed!, "applyPerTitleVisualPreset")
-    await u.click(screen.getByRole("button", { name: "RPDB" }))
+    await u.click(screen.getByRole("button", { name: "Stile RPDB" }))
     expect(applySpy).toHaveBeenCalledTimes(1)
 
     await u.click(screen.getByRole("button", { name: /Riprova/ }))
@@ -352,11 +465,12 @@ describe("PerTitlePresetChooser saved-list states", () => {
     expect(pending).toHaveLength(3)
 
     // Fresh reopen resolves first, then the stale retry lands late.
-    await resolvePending(2, [entry("Fresh", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")])
-    expect(await screen.findByRole("button", { name: "Fresh" })).toBeInTheDocument()
+    // (Saved entry name avoids the ready "Fresh" look added in T2.)
+    await resolvePending(2, [entry("Reopened", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")])
+    expect(await screen.findByRole("button", { name: "Reopened" })).toBeInTheDocument()
     await resolvePending(1, [entry("Stale retry", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")])
     expect(screen.queryByRole("button", { name: "Stale retry" })).not.toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "Fresh" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Reopened" })).toBeInTheDocument()
     expect(screen.queryByRole("alert")).not.toBeInTheDocument()
   })
 
@@ -415,7 +529,7 @@ describe("PerTitlePresetChooser saved-list states", () => {
     await resolvePending(0, [])
     expect(await screen.findByText("ui.perTitlePresetsEmpty")).toBeInTheDocument()
     // Built-ins remain available alongside the empty saved list.
-    expect(screen.getByRole("button", { name: "Apple" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Stile Apple" })).toBeInTheDocument()
   })
 })
 
@@ -480,6 +594,9 @@ describe("PerTitlePresetChooser EditView mount", () => {
     }
     render(<SwitchHarness />)
     expect(chooserToggle()).not.toBeNull()
+    // Closed by default on a fresh mount: open, then switch title — the
+    // title-keyed remount resets to closed (no auto-open on mount/title).
+    expect(chooserToggle()).toHaveAttribute("aria-expanded", "false")
     await u.click(chooserToggle()!)
     expect(chooserToggle()).toHaveAttribute("aria-expanded", "true")
 
@@ -499,6 +616,10 @@ describe("PerTitlePresetChooser StrictMode", () => {
         <Harness />
       </StrictMode>,
     )
+    // Closed by default: nothing fetches until the first explicit open, so
+    // the StrictMode setup->cleanup->setup replay runs while closed and the
+    // open issues a single guarded load.
+    expect(pending).toHaveLength(0)
     await openChooser(u)
     expect(pending).toHaveLength(1)
     await resolvePending(0, [entry("Strict mine", "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee")])
@@ -536,7 +657,7 @@ describe("PerTitlePresetChooser borderless styling", () => {
     await openChooser(u)
     expect(section.getAttribute("class")?.split(/\s+/) ?? []).toContain("mb-4")
     await resolvePending(0, [])
-    const chip = screen.getByRole("button", { name: "BetterPoster" })
+    const chip = screen.getByRole("button", { name: "Stile BetterPoster" })
     expect(chip.getAttribute("class") ?? "").toContain("border")
   })
 
@@ -548,5 +669,46 @@ describe("PerTitlePresetChooser borderless styling", () => {
     })
     const section = screen.getByTestId("per-title-preset-chooser")
     expect(section.getAttribute("class")?.split(/\s+/) ?? []).toContain("mb-4")
+  })
+})
+
+describe("PerTitlePresetChooser scope honesty", () => {
+  it("shows title-only scope copy and opens global styles without mutating defaults", async () => {
+    const u = userEvent.setup()
+    const setSettingsOpen = vi.fn()
+    render(<Harness ctxOverrides={{ selectedLogo: LOGO, setSettingsOpen }} />)
+    await openChooser(u)
+    await resolvePending(0, [])
+    // Honest scope: this title only, save to apply — never an inheritance claim.
+    expect(screen.getByTestId("per-title-scope-note")).toHaveTextContent("ui.perTitleScopeNote")
+    const before = defaultsSnapshot(hub.ed!)
+    await u.click(screen.getByTestId("per-title-go-global"))
+    expect(setSettingsOpen).toHaveBeenCalledWith(true)
+    // Existing request mechanism: the legacy badge preset-link destination
+    // is deliberately remapped to the new preset tab (compat).
+    expect(consumeSettingsTab()).toBe("preset")
+    expect(defaultsSnapshot(hub.ed!)).toEqual(before)
+  })
+})
+
+describe("PerTitlePresetChooser ready localization", () => {
+  it("renders the seven ready looks with the Italian dictionary names (same keys as the global gallery)", async () => {
+    const u = userEvent.setup()
+    render(<Harness />)
+    await openChooser(u)
+    await resolvePending(0, [])
+    // Same seven global label keys as the Preset-tab gallery (t(labelKey)),
+    // resolved through the real Italian dictionary (read, not assumed).
+    for (const name of ["Stile Apple", "Stile BetterPoster", "Stile RPDB", "Essenziale", "Voti", "Completo", "Fresh"]) {
+      expect(screen.getByText(name)).toBeInTheDocument()
+    }
+    // No raw English fallback for the three localized quick looks; the
+    // Fresh brand name stays identical across dictionaries.
+    for (const raw of ["Essential", "Ratings", "Full"]) {
+      expect(screen.queryByText(raw)).not.toBeInTheDocument()
+    }
+    expect(screen.getByRole("button", { name: "Essenziale" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Voti" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Completo" })).toBeInTheDocument()
   })
 })

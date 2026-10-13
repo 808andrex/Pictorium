@@ -1,7 +1,7 @@
 "use client"
 
-import { useState, useId, type ReactNode } from "react"
-import { ChevronDown, Flame, Layers, Menu, Palette, Sparkles, Star, Trophy, Tv, Check } from "lucide-react"
+import { useEffect, useState, useId, type ReactNode } from "react"
+import { ChevronDown, Flame, Layers, Menu, Palette, SlidersHorizontal, Sparkles, Star, Trophy, Tv } from "lucide-react"
 import { useT } from "@/lib/contexts/TranslationContext"
 import { usePosterEditor } from "@/lib/contexts/PosterEditorContext"
 import { usePSelector } from "@/lib/context"
@@ -16,6 +16,7 @@ import {
   ribbonVariantValue,
   legacyExtraStyleForRank,
   type RankingAppearance,
+  type RankingPresentation,
   type RankBadgeVariant,
   type RankRibbonVariant,
 } from "@/components/RankingAppearanceSelector"
@@ -23,14 +24,21 @@ import { type ExtraBadgeStyle, type RankingBadgeStyle } from "@/lib/badge-styles
 import type { LandscapeServerDefaults } from "@/lib/server-defaults"
 import type { VisualPresetValues } from "@/lib/visual-presets"
 import { Toggle } from "@/components/Toggle"
+import { PosterStyleCard } from "@/components/settings/PosterStyleCard"
+import { VisualPresetsSection } from "@/components/settings/VisualPresetsSection"
 import { REGIONS } from "@/lib/regions"
-import { PosterLayoutSelector, PosterFreshScopeSelector } from "@/components/PosterLayoutSelector"
-import { BadgeStyleSelector } from "@/components/ui"
+import { PosterLayoutSelector } from "@/components/PosterLayoutSelector"
+import { isCardSkin, type CardSkin } from "@/lib/card-layout-skins"
+import { BadgeStyleSelector, BadgeFontSelector } from "@/components/ui"
 import type { DefaultsPreviewFamily } from "@/lib/poster-url"
-import { isBottomSeparateRatingsStyle, getSeparateRatingsStyleForShape, DEFAULT_AGE_BADGE_STYLE, DEFAULT_QUALITY_BADGE_OFFSET_X, DEFAULT_QUALITY_BADGE_OFFSET_Y, DEFAULT_QUALITY_BADGE_OFFSET_X_LANDSCAPE, DEFAULT_QUALITY_BADGE_OFFSET_Y_LANDSCAPE, getSeparateBadgeDefaultScale } from "@/lib/badge-styles"
+import type { PosterElementId } from "@/components/settings/PosterElementNavigation"
+import { isBottomSeparateRatingsStyle, getSeparateRatingsStyleForShape, DEFAULT_AGE_BADGE_STYLE, DEFAULT_BADGE_FONT, DEFAULT_QUALITY_BADGE_STYLE, DEFAULT_SEPARATE_RATINGS_STYLE, EXTRA_BADGE_FOLLOW_RANK, DEFAULT_QUALITY_BADGE_OFFSET_X, DEFAULT_QUALITY_BADGE_OFFSET_Y, DEFAULT_QUALITY_BADGE_OFFSET_X_LANDSCAPE, DEFAULT_QUALITY_BADGE_OFFSET_Y_LANDSCAPE, getSeparateBadgeDefaultScale } from "@/lib/badge-styles"
 import { DEFAULT_AGE_COUNTRY } from "@/lib/certification"
+import { KNOWN_VIDEO_FORMATS } from "@/lib/av-specs"
 import { NATURAL_GRADIENT_DEFAULTS } from "@/lib/gradient-presets"
+import { QUICK_BADGE_PATCHES, quickTransformPatch as sharedQuickTransformPatch, withReadyPresetExtraStyleReset } from "@/lib/quick-visual-presets"
 import { GenreStyleSection, QualityStyleSection } from "@/components/settings/BadgeStyleSection"
+import { AvailabilityGate, availabilityDisplayState, isAgeStyleActive, isBadgeFontActive, isCustomRatingsActive, isExtraStyleActive, isGenreStyleActive, isQualityStyleActive, isSeparateStyleActive, orderActiveFirst, type EffectiveBadgeFlags } from "@/components/settings/SettingsElementAvailability"
 import { RatingSourceIcon } from "@/components/RatingSourceIcon"
 import { UI_RATING_SOURCES } from "@/lib/rating-weights"
 import { SASH_BUCKETS, DEFAULT_SASH_ORDER, parseSashOrder, moveSashItem, type SashBucket } from "@/lib/badge-priority"
@@ -44,6 +52,8 @@ import {
   applyPortraitIsolated,
   portraitPresetPatch,
   resolveEffectiveLandscape,
+  withReadyPresetAgeOff,
+  withReadyPresetLayoutStandard,
 } from "@/lib/visual-presets"
 import {
   APPLE_VISUAL_DEFAULTS,
@@ -63,13 +73,27 @@ const TREND_SASH_STASH_KEY_LANDSCAPE = "pictorium_trend_sash_stash:landscape"
 const RANK_SASH_STASH_KEY = "pictorium_rank_sash_stash"
 const RANK_SASH_STASH_KEY_LANDSCAPE = "pictorium_rank_sash_stash:landscape"
 
-function stashSashOrder(key: string, order: readonly SashBucket[] | null | undefined): void {
+// Staged-mode stash (five-tab settings): in-memory per edit target, never
+// localStorage and never a durable config write before the global Save.
+// Standalone (mode undefined) keeps the legacy localStorage stash.
+const stagedStash = new Map<string, SashBucket[]>()
+
+function stashSashOrder(key: string, order: readonly SashBucket[] | null | undefined, staged?: boolean): void {
+  if (staged) {
+    if (order && order.length > 0) stagedStash.set(key, [...order])
+    return
+  }
   try {
     if (order && order.length > 0) localStorage.setItem(key, JSON.stringify(order))
   } catch {}
 }
 
-function popStashedSashOrder(key: string): SashBucket[] | null {
+function popStashedSashOrder(key: string, staged?: boolean): SashBucket[] | null {
+  if (staged) {
+    const hit = stagedStash.get(key) ?? null
+    if (hit) stagedStash.delete(key)
+    return hit && hit.length > 0 ? hit : null
+  }
   try {
     const raw = localStorage.getItem(key)
     if (!raw) return null
@@ -99,17 +123,27 @@ export function isSideControlVisible(args: {
 /** Presentational macro-group disclosure for the Badge tab. The body stays
  *  mounted and hides via `hidden` (no state loss, no tab stops when closed).
  *  Never reports a preview family: child cards keep their own `famAttrs`. */
-function BadgeGroup({ id, title, icon: Icon, defaultOpen, children }: {
+function BadgeGroup({ id, title, icon: Icon, defaultOpen, hidden, children, bare }: {
   id: "style" | "base" | "overlay" | "quality"
   title: string
   icon: typeof Layers
   defaultOpen: boolean
+  hidden?: boolean
   children: ReactNode
+  /** Family mode: selected element cards shown directly, no macro heading. */
+  bare?: boolean
 }) {
   const [open, setOpen] = useState(defaultOpen)
   const bodyId = useId()
+  if (bare) {
+    return (
+      <div data-testid={`badge-group-${id}`} hidden={hidden} className="space-y-3.5">
+        {children}
+      </div>
+    )
+  }
   return (
-    <section data-testid={`badge-group-${id}`}>
+    <section data-testid={`badge-group-${id}`} hidden={hidden}>
       <button
         type="button"
         data-testid={`badge-group-${id}-toggle`}
@@ -135,12 +169,66 @@ function BadgeGroup({ id, title, icon: Icon, defaultOpen, children }: {
   )
 }
 
+/** Common badge font (single existing selector, moved outside the genre
+ *  gate): the same BadgeFontSelector + target scoping as GenreStyleSection,
+ *  rendered once outside the genre AvailabilityGate so a disabled genre
+ *  fieldset never traps it. Gated by the canonical isBadgeFontActive over the
+ *  effective flags (common text style): with no supported font consumer
+ *  active the whole group unmounts — never an orphan disclosure/hint. */
+function CommonFontCard({ shape, onPreviewFamilyChange, flags }: { shape?: BadgeShapeTarget; onPreviewFamilyChange?: (f: DefaultsPreviewFamily) => void; flags: EffectiveBadgeFlags }) {
+  const { t } = useT()
+  const ed = usePosterEditor()
+  const { scoped } = useShapeBadgeDefaults(shape)
+  const [badgeFont, setBadgeFont] = scoped("badgeFont", ed.defaultBadgeFont, ed.setDefaultBadgeFont)
+  const famAttrs = (family: DefaultsPreviewFamily) => ({
+    "data-preview-family": family,
+    onFocusCapture: () => onPreviewFamilyChange?.(family),
+    onPointerDownCapture: () => onPreviewFamilyChange?.(family),
+  })
+  const fontActive = isBadgeFontActive(flags)
+  if (!fontActive) return null
+  return (
+    <div {...famAttrs("genre")} data-testid="badge-common-font" className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-1.5 shadow-sm">
+      <label className="text-[11px] text-muted font-medium block">{t("ui.badgeFont")}</label>
+      <BadgeFontSelector value={badgeFont} onChange={(v) => setBadgeFont(v)} />
+    </div>
+  )
+}
+
 /** Badge defaults tab. `shape` selects the edit target (T1 single selector):
  * portrait reads/writes the shared flats, landscape the `landscape` profile.
  * Data sources, endpoints, region, date format and API settings stay global.
  * `onPreviewFamilyChange` (optional) reports which card the user is editing so
  * the preview owner can show a pertinent sample — preview-only, never writes. */
-export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange }: { active: boolean; shape?: BadgeShapeTarget; onPreviewFamilyChange?: (f: DefaultsPreviewFamily) => void }) {
+export type BadgeDefaultsMode = "rankings" | "information" | "appearance"
+
+export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange, presetsEnabled = true, unifiedView, element, onOpenAdvanced, mode, testStaged, testDirty }: {
+  active: boolean
+  shape?: BadgeShapeTarget
+  onPreviewFamilyChange?: (f: DefaultsPreviewFamily) => void
+  presetsEnabled?: boolean
+  unifiedView?: "summary" | "family"
+  element?: PosterElementId | null
+  onOpenAdvanced?: () => void
+  /**
+   * Additive presentation mode (five-tab settings): filters the existing
+   * detail cards per tab without any new control implementation.
+   * - rankings: rank switch + master gate + appearance + layout (ranked-only,
+   *   no scope choice) + priority order
+   * - information: visibility switches only (no shape/font/position/size)
+   * - appearance: styles only (no visibility switches)
+   * Absent = legacy full behavior (standalone reuse/tests unchanged).
+   */
+  mode?: BadgeDefaultsMode
+  /**
+   * Staged-session test guard (five-tab settings): when true the provider
+   * Test never calls the legacy saveDefaults flush (which would bypass the
+   * global Save); instead testing is disabled while the session is dirty
+   * with a short Save-first hint. Absent = legacy standalone behavior.
+   */
+  testStaged?: boolean
+  testDirty?: boolean
+}) {
   const { t } = useT()
   const ed = usePosterEditor()
   const accentColor = usePSelector((v) => v.accentColor)
@@ -149,6 +237,20 @@ export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange }: {
   const sashStashKey = isLandscape ? TREND_SASH_STASH_KEY_LANDSCAPE : TREND_SASH_STASH_KEY
   const [sourcesOpen, setSourcesOpen] = useState(false)
   const [sashDrag, setSashDrag] = useState<SashBucket | null>(null)
+  // Unified workspace (Phase 1): `summary` (style tab) shows presets + quick
+  // toggles + a single link to the workspace, no duplicate details;
+  // `family` (advanced tab) shows the existing detail cards filtered by the
+  // selected element, each mounted + hidden so switching never loses state.
+  // Absent = legacy full behavior (standalone reuse/tests).
+  const familyMode = unifiedView === "family"
+  const hideFor = (...els: PosterElementId[]): boolean | undefined =>
+    familyMode && element ? !els.includes(element) : undefined
+  // Five-tab presentation filter (additive): with `mode` set, each detail
+  // card declares its single home tab. Every primary switch lives in exactly
+  // one tab; legacy standalone (mode undefined) renders everything.
+  const modeHide = (...homes: BadgeDefaultsMode[]): boolean | undefined =>
+    mode === undefined ? undefined : (!homes.includes(mode) ? true : undefined)
+  const modeBare = familyMode || mode !== undefined
 
   // Preview-family scope (U2): each card reports its family on explicit press
   // or keyboard focus so the preview shows a pertinent sample. Press (not
@@ -180,25 +282,171 @@ export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange }: {
   const [badgeStyle] = scoped("badgeStyle", ed.defaultBadgeStyle, ed.setDefaultBadgeStyle)
   const [rankingBadgeStyle, setRankingBadgeStyle] = scoped("rankingBadgeStyle", ed.defaultRankingBadgeStyle, ed.setDefaultRankingBadgeStyle)
   const [extraBadgeStyle, setExtraBadgeStyle] = scoped("extraBadgeStyle", ed.defaultExtraBadgeStyle, ed.setDefaultExtraBadgeStyle)
-  // Logo-block alignment, scoped per edit target like the badge styles
-  // (task 3B2): portrait writes the shared flat (`null` = per-shape auto),
-  // landscape the profile override (`undefined` = follow the flat, via the
-  // reset above). Portraits render centered by contract; the control only
-  // changes landscape pixels.
-  const [logoAlign, setLogoAlign] = scoped("logoAlign", ed.defaultLogoAlign, ed.setDefaultLogoAlign)
+  // Logo-block alignment is Auto-only (no selector anywhere): the staged
+  // session normalizes a stored explicit "center" (flat/profile) to null
+  // (portrait center, landscape left by server contract; an explicit "left"
+  // already renders Auto and stays) and no preset apply may reintroduce an
+  // explicit value. The explicit `?align=` / env / schema / server chain is
+  // preserved.
   // Graphical cover layout, scoped per edit target like the badge styles:
   // portrait writes the shared flat default, landscape the profile override
   // (reset below clears it back to following the flat).
   const [posterLayout, setPosterLayout] = scoped("posterLayout", ed.defaultPosterLayout, ed.setDefaultPosterLayout)
-  // Fresh apply scope, scoped per edit target like the layout above:
-  // portrait writes the shared flat default, landscape the profile override.
-  const [posterFreshScope, setPosterFreshScope] = scoped("posterFreshScope", ed.defaultPosterFreshScope, ed.setDefaultPosterFreshScope)
+  // Targeted Fresh-entry reset (Classifiche unified presentation only):
+  // entering Fresh neutralizes ONLY the title-logo and genre/rating-group
+  // positions in the edited shape (autozero contract: genre 0/0, logo
+  // null/null) via the existing scoped setters — scales and every other
+  // setting stay intact, the other shape freezes via the standard setters.
+  const [, setGenreBadgeOffsetX] = scoped("genreBadgeOffsetX", ed.defaultGenreBadgeOffsetX, ed.setDefaultGenreBadgeOffsetX)
+  const [, setGenreBadgeOffsetY] = scoped("genreBadgeOffsetY", ed.defaultGenreBadgeOffsetY, ed.setDefaultGenreBadgeOffsetY)
+  const [, setLogoOffsetX] = scoped("logoOffsetX", ed.defaultLogoOffsetX, ed.setDefaultLogoOffsetX)
+  const [, setLogoOffsetY] = scoped("logoOffsetY", ed.defaultLogoOffsetY, ed.setDefaultLogoOffsetY)
+  // Ranked-only Fresh/Card scope (no "all titles" choice in settings):
+  // portrait reads the shared flat default, landscape the profile override.
+  // The staged session normalizes a stored explicit "all" to "ranked"; the
+  // public ?freshScope=all contract (per-title, old callers) is untouched.
+  // Read-only here: the scope renders ranked-only, the hint below states it.
+  const [posterFreshScope] = scoped("posterFreshScope", ed.defaultPosterFreshScope, ed.setDefaultPosterFreshScope)
   // Età per-shape (task3A): portrait = flat condivisi, landscape = override
   // del profilo (assente = segue il flat; `false` esplicito vince). Stesso
   // pattern degli altri visual scoped (mai i root setter diretti).
   const [ageBadge, setAgeBadge] = scoped("ageBadge", ed.defaultAgeBadge, ed.setDefaultAgeBadge)
   const [ageCountry, setAgeCountry] = scoped("ageCountry", ed.defaultAgeCountry, ed.setDefaultAgeCountry)
   const [ageBadgeStyle, setAgeBadgeStyle] = scoped("ageBadgeStyle", ed.defaultAgeBadgeStyle, ed.setDefaultAgeBadgeStyle)
+  // Effective availability (shared helper, no duplicated gate logic): the
+  // scoped bindings above already resolve `land ?? flat` per edit target.
+  const effFlags: EffectiveBadgeFlags = {
+    globalBadges, badgeGenre, badgeYear, badgeRating, separateRatings,
+    separateRatingsStyle, rankingBadges, sashOrder, badgeQuality,
+    customRatings, ageBadge, networkLogo, preRelease,
+    posterLayout, posterFreshScope,
+  }
+  const genreStyleActive = isGenreStyleActive(effFlags)
+  const extraStyleActive = isExtraStyleActive(effFlags)
+  const separateStyleActive = isSeparateStyleActive(effFlags)
+  const ageStyleActive = isAgeStyleActive(effFlags)
+  const qualityStyleActive = isQualityStyleActive(effFlags)
+  // Common font group (appearance): unmounted — wrapper included — when no
+  // supported font consumer is effectively active (same canonical gate as
+  // the card itself, never a second derivation).
+  const fontActive = isBadgeFontActive(effFlags)
+  const customRowActive = isCustomRatingsActive(effFlags)
+  const effDisplay = availabilityDisplayState(effFlags)
+  void customRowActive
+  void effDisplay
+  // Extra style options: the full renderer-supported subset (canonical
+  // EXTRA_BADGE_STYLES order preserved: colored always offered, never gated
+  // on the current value — the renderer already handles every entry).
+  // Hoisted above the shared cards (same values, same callbacks).
+  const extraOptions: ExtraBadgeStyle[] = ["default", "pill", "corner", "vetro", "bordo", "colored"]
+  const EXTRA_STYLE_LABELS: Record<ExtraBadgeStyle, string> = {
+    default: "ui.bsDefault",
+    pill: "ui.pill",
+    corner: "ui.corner",
+    vetro: "ui.vetro",
+    bordo: "ui.bordo",
+    colored: "ui.colored",
+  }
+  // Shared separate-style picker (single implementation, reused callbacks):
+  // the appearance tab owns it in a dedicated wrapper; standalone keeps the
+  // legacy in-card placement via the same node (never duplicated on screen).
+  const separateStylePicker = (
+    <div className="pt-1 space-y-1.5" title={t("ui.separateRatingsHint")} data-testid="badge-separate-style-picker">
+      <span className="text-[11px] text-muted font-medium block">{t("ui.separateRatingsStyle")}</span>
+      <div className="grid grid-cols-3 gap-1">
+        {([
+          { id: "column", labelKey: "ui.separateRatingsColumn" },
+          { id: "bottom-bar", labelKey: "ui.separateRatingsBottomBar" },
+          { id: "bottom-pills", labelKey: "ui.separateRatingsBottomPills" },
+          { id: "bottom-mono", labelKey: "ui.separateRatingsBottomMono" },
+          { id: "bottom-color", labelKey: "ui.separateRatingsBottomColor" },
+        ] as const).map((opt) => {
+          const barOff = opt.id === "bottom-bar" && targetShape === "landscape"
+          const pressed = getSeparateRatingsStyleForShape(
+            separateRatingsStyle, targetShape === "landscape" ? "landscape" : "poster",
+          ) === opt.id
+          return (
+            <button
+              key={opt.id}
+              type="button"
+              onClick={() => { if (!barOff) setSeparateRatingsStyle(opt.id) }}
+              aria-pressed={pressed}
+              disabled={barOff}
+              title={barOff ? t("ui.separateRatingsBarLandscapeHint") : undefined}
+              className={`flex-1 py-1 px-1 rounded-lg text-[11px] font-semibold transition-all duration-150 ${
+                pressed
+                  ? "bg-white/20 text-white shadow-sm"
+                  : "bg-white/5 text-muted hover:bg-white/10 hover:text-zinc-200"
+              } ${barOff ? "cursor-not-allowed" : "cursor-pointer"}`}
+            >
+              {t(opt.labelKey)}
+            </button>
+          )
+        })}
+      </div>
+      {targetShape === "landscape" && (
+        <p className="text-[10px] text-muted italic leading-tight">{t("ui.separateRatingsBarLandscapeHint")}</p>
+      )}
+      {globalBadges && badgeRating && separateRatings && isBottomSeparateRatingsStyle(separateRatingsStyle) && (
+        <p className="text-[10px] text-muted italic leading-tight">{t("ui.separateRatingsBottomHint")}</p>
+      )}
+    </div>
+  )
+  // Shared extra-style card (single implementation, reused callbacks): the
+  // appearance tab wraps it in an effective gate, standalone renders it raw.
+  // Reports the dedicated `extra` preview family (not the generic `info`):
+  // focusing or pressing this card switches the defaults preview to the
+  // extra-bucket sample so the staged `xbs` choice is visible immediately —
+  // never the Fresh/Coming Soon sample. Preview-only, never writes.
+  const extraStyleCard = (
+    <div {...famAttrs("extra")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-1.5 shadow-sm">
+      <div className="space-y-1.5">
+        <span className="text-[11px] text-muted font-medium block">{t("ui.extraBadgeStyle")}</span>
+        {(extraBadgeStyle == null || extraBadgeStyle === "follow-rank") && (
+          <p className="text-[10px] text-muted italic leading-tight">
+            {t("ui.inherited")}: {t(EXTRA_STYLE_LABELS[legacyExtraStyleForRank(rankingBadgeStyle)])}
+          </p>
+        )}
+        <BadgeStyleSelector
+          value={extraBadgeStyle === "follow-rank" ? legacyExtraStyleForRank(rankingBadgeStyle) : (extraBadgeStyle ?? legacyExtraStyleForRank(rankingBadgeStyle))}
+          options={extraOptions}
+          onChange={(v) => {
+            setExtraBadgeStyle(v)
+          }}
+          t={t}
+          accentColor={accentColor}
+        />
+        {isLandscape && (
+          <div className="flex gap-1 pt-1">
+            <button
+              type="button"
+              onClick={() => setExtraBadgeStyle("follow-rank" as never)}
+              aria-pressed={extraBadgeStyle === "follow-rank"}
+              className={`flex-1 py-1 px-1 rounded-lg text-[11px] font-semibold transition-all duration-150 cursor-pointer ${
+                extraBadgeStyle === "follow-rank"
+                  ? "bg-white/20 text-white shadow-sm"
+                  : "bg-white/5 text-muted hover:bg-white/10 hover:text-zinc-200"
+              }`}
+            >
+              Follow rank
+            </button>
+            <button
+              type="button"
+              onClick={() => ed.setLandscape({ extraBadgeStyle: undefined })}
+              aria-pressed={!("extraBadgeStyle" in ed.landscape) || (ed.landscape as { extraBadgeStyle?: unknown }).extraBadgeStyle == null}
+              className={`flex-1 py-1 px-1 rounded-lg text-[11px] font-semibold transition-all duration-150 cursor-pointer ${
+                (!("extraBadgeStyle" in ed.landscape) || (ed.landscape as { extraBadgeStyle?: unknown }).extraBadgeStyle == null)
+                  ? "bg-white/20 text-white shadow-sm"
+                  : "bg-white/5 text-muted hover:bg-white/10 hover:text-zinc-200"
+              }`}
+            >
+              {t("ui.inherited")}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  )
   // Scoped reset (task 3B1): restores this tab's landscape keys to
   // independent shape-appropriate defaults — the current portrait effective
   // frozen in (same pixels as follow, then decoupled), age forced to the
@@ -238,6 +486,9 @@ export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange }: {
   // other categories (canonical slot only when no stash exists).
   const rankOn = sashOrder.includes("rank")
   const rankSashStashKey = isLandscape ? RANK_SASH_STASH_KEY_LANDSCAPE : RANK_SASH_STASH_KEY
+  // Staged five-tab session: stash in memory so tab/format switches keep
+  // the prior order with zero localStorage/config writes before Save.
+  const stagedStash = mode !== undefined
   function toggleBucket(bucket: SashBucket, on: boolean) {
     // The rank bucket always goes through the stashed path so the advanced
     // priority list and the Classifica switch behave identically.
@@ -261,7 +512,7 @@ export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange }: {
   function setRankBucket(on: boolean) {
     if (on) {
       if (sashOrder.includes("rank" as SashBucket)) return
-      const stashed = popStashedSashOrder(rankSashStashKey)
+      const stashed = popStashedSashOrder(rankSashStashKey, stagedStash)
       const home = stashed ? stashed.indexOf("rank" as SashBucket) : -1
       const without = sashOrder.filter((x) => x !== "rank")
       if (stashed && home >= 0) {
@@ -277,7 +528,7 @@ export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange }: {
       ])
     } else {
       if (!sashOrder.includes("rank" as SashBucket)) return
-      stashSashOrder(rankSashStashKey, sashOrder)
+      stashSashOrder(rankSashStashKey, sashOrder, stagedStash)
       setSashOrder(sashOrder.filter((x) => x !== "rank"))
     }
   }
@@ -312,18 +563,51 @@ export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange }: {
     setRibbonEnabled(next.ribbonEnabled)
   }
 
-  // Extra style options: colored only when already set (legacy compat).
-  const extraOptions: ExtraBadgeStyle[] = ["default", "pill", "corner", "vetro", "bordo"]
-  if (extraBadgeStyle === "colored") extraOptions.push("colored")
-  const EXTRA_STYLE_LABELS: Record<ExtraBadgeStyle, string> = {
-    default: "ui.bsDefault",
-    pill: "ui.pill",
-    corner: "ui.corner",
-    vetro: "ui.vetro",
-    bordo: "ui.bordo",
-    colored: "ui.colored",
+  // Unified ranking presentation (Classifiche): one exclusive choice over the
+  // existing stored fields; standalone (mode undefined) keeps the legacy split.
+  const isRankingsTab = mode === "rankings"
+  const presentation: RankingPresentation =
+    posterLayout === "fresh" ? "fresh" : isCardSkin(posterLayout) ? "card" : appearance
+  // Remembered Card skin (transient UI only, never persisted): survives
+  // classic/Fresh/Card switching, same rule as the standalone selector.
+  const [rememberedSkin, setRememberedSkin] = useState<CardSkin>(() =>
+    isCardSkin(posterLayout) ? posterLayout : "provider-glass",
+  )
+  useEffect(() => {
+    if (isCardSkin(posterLayout)) setRememberedSkin(posterLayout)
+  }, [posterLayout])
+  function handlePresentation(p: RankingPresentation) {
+    if (p === "fresh") {
+      // Actual transition only: re-clicking the already-selected Fresh
+      // preserves deliberate slider edits made while Fresh. One-way reset —
+      // returning to Nastro/Numero never restores the old offsets.
+      if (posterLayout !== "fresh") {
+        setGenreBadgeOffsetX(0)
+        setGenreBadgeOffsetY(0)
+        setLogoOffsetX(null)
+        setLogoOffsetY(null)
+        setPosterLayout("fresh")
+      }
+      return
+    }
+    if (p === "card") {
+      const skin = isCardSkin(posterLayout) ? posterLayout : rememberedSkin
+      if (posterLayout !== skin) setPosterLayout(skin)
+      return
+    }
+    if (posterLayout !== "standard") setPosterLayout("standard")
+    handleAppearance(p)
   }
+  function handleCardSkin(skin: CardSkin) {
+    setRememberedSkin(skin)
+    if (posterLayout !== skin) setPosterLayout(skin)
+  }
+
   const [advancedOpen, setAdvancedOpen] = useState(false)
+  // Advanced disclosure for the detailed controls below: closed by default
+  // (preset-first), body always mounted + hidden so no state is ever lost.
+  const [detailsOpen, setDetailsOpen] = useState(false)
+  const detailsBodyId = useId()
 
   // Test provider custom rating (sample fisso server-side, chiave mai esposta).
   const [crTestBusy, setCrTestBusy] = useState(false)
@@ -335,12 +619,17 @@ export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange }: {
     error?: string
   } | null>(null)
 
+  const customTestBlocked = testStaged === true && testDirty === true
   const runCustomRatingTest = async () => {
+    if (customTestBlocked) return
     setCrTestBusy(true)
     setCrTestResult(null)
     try {
       // Flush dei default appena digitati: il test gira sulla config salvata.
-      await saveDefaults(ed)
+      // Staged session: never flush (would bypass the global Save); the
+      // button is disabled while dirty, and a clean session already matches
+      // the saved truth so no flush is needed.
+      if (!testStaged) await saveDefaults(ed)
       const res = await http("/api/custom-rating/test", { method: "POST" })
       setCrTestResult(res as typeof crTestResult)
     } catch {
@@ -362,43 +651,33 @@ export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange }: {
     }
   }
 
-  // Quick-preset canonical transform reset (narrow local helper): Naturale
-  // assoluto entrambi i formati + topShade 50 + logo null/null/null (auto) +
-  // scale 100 (separati via getSeparateBadgeDefaultScale = 130) + offset 0
-  // salvo quality portrait -10/+15 e landscape 0/0. Riusa costanti canoniche,
-  // mai UI 75 / relativa 100 / baseline rank -20 (solo render).
+  const customRatingTestResult = crTestResult ? (
+    <div className={`mt-2 p-2 rounded-lg border text-[11px] ${crTestResult.ok ? "bg-emerald-500/10 border-emerald-500/30" : "bg-red-500/10 border-red-500/30"}`}>
+      {crTestResult.ok ? (
+        <div className="space-y-1">
+          <div className="font-semibold text-emerald-300">
+            {t("ui.customRatingTestOk")} · {crTestResult.status} OK · {crTestResult.ms} ms
+          </div>
+          {crTestResult.ratings?.map((r) => (
+            <div key={r.id} className="flex items-center justify-between text-zinc-200">
+              <span className="truncate">{r.name}</span>
+              <span className="font-mono ml-2 shrink-0">{formatRating(r.value, r.format as "decimal" | "percent")}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="text-red-300">
+          {customRatingTestErrorLabel(crTestResult.error)}
+          {crTestResult.status ? ` · ${crTestResult.status}` : ""} · {crTestResult.ms} ms
+        </div>
+      )}
+    </div>
+  ) : null
+
+  // Quick-preset canonical transform reset: single shared source (no
+  // duplicated constants/formulas — see src/lib/quick-visual-presets.ts).
   function quickTransformPatch(portrait: boolean): Partial<VisualPresetValues> {
-    return {
-      defaultBlurEnabled: NATURAL_GRADIENT_DEFAULTS.blurEnabled,
-      defaultGradientHeight: NATURAL_GRADIENT_DEFAULTS.gradientHeight,
-      defaultBlurIntensity: NATURAL_GRADIENT_DEFAULTS.blurIntensity,
-      defaultBlurFade: NATURAL_GRADIENT_DEFAULTS.blurFade,
-      defaultBlurDarkness: NATURAL_GRADIENT_DEFAULTS.blurDarkness,
-      defaultTintStrength: NATURAL_GRADIENT_DEFAULTS.tintStrength,
-      defaultTopShade: 50,
-      defaultLogoScale: null,
-      defaultLogoOffsetX: null,
-      defaultLogoOffsetY: null,
-      defaultTopBadgeScale: 100,
-      defaultTopBadgeOffsetX: 0,
-      defaultTopBadgeOffsetY: 0,
-      defaultGenreBadgeScale: 100,
-      defaultGenreBadgeOffsetX: 0,
-      defaultGenreBadgeOffsetY: 0,
-      defaultQualityBadgeScale: 100,
-      defaultQualityBadgeOffsetX: portrait
-        ? DEFAULT_QUALITY_BADGE_OFFSET_X
-        : DEFAULT_QUALITY_BADGE_OFFSET_X_LANDSCAPE,
-      defaultQualityBadgeOffsetY: portrait
-        ? DEFAULT_QUALITY_BADGE_OFFSET_Y
-        : DEFAULT_QUALITY_BADGE_OFFSET_Y_LANDSCAPE,
-      defaultSeparateBadgeScale: getSeparateBadgeDefaultScale(undefined),
-      defaultSeparateBadgeOffsetX: 0,
-      defaultSeparateBadgeOffsetY: 0,
-      defaultNetworkLogoScale: 100,
-      defaultNetworkLogoOffsetX: 0,
-      defaultNetworkLogoOffsetY: 0,
-    }
+    return sharedQuickTransformPatch(portrait)
   }
 
   // Lettura effettiva del target (portrait = flat, landscape = profilo ?? flat;
@@ -420,7 +699,7 @@ export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange }: {
       effTarget("blurFade", ed.defaultBlurFade) === NATURAL_GRADIENT_DEFAULTS.blurFade &&
       effTarget("blurDarkness", ed.defaultBlurDarkness) === NATURAL_GRADIENT_DEFAULTS.blurDarkness &&
       effTarget("tintStrength", ed.defaultTintStrength) === NATURAL_GRADIENT_DEFAULTS.tintStrength &&
-      effTarget("topShade", ed.defaultTopShade) === 50 &&
+      effTarget("topShade", ed.defaultTopShade) === 80 &&
       effTarget("logoScale", ed.defaultLogoScale) === null &&
       effTarget("logoOffsetX", ed.defaultLogoOffsetX) === null &&
       effTarget("logoOffsetY", ed.defaultLogoOffsetY) === null &&
@@ -442,6 +721,32 @@ export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange }: {
     )
   }
 
+  // Ready canonical layout gate (standalone preset cards): a Fresh/Card
+  // draft with matching badge visuals must never claim a Standard tile
+  // (Fresh/Card are mutually exclusive ranking presentations).
+  const readyLayoutStandard = posterLayout === "standard"
+
+  // Shared canonical pins every ready look owns (their toggles/styles differ,
+  // these never do): separate column off, full sash order, Inter font,
+  // standard quality icons, full A/V set, network auto/follow, left side,
+  // Coming Soon off and the follow-own-rank extra in the edited shape.
+  // A tuned seed matching only the toggles never claims a tile.
+  const matchesReadyCommonPins = (customOn: boolean): boolean =>
+    (customRatings === customOn) &&
+    !separateRatings &&
+    getSeparateRatingsStyleForShape(separateRatingsStyle, isLandscape ? "landscape" : "poster") === DEFAULT_SEPARATE_RATINGS_STYLE &&
+    effTarget("badgeFont", ed.defaultBadgeFont) === DEFAULT_BADGE_FONT &&
+    effTarget("qualityBadgeStyle", ed.defaultQualityBadgeStyle) === DEFAULT_QUALITY_BADGE_STYLE &&
+    JSON.stringify(effTarget("videoFormats", ed.defaultVideoFormats)) === JSON.stringify([...KNOWN_VIDEO_FORMATS]) &&
+    JSON.stringify(sashOrder) === JSON.stringify([...DEFAULT_SASH_ORDER]) &&
+    networkLogoPosition === "auto" &&
+    effTarget("networkLogoFollowTitle", ed.defaultNetworkLogoFollowTitle) === true &&
+    ribbonSide === "left" &&
+    preRelease === false &&
+    (isLandscape
+      ? effTarget("extraBadgeStyle", ed.defaultExtraBadgeStyle) === EXTRA_BADGE_FOLLOW_RANK
+      : ed.defaultExtraBadgeStyle == null)
+
   const isEssential =
     globalBadges &&
     badgeGenre &&
@@ -449,9 +754,13 @@ export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange }: {
     !badgeRating &&
     !badgeQuality &&
     !rankingBadges &&
+    rankingBadgeStyle === "default" &&
+    ribbonEnabled === false &&
     !networkLogo &&
     badgeStyle === "minimal" &&
-    matchesQuickTransform(!isLandscape)
+    matchesReadyCommonPins(false) &&
+    matchesQuickTransform(!isLandscape) &&
+    readyLayoutStandard
 
   const isRatings =
     globalBadges &&
@@ -460,10 +769,16 @@ export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange }: {
     badgeRating &&
     badgeQuality &&
     !rankingBadges &&
+    rankingBadgeStyle === "default" &&
+    ribbonEnabled === false &&
     !networkLogo &&
     badgeStyle === "pill" &&
-    matchesQuickTransform(!isLandscape)
+    matchesReadyCommonPins(true) &&
+    matchesQuickTransform(!isLandscape) &&
+    readyLayoutStandard
 
+  // User recipe: Completo = Nastro rank + minimal genre badge
+  // (`rankingAppearanceValue("nastro")` + minimal `bs`, translated exactly).
   const isFull =
     globalBadges &&
     badgeGenre &&
@@ -471,9 +786,13 @@ export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange }: {
     badgeRating &&
     badgeQuality &&
     rankingBadges &&
+    rankingBadgeStyle === "netflix" &&
+    ribbonEnabled === true &&
     networkLogo &&
-    badgeStyle === "pill" &&
-    matchesQuickTransform(!isLandscape)
+    badgeStyle === "minimal" &&
+    matchesReadyCommonPins(true) &&
+    matchesQuickTransform(!isLandscape) &&
+    readyLayoutStandard
 
   // Same as the per-title behavior: in bottom, genre/year defaults are
   // render-suppressed but kept (back to Column restores them, never lost).
@@ -486,40 +805,68 @@ export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange }: {
   // Quick preset apply: SINGLE atomic target-aware patch con helpers existing
   // (come Apple/personali). Portrait congela l'effettivo landscape ereditato,
   // landscape scrive solo il profilo; globals (ratingSources/fit) e
-  // delivery non mutati per isolamento. Il preset parziale contiene solo
-  // scelte badge + reset canonico: sash/font/formats e altri default
-  // esistenti preservati. Nessun nested `landscape` nel desired: in landscape
-  // l'overlay è solo il patch derivato dai flat (mai il profilo corrente sopra
-  // il reset). RatingSources NON resettate (rimozione isolamento): Voti/Completo
-  // preservano le fonti utente come Apple/personali; i testi restano validi
-  // ("Punteggi IMDb/TMDB e qualità" descrive il contenuto, non un reset).
-  const applyQuickForTarget = (badgePatch: Partial<VisualPresetValues>) => {
+  // delivery non mutati per isolamento. Ogni ready look applica la sua
+  // ricetta canonica completa (QUICK_BADGE_PATCHES + reset canonico: nessun
+  // pin visivo eredita il look precedente). Nessun nested `landscape` nel
+  // desired: in landscape l'overlay è solo il patch derivato dai flat (mai
+  // il profilo corrente sopra il reset). RatingSources NON resettate
+  // (rimozione isolamento): tutti i ready preservano le fonti utente come
+  // Apple/personali; i testi restano validi ("Punteggi IMDb/TMDB e qualità"
+  // descrive il contenuto, non un reset).
+  // Full only (`readyPin`): the canonical complete recipe
+  // (QUICK_BADGE_PATCHES.full) plus the standalone-extra reset — the edited
+  // shape returns to follow-own-rank instead of inheriting a tuned extra
+  // style. Essential/Ratings share the same readyPin with their own canonical
+  // recipes below; personal presets never pass it.
+  const applyQuickForTarget = (badgePatch: Partial<VisualPresetValues>, readyPin = false) => {
     const live = { ...captureVisualPreset(ed), landscape: ed.landscape }
     const desired = {
       ...badgePatch,
       ...quickTransformPatch(!isLandscape),
     } as unknown as VisualPresetValues
-    ed.applyVisualPreset(
-      isLandscape ? applyLandscapeIsolated(live, desired) : applyPortraitIsolated(live, desired),
+    const isolated = isLandscape ? applyLandscapeIsolated(live, desired) : applyPortraitIsolated(live, desired)
+    // Ready looks leave the age classification OFF in the edited shape
+    // (other shape effective preserved); Information re-enables it manually.
+    // Ready canonical layout: the edited shape owns Standard (own ranking
+    // mode, never inherits Fresh/Card); the other shape is frozen.
+    const aged = withReadyPresetAgeOff(
+      { defaultAgeBadge: ed.defaultAgeBadge, landscape: ed.landscape },
+      isolated as unknown as Record<string, unknown>,
       isLandscape ? "landscape" : "portrait",
     )
+    const laid = withReadyPresetLayoutStandard(
+      ed,
+      aged,
+      isLandscape ? "landscape" : "portrait",
+    )
+    const staged = (readyPin
+      ? withReadyPresetExtraStyleReset(laid, isLandscape ? "landscape" : "portrait", ed as unknown as { defaultExtraBadgeStyle?: unknown; landscape?: unknown })
+      : laid) as unknown as VisualPresetValues
+    ed.applyVisualPreset(staged, isLandscape ? "landscape" : "portrait")
   }
 
+  // Essential/Ratings/Full share the single canonical recipes with the
+  // Preset-tab gallery (QUICK_BADGE_PATCHES + transform reset): never
+  // duplicated subsets — every entry point stages the identical snapshot.
   const applyEssential = () => {
-    applyQuickForTarget({ defaultGlobalBadges: true, defaultBadgeGenre: true, defaultBadgeYear: true, defaultBadgeRating: false, defaultBadgeQuality: false, defaultRankingBadges: false, defaultNetworkLogo: false, defaultBadgeStyle: "minimal" })
+    applyQuickForTarget(QUICK_BADGE_PATCHES.essential, true)
   }
 
   const applyRatings = () => {
-    applyQuickForTarget({ defaultGlobalBadges: true, defaultBadgeGenre: false, defaultBadgeYear: true, defaultBadgeRating: true, defaultSeparateRatings: false, defaultBadgeQuality: true, defaultQualityBadgeStyle: "standard", defaultRankingBadges: false, defaultNetworkLogo: false, defaultBadgeStyle: "pill" })
+    applyQuickForTarget(QUICK_BADGE_PATCHES.ratings, true)
   }
 
+  // Full shares the single canonical recipe with the Preset-tab gallery
+  // (QUICK_BADGE_PATCHES.full + transform reset via quickLookDesired): never
+  // a duplicated subset — both entry points stage the identical snapshot.
   const applyFull = () => {
-    applyQuickForTarget({ defaultGlobalBadges: true, defaultBadgeGenre: true, defaultBadgeYear: true, defaultBadgeRating: true, defaultSeparateRatings: false, defaultBadgeQuality: true, defaultQualityBadgeStyle: "standard", defaultRankingBadges: true, defaultRankingBadgeStyle: "default", defaultNetworkLogo: true, defaultBadgeStyle: "pill" })
+    applyQuickForTarget(QUICK_BADGE_PATCHES.full, true)
   }
 
   // Snapshot preset keys that live in the landscape profile: `defaultX` maps
-  // to the `x` profile key. Everything else (rating sources, logo align, fit
-  // flags, …) stays global. Delivery shape never follows a preset here.
+  // to the `x` profile key. Everything else (rating sources, fit flags, …)
+  // stays global. Logo alignment is Auto-only (never staged from a preset).
+  // Delivery shape never follows a preset here.
   const PRESET_TO_LAND: Record<string, keyof LandscapeServerDefaults> = {
     defaultGlobalBadges: "globalBadges",
     defaultRankingBadges: "rankingBadges",
@@ -584,9 +931,10 @@ export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange }: {
     return false
   }
   function snapshotGlobalsMatch(cur: VisualPresetValues, preset: VisualPresetValues): boolean {
+    // Logo alignment is Auto-only (no selector): never part of the match —
+    // the staged session always carries null and legacy presets may not.
     return (
       snapshotFieldEqual(cur.defaultRatingSources, preset.defaultRatingSources) &&
-      cur.defaultLogoAlign === preset.defaultLogoAlign &&
       cur.defaultPortraitFitEnabled === preset.defaultPortraitFitEnabled &&
       cur.defaultLandscapeFitEnabled === preset.defaultLandscapeFitEnabled
     )
@@ -611,8 +959,8 @@ export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange }: {
     }
     return true
   }
-  const isBetterPoster = matchesSnapshotPreset(BETTER_POSTER_VISUAL_DEFAULTS)
-  const isRpdb = matchesSnapshotPreset(RPDB_VISUAL_DEFAULTS)
+  const isBetterPoster = matchesSnapshotPreset(BETTER_POSTER_VISUAL_DEFAULTS) && readyLayoutStandard
+  const isRpdb = matchesSnapshotPreset(RPDB_VISUAL_DEFAULTS) && readyLayoutStandard
 
   // Apple builtin, stesso path isolato dei preset personali (mai lo snapshot
   // con globali condivisi di BetterPoster/RPDB): portrait scrive solo i flat
@@ -630,14 +978,36 @@ export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange }: {
     ) ===
     JSON.stringify(
       normalizePresetExtraTuning(isLandscape ? resolveEffectiveLandscape(APPLE_VISUAL_DEFAULTS) : portraitPresetPatch(APPLE_VISUAL_DEFAULTS)),
-    )
+    ) && readyLayoutStandard
   const applyApple = () => {
-    ed.applyVisualPreset(
-      isLandscape
-        ? applyLandscapeIsolated(appleLive, APPLE_VISUAL_DEFAULTS)
-        : applyPortraitIsolated(appleLive, APPLE_VISUAL_DEFAULTS),
+    const isolated = isLandscape
+      ? applyLandscapeIsolated(appleLive, APPLE_VISUAL_DEFAULTS)
+      : applyPortraitIsolated(appleLive, APPLE_VISUAL_DEFAULTS)
+    // Ready look: age classification OFF in the edited shape (other shape
+    // effective preserved); Information re-enables it manually. Ready
+    // canonical layout: the edited shape owns Standard (never inherits
+    // Fresh/Card); the other shape is frozen.
+    const aged = withReadyPresetAgeOff(
+      { defaultAgeBadge: ed.defaultAgeBadge, landscape: ed.landscape },
+      isolated as unknown as Record<string, unknown>,
       isLandscape ? "landscape" : "portrait",
     )
+    const laid = withReadyPresetLayoutStandard(
+      ed,
+      aged,
+      isLandscape ? "landscape" : "portrait",
+    )
+    // Ready independence: the standalone extra style returns to
+    // follow-own-rank in the edited shape (never inherits a tuned style).
+    // Portrait freezes the inheriting other-shape profile to the pre-edit
+    // effective flat first (`ed`: appleLive is schema-stripped and drops the
+    // standalone extra key), so the other format cannot move.
+    const staged = withReadyPresetExtraStyleReset(
+      laid,
+      isLandscape ? "landscape" : "portrait",
+      ed as unknown as { defaultExtraBadgeStyle?: unknown; landscape?: unknown },
+    ) as unknown as VisualPresetValues
+    ed.applyVisualPreset(staged, isLandscape ? "landscape" : "portrait")
   }
 
   // Snapshot presets apply to the edit target only: landscape-capable keys
@@ -647,8 +1017,31 @@ export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange }: {
   const applySnapshotForTarget = (values: VisualPresetValues) => {
     if (!isLandscape) {
       // Portrait target: flats only; the existing landscape profile and the
-      // delivery shape stay byte-identical.
-      ed.applyVisualPreset({ ...values, landscape: ed.landscape, defaultPosterShape: ed.defaultPosterShape }, "portrait")
+      // delivery shape stay byte-identical. Ready look: age OFF in portrait,
+      // inheriting landscape profile frozen to the pre-edit effective.
+      // Ready canonical layout: portrait owns Standard (never inherits
+      // Fresh/Card); an inheriting landscape profile freezes pre-edit.
+      // Logo alignment stays Auto (never staged from a preset). Ready
+      // independence: the standalone extra style returns to legacy null
+      // (follow the preset's own rank) instead of inheriting a tuned style;
+      // an inheriting landscape profile freezes the pre-edit effective flat
+      // first (same shared overlay), so the other format cannot move.
+      const aged = withReadyPresetAgeOff(
+        { defaultAgeBadge: ed.defaultAgeBadge, landscape: ed.landscape },
+        { ...values, defaultLogoAlign: null, defaultExtraBadgeStyle: null, landscape: ed.landscape, defaultPosterShape: ed.defaultPosterShape } as unknown as Record<string, unknown>,
+        "portrait",
+      )
+      const laidSnap = withReadyPresetLayoutStandard(
+        ed,
+        aged,
+        "portrait",
+      )
+      const staged = withReadyPresetExtraStyleReset(
+        laidSnap,
+        "portrait",
+        ed as unknown as { defaultExtraBadgeStyle?: unknown; landscape?: unknown },
+      ) as unknown as VisualPresetValues
+      ed.applyVisualPreset(staged, "portrait")
       return
     }
     const landPatch: Partial<LandscapeServerDefaults> = {}
@@ -658,6 +1051,14 @@ export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange }: {
       if (lk) (landPatch as Record<string, unknown>)[lk] = v
     }
     if (values.landscape) Object.assign(landPatch, values.landscape)
+    // Ready look: age classification OFF in the edited (landscape) shape;
+    // portrait flats stay byte-identical. Ready canonical layout: the
+    // landscape profile owns Standard (never inherits Fresh/Card). Ready
+    // independence: the profile extra style takes the explicit
+    // follow-own-rank marker instead of inheriting a tuned flat.
+    landPatch.ageBadge = false
+    landPatch.posterLayout = "standard"
+    landPatch.extraBadgeStyle = EXTRA_BADGE_FOLLOW_RANK
     // Legacy preset without profile extra: clear to null (follow the
     // preset's own landscape rank); explicit wins; flats untouched (the
     // other shape). No setLandscape materialization here: a full look
@@ -673,7 +1074,9 @@ export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange }: {
     }
     ed.setLandscape(landPatch, { materialize: false })
     ed.setDefaultRatingSources(values.defaultRatingSources)
-    ed.setDefaultLogoAlign(values.defaultLogoAlign)
+    // Logo alignment stays Auto (never staged from a preset, even a legacy
+    // one carrying an explicit value); the staged session normalizes anyway.
+    ed.setDefaultLogoAlign(null)
     ed.setDefaultPortraitFitEnabled(values.defaultPortraitFitEnabled)
     ed.setDefaultLandscapeFitEnabled(values.defaultLandscapeFitEnabled)
   }
@@ -688,11 +1091,135 @@ export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange }: {
 
   return (
     <div
-      role="tabpanel"
-      aria-label={t("ui.badgeSection")}
+      role={familyMode ? undefined : "tabpanel"}
+      aria-label={familyMode ? undefined : t("ui.badgeSection")}
+      data-testid={familyMode ? "badge-family-content" : undefined}
+      hidden={familyMode ? undefined : !active}
       className={`space-y-3.5 text-xs ${active ? "block animate-tab-fade-in" : "hidden"}`}
     >
-      {/* CARD 0: Configurazioni Rapide Iniziali */}
+      {/* Preset-first: global scope, builtin looks, personal presets and
+          quick toggles stay always visible; the full detailed controls live
+          below inside the Advanced disclosure (legacy) or the unified
+          element workspace (summary links out, family filters in). */}
+      {unifiedView !== "family" && mode === undefined && (<>
+      <p data-testid="settings-global-scope" className="text-[11px] text-zinc-400 leading-snug px-1">
+        {t("ui.settingsGlobalDesc")}
+      </p>
+      <div {...famAttrs("auto")}>
+        <PosterStyleCard
+          title={t("ui.configPresetTitle")}
+          desc={t("ui.configPresetDesc")}
+          note={t("ui.configPresetUnofficialNote")}
+          options={[
+            { id: "essential", title: t("ui.configPresetEssential"), desc: t("ui.configPresetEssentialDesc"), active: isEssential, onApply: applyEssential },
+            { id: "ratings", title: t("ui.configPresetRatings"), desc: t("ui.configPresetRatingsDesc"), active: isRatings, onApply: applyRatings },
+            { id: "full", title: t("ui.configPresetFull"), desc: t("ui.configPresetFullDesc"), active: isFull, onApply: applyFull },
+            { id: "better-poster", title: t("ui.configPresetBetterPoster"), desc: t("ui.configPresetBetterPosterDesc"), active: isBetterPoster, onApply: applyBetterPoster },
+            { id: "rpdb", title: t("ui.configPresetRpdb"), desc: t("ui.configPresetRpdbDesc"), active: isRpdb, onApply: applyRpdb },
+            { id: "apple", title: t("ui.configPresetApple"), desc: t("ui.configPresetAppleDesc"), active: isApple, onApply: applyApple },
+          ]}
+        />
+      </div>
+      {/* Personal presets sit right below the builtin selection (same edit
+          target, same list guards) — never in a separate SettingsPanel slot. */}
+      {presetsEnabled && <VisualPresetsSection shape={targetShape} enabled={presetsEnabled} />}
+      {/* What to show: compact quick toggles over the existing shape-scoped
+          setters (genre/year/rating/quality/rank/age only). Same values and
+          same guards as the detailed controls (genre/year stay disabled while
+          a bottom layout suppresses them, rank goes through the stashed
+          bucket path); values are only ever written, never reset. */}
+      <section aria-label={t("ui.posterStyleWhatToShow")} data-testid="poster-style-whattoshow" className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-2.5 shadow-sm">
+        <span className="font-semibold text-zinc-200">{t("ui.posterStyleWhatToShow")}</span>
+        <p className="text-[11px] text-zinc-400 -mt-1">{t("ui.posterStyleWhatToShowHint")}</p>
+        <div className="grid grid-cols-2 gap-1.5">
+          <button
+            type="button"
+            data-testid="whattoshow-genre"
+            aria-pressed={globalBadges && badgeGenre}
+            disabled={defaultBottomActive}
+            title={defaultBottomActive ? t("ui.separateRatingsBottomHint") : undefined}
+            onClick={() => { if (defaultBottomActive) return; if (globalBadges && badgeGenre) setBadgeGenre(false); else { setGlobalBadges(true); setBadgeGenre(true) } }}
+            className={`min-h-[44px] py-1.5 px-2 rounded-lg text-[11px] font-semibold transition-all duration-150 ${globalBadges && badgeGenre ? "bg-white/20 text-white shadow-sm" : "bg-white/5 text-muted hover:bg-white/10 hover:text-zinc-200"} ${defaultBottomActive ? "cursor-not-allowed opacity-40" : "cursor-pointer"}`}
+          >
+            {t("ui.badgeGenre")}
+          </button>
+          <button
+            type="button"
+            data-testid="whattoshow-year"
+            aria-pressed={globalBadges && badgeYear}
+            disabled={defaultBottomActive}
+            title={defaultBottomActive ? t("ui.separateRatingsBottomHint") : undefined}
+            onClick={() => { if (defaultBottomActive) return; if (globalBadges && badgeYear) setBadgeYear(false); else { setGlobalBadges(true); setBadgeYear(true) } }}
+            className={`min-h-[44px] py-1.5 px-2 rounded-lg text-[11px] font-semibold transition-all duration-150 ${globalBadges && badgeYear ? "bg-white/20 text-white shadow-sm" : "bg-white/5 text-muted hover:bg-white/10 hover:text-zinc-200"} ${defaultBottomActive ? "cursor-not-allowed opacity-40" : "cursor-pointer"}`}
+          >
+            {t("ui.badgeYear")}
+          </button>
+          <button
+            type="button"
+            data-testid="whattoshow-rating"
+            aria-pressed={globalBadges && badgeRating}
+            onClick={() => { if (globalBadges && badgeRating) setBadgeRating(false); else { setGlobalBadges(true); setBadgeRating(true) } }}
+            className={`min-h-[44px] py-1.5 px-2 rounded-lg text-[11px] font-semibold transition-all duration-150 cursor-pointer ${globalBadges && badgeRating ? "bg-white/20 text-white shadow-sm" : "bg-white/5 text-muted hover:bg-white/10 hover:text-zinc-200"}`}
+          >
+            {t("ui.badgeRating")}
+          </button>
+          <button
+            type="button"
+            data-testid="whattoshow-quality"
+            aria-pressed={badgeQuality}
+            onClick={() => setBadgeQuality(!badgeQuality)}
+            className={`min-h-[44px] py-1.5 px-2 rounded-lg text-[11px] font-semibold transition-all duration-150 cursor-pointer ${badgeQuality ? "bg-white/20 text-white shadow-sm" : "bg-white/5 text-muted hover:bg-white/10 hover:text-zinc-200"}`}
+          >
+            {t("ui.badgeQuality")}
+          </button>
+          <button
+            type="button"
+            data-testid="whattoshow-rank"
+            aria-pressed={rankingBadges && rankOn}
+            onClick={() => { if (rankingBadges && rankOn) setRankBucket(false); else { setRankingBadges(true); setRankBucket(true) } }}
+            className={`min-h-[44px] py-1.5 px-2 rounded-lg text-[11px] font-semibold transition-all duration-150 cursor-pointer ${rankingBadges && rankOn ? "bg-white/20 text-white shadow-sm" : "bg-white/5 text-muted hover:bg-white/10 hover:text-zinc-200"}`}
+          >
+            {t("ui.sash_rank")}
+          </button>
+          <button
+            type="button"
+            data-testid="whattoshow-age"
+            aria-pressed={globalBadges && ageBadge}
+            onClick={() => { if (globalBadges && ageBadge) setAgeBadge(false); else { setGlobalBadges(true); setAgeBadge(true) } }}
+            className={`min-h-[44px] py-1.5 px-2 rounded-lg text-[11px] font-semibold transition-all duration-150 cursor-pointer ${globalBadges && ageBadge ? "bg-white/20 text-white shadow-sm" : "bg-white/5 text-muted hover:bg-white/10 hover:text-zinc-200"}`}
+          >
+            {t("ui.ageBadge")}
+          </button>
+        </div>
+      </section>
+      </>)}
+      {/* Advanced details: legacy standalone disclosure (mounted + hidden);
+          summary shows only the single link into the unified workspace;
+          family shows the filtered detail cards directly (no disclosure). */}
+      <section data-testid={familyMode ? "badge-family-details" : "badge-advanced"}>
+        {!familyMode && mode === undefined && (<>
+        <button
+          type="button"
+          data-testid="badge-advanced-toggle"
+          aria-expanded={unifiedView === "summary" ? false : detailsOpen}
+          aria-controls={unifiedView === "summary" ? undefined : detailsBodyId}
+          onClick={() => { if (unifiedView === "summary") onOpenAdvanced?.(); else setDetailsOpen((v) => !v) }}
+          className="w-full flex items-center justify-between gap-2 px-1 py-1 min-h-[44px] cursor-pointer touch-manipulation"
+        >
+          <span className="flex items-center gap-1.5 text-xs font-bold text-zinc-100">
+            <SlidersHorizontal className="w-3.5 h-3.5 text-accent-orange" />
+            {t("ui.badgeAdvancedTitle")}
+          </span>
+          <ChevronDown
+            className={`w-4 h-4 text-zinc-400 transition-transform duration-200 ${
+              detailsOpen ? "rotate-180" : ""
+            }`}
+          />
+        </button>
+        <p className="text-[11px] text-zinc-400 px-1 pb-1">{t("ui.badgeAdvancedHint")}</p>
+        </>)}
+        {unifiedView !== "summary" && (
+        <div id={detailsBodyId} hidden={mode !== undefined ? false : (familyMode ? false : !detailsOpen)} className="space-y-3.5">
       {hasVisualOverrides && (
         <div className="flex items-center justify-end gap-2">
           <button
@@ -705,254 +1232,76 @@ export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange }: {
           </button>
         </div>
       )}
-      {/* Style & Presets: quick presets, genre style, extra style */}
-      <BadgeGroup id="style" title={t("ui.badgeGroupStyle")} icon={Palette} defaultOpen>
-      <div {...famAttrs("auto")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-2.5 shadow-sm">
-        <div className="flex items-center justify-between">
-          <span className="font-semibold text-zinc-200 flex items-center gap-1.5">
-            <Sparkles className="w-3.5 h-3.5 text-accent-orange" />
-            {t("ui.configPresetTitle")}
-          </span>
-          <span className="text-[10px] text-zinc-400 font-mono">1-click</span>
-        </div>
-        <p className="text-[11px] text-zinc-400 -mt-1">
-          {t("ui.configPresetDesc")}
-        </p>
+      {/* Style & Presets: genre style, extra style (preset cards moved above) */}
+      <BadgeGroup id="style" title={t("ui.badgeGroupStyle")} icon={Palette} defaultOpen bare={modeBare} hidden={hideFor("logo", "genre", "info")}>
 
-        <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-2 pt-0.5">
-          <button
-            type="button"
-            onClick={applyEssential}
-            className={`flex flex-col text-left p-2.5 rounded-xl border transition-all cursor-pointer ${
-              isEssential
-                ? "bg-accent-orange/15 border-accent-orange/60 text-foreground shadow-sm ring-1 ring-accent-orange/30"
-                : "bg-surface2/40 hover:bg-surface2/70 border-surface2 text-zinc-300 hover:text-foreground"
-            }`}
-          >
-            <div className="flex items-center justify-between w-full">
-              <span className="font-semibold text-xs text-foreground">{t("ui.configPresetEssential")}</span>
-              {isEssential && <Check className="w-3.5 h-3.5 text-accent-orange shrink-0" />}
-            </div>
-            <span className="text-[10px] text-zinc-400 mt-1 leading-snug">{t("ui.configPresetEssentialDesc")}</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={applyRatings}
-            className={`flex flex-col text-left p-2.5 rounded-xl border transition-all cursor-pointer ${
-              isRatings
-                ? "bg-accent-orange/15 border-accent-orange/60 text-foreground shadow-sm ring-1 ring-accent-orange/30"
-                : "bg-surface2/40 hover:bg-surface2/70 border-surface2 text-zinc-300 hover:text-foreground"
-            }`}
-          >
-            <div className="flex items-center justify-between w-full">
-              <span className="font-semibold text-xs text-foreground">{t("ui.configPresetRatings")}</span>
-              {isRatings && <Check className="w-3.5 h-3.5 text-accent-orange shrink-0" />}
-            </div>
-            <span className="text-[10px] text-zinc-400 mt-1 leading-snug">{t("ui.configPresetRatingsDesc")}</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={applyFull}
-            className={`flex flex-col text-left p-2.5 rounded-xl border transition-all cursor-pointer ${
-              isFull
-                ? "bg-accent-orange/15 border-accent-orange/60 text-foreground shadow-sm ring-1 ring-accent-orange/30"
-                : "bg-surface2/40 hover:bg-surface2/70 border-surface2 text-zinc-300 hover:text-foreground"
-            }`}
-          >
-            <div className="flex items-center justify-between w-full">
-              <span className="font-semibold text-xs text-foreground">{t("ui.configPresetFull")}</span>
-              {isFull && <Check className="w-3.5 h-3.5 text-accent-orange shrink-0" />}
-            </div>
-            <span className="text-[10px] text-zinc-400 mt-1 leading-snug">{t("ui.configPresetFullDesc")}</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={applyBetterPoster}
-            className={`flex flex-col text-left p-2.5 rounded-xl border transition-all cursor-pointer ${
-              isBetterPoster
-                ? "bg-accent-orange/15 border-accent-orange/60 text-foreground shadow-sm ring-1 ring-accent-orange/30"
-                : "bg-surface2/40 hover:bg-surface2/70 border-surface2 text-zinc-300 hover:text-foreground"
-            }`}
-          >
-            <div className="flex items-center justify-between w-full">
-              <span className="font-semibold text-xs text-foreground">{t("ui.configPresetBetterPoster")}</span>
-              {isBetterPoster && <Check className="w-3.5 h-3.5 text-accent-orange shrink-0" />}
-            </div>
-            <span className="text-[10px] text-zinc-400 mt-1 leading-snug">{t("ui.configPresetBetterPosterDesc")}</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={applyRpdb}
-            className={`flex flex-col text-left p-2.5 rounded-xl border transition-all cursor-pointer ${
-              isRpdb
-                ? "bg-accent-orange/15 border-accent-orange/60 text-foreground shadow-sm ring-1 ring-accent-orange/30"
-                : "bg-surface2/40 hover:bg-surface2/70 border-surface2 text-zinc-300 hover:text-foreground"
-            }`}
-          >
-            <div className="flex items-center justify-between w-full">
-              <span className="font-semibold text-xs text-foreground">{t("ui.configPresetRpdb")}</span>
-              {isRpdb && <Check className="w-3.5 h-3.5 text-accent-orange shrink-0" />}
-            </div>
-            <span className="text-[10px] text-zinc-400 mt-1 leading-snug">{t("ui.configPresetRpdbDesc")}</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={applyApple}
-            className={`flex flex-col text-left p-2.5 rounded-xl border transition-all cursor-pointer ${
-              isApple
-                ? "bg-accent-orange/15 border-accent-orange/60 text-foreground shadow-sm ring-1 ring-accent-orange/30"
-                : "bg-surface2/40 hover:bg-surface2/70 border-surface2 text-zinc-300 hover:text-foreground"
-            }`}
-          >
-            <div className="flex items-center justify-between w-full">
-              <span className="font-semibold text-xs text-foreground">{t("ui.configPresetApple")}</span>
-              {isApple && <Check className="w-3.5 h-3.5 text-accent-orange shrink-0" />}
-            </div>
-            <span className="text-[10px] text-zinc-400 mt-1 leading-snug">{t("ui.configPresetAppleDesc")}</span>
-          </button>
-        </div>
-        <p className="text-[10px] text-zinc-500 italic leading-snug pt-0.5">
-          {t("ui.configPresetUnofficialNote")}
-        </p>
-      </div>
-
-      {/* Cover layout default (separate from the ranking style above):
-          portrait edits the shared flat, landscape the profile override
-          (cleared by the reset above, back to following the flat). */}
-      <div data-testid="poster-layout-card" className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-1.5 shadow-sm">
+      {/* Standalone only: five-tab settings own the layout via the unified choice. */}
+      {!familyMode && mode === undefined && (
+      <div data-testid="poster-layout-card" hidden={hideFor("logo")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-1.5 shadow-sm">
         <span className="font-semibold text-zinc-200 flex items-center gap-1.5">
           <Layers className="w-3.5 h-3.5 text-accent-orange" />
           {t("ui.posterLayout")}
         </span>
         <PosterLayoutSelector value={posterLayout} onChange={(v) => setPosterLayout(v)} />
-        <PosterFreshScopeSelector layout={posterLayout} value={posterFreshScope} onChange={(v) => setPosterFreshScope(v)} />
+        {(posterLayout === "fresh" || isCardSkin(posterLayout)) && (
+          <p className="text-[10px] text-zinc-500 leading-relaxed select-none">
+            {t(isCardSkin(posterLayout) ? "ui.posterLayoutScopeHint" : "ui.posterFreshScopeHint")}
+          </p>
+        )}
       </div>
+      )}
 
-      <GenreStyleSection shape={targetShape} onPreviewFamilyChange={onPreviewFamilyChange} />
-      {/* Extra badge style: own look, never a fallback.
-          Without an explicit choice it shows the effective inherited style. */}
-      <div {...famAttrs("info")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-1.5 shadow-sm">
-        <div className="space-y-1.5">
-          <span className="text-[11px] text-muted font-medium block">{t("ui.extraBadgeStyle")}</span>
-          {(extraBadgeStyle == null || extraBadgeStyle === "follow-rank") && (
-            <p className="text-[10px] text-muted italic leading-tight">
-              {t("ui.inherited")}: {t(EXTRA_STYLE_LABELS[legacyExtraStyleForRank(rankingBadgeStyle)])}
-            </p>
-          )}
-          <BadgeStyleSelector
-            value={extraBadgeStyle === "follow-rank" ? legacyExtraStyleForRank(rankingBadgeStyle) : (extraBadgeStyle ?? legacyExtraStyleForRank(rankingBadgeStyle))}
-            options={extraOptions}
-            onChange={(v) => {
-              setExtraBadgeStyle(v)
-            }}
-            t={t}
-            accentColor={accentColor}
-          />
-          {isLandscape && (
-            <div className="flex gap-1 pt-1">
-              <button
-                type="button"
-                onClick={() => setExtraBadgeStyle("follow-rank" as never)}
-                aria-pressed={extraBadgeStyle === "follow-rank"}
-                className={`flex-1 py-1 px-1 rounded-lg text-[11px] font-semibold transition-all duration-150 cursor-pointer ${
-                  extraBadgeStyle === "follow-rank"
-                    ? "bg-white/20 text-white shadow-sm"
-                    : "bg-white/5 text-muted hover:bg-white/10 hover:text-zinc-200"
-                }`}
-              >
-                Follow rank
-              </button>
-              <button
-                type="button"
-                onClick={() => ed.setLandscape({ extraBadgeStyle: undefined })}
-                aria-pressed={!("extraBadgeStyle" in ed.landscape) || (ed.landscape as { extraBadgeStyle?: unknown }).extraBadgeStyle == null}
-                className={`flex-1 py-1 px-1 rounded-lg text-[11px] font-semibold transition-all duration-150 cursor-pointer ${
-                  (!("extraBadgeStyle" in ed.landscape) || (ed.landscape as { extraBadgeStyle?: unknown }).extraBadgeStyle == null)
-                    ? "bg-white/20 text-white shadow-sm"
-                    : "bg-white/5 text-muted hover:bg-white/10 hover:text-zinc-200"
-                }`}
-              >
-                {t("ui.inherited")}
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-      {/* Logo-block alignment (landscape-only effect: portraits render
-          centered by contract, so the portrait Left option is disabled as a
-          demonstrated no-op — Auto already means portrait-center). Portrait
-          edits the shared flat (`null` = per-shape auto); landscape the
-          profile override (follow = clear back to the flat, via the scoped
-          reset above). */}
-      <div className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-1.5 shadow-sm">
-        <div className="space-y-1.5">
-          <span className="text-[11px] text-muted font-medium block">{t("ui.logoAlign")}</span>
-          {isLandscape && (ed.landscape.logoAlign == null) && (
-            <p className="text-[10px] text-muted italic leading-tight">
-              {t("ui.inherited")}: {t(ed.defaultLogoAlign === "center" ? "ui.alignCenter" : "ui.sideLeft")}
-            </p>
-          )}
-          {!isLandscape && logoAlign == null && (
-            <p className="text-[10px] text-muted italic leading-tight">
-              {t("ui.auto")}: {t("ui.alignCenter")}
-            </p>
-          )}
-          <div className="grid grid-cols-3 gap-1" role="group" aria-label={t("ui.logoAlign")}>
-            <button
-              type="button"
-              onClick={() => {
-                if (isLandscape) ed.setLandscape({ logoAlign: undefined })
-                else setLogoAlign(null)
-              }}
-              aria-pressed={isLandscape ? ed.landscape.logoAlign == null : logoAlign == null}
-              className={`flex-1 py-1 px-1 rounded-lg text-[11px] font-semibold transition-all duration-150 cursor-pointer ${
-                (isLandscape ? ed.landscape.logoAlign == null : logoAlign == null)
-                  ? "bg-white/20 text-white shadow-sm"
-                  : "bg-white/5 text-muted hover:bg-white/10 hover:text-zinc-200"
-              }`}
-            >
-              {t(isLandscape ? "ui.inherited" : "ui.auto")}
-            </button>
-            <button
-              type="button"
-              onClick={() => setLogoAlign("left")}
-              disabled={!isLandscape}
-              aria-pressed={(logoAlign ?? (isLandscape ? "left" : "center")) === "left"}
-              className={`flex-1 py-1 px-1 rounded-lg text-[11px] font-semibold transition-all duration-150 ${!isLandscape ? "cursor-not-allowed opacity-40" : "cursor-pointer"} ${
-                (logoAlign ?? (isLandscape ? "left" : "center")) === "left"
-                  ? "bg-white/20 text-white shadow-sm"
-                  : "bg-white/5 text-muted hover:bg-white/10 hover:text-zinc-200"
-              }`}
-            >
-              {t("ui.sideLeft")}
-            </button>
-            <button
-              type="button"
-              onClick={() => setLogoAlign("center")}
-              aria-pressed={(logoAlign ?? (isLandscape ? "left" : "center")) === "center"}
-              className={`flex-1 py-1 px-1 rounded-lg text-[11px] font-semibold transition-all duration-150 cursor-pointer ${
-                (logoAlign ?? (isLandscape ? "left" : "center")) === "center"
-                  ? "bg-white/20 text-white shadow-sm"
-                  : "bg-white/5 text-muted hover:bg-white/10 hover:text-zinc-200"
-              }`}
-            >
-              {t("ui.alignCenter")}
-            </button>
+      {mode === "appearance" ? (
+        <>
+          {orderActiveFirst([
+            {
+              active: genreStyleActive,
+              value: (
+                <div key="genre" hidden={hideFor("genre")} data-testid="badge-genre-style-wrap">
+                  <AvailabilityGate active name={t("ui.styleGenreBadge")} hint="" testId="badge-genre-style">
+                    <GenreStyleSection shape={targetShape} onPreviewFamilyChange={onPreviewFamilyChange} styleDisabled={!genreStyleActive} showFont={false} />
+                  </AvailabilityGate>
+                </div>
+              ),
+            },
+            {
+              active: extraStyleActive,
+              value: (
+                <div key="extra" hidden={hideFor("info")} data-testid="badge-extra-style-wrap">
+                  <AvailabilityGate active name={t("ui.extraBadgeStyle")} hint="" testId="badge-extra-style">
+                    {extraStyleCard}
+                  </AvailabilityGate>
+                </div>
+              ),
+            },
+          ].filter((it) => it.active))}
+          {fontActive && (
+          <div hidden={hideFor("genre")} data-testid="badge-common-font-wrap">
+            <CommonFontCard shape={targetShape} onPreviewFamilyChange={onPreviewFamilyChange} flags={effFlags} />
           </div>
-        </div>
-      </div>
+          )}
+        </>
+      ) : (
+        <>
+          <div hidden={hideFor("genre") || modeHide("appearance")} data-testid="badge-genre-style-wrap">
+            <GenreStyleSection shape={targetShape} onPreviewFamilyChange={onPreviewFamilyChange} />
+          </div>
+          <div hidden={hideFor("info") || modeHide("appearance")} data-testid="badge-extra-style-wrap">
+            {extraStyleCard}
+          </div>
+        </>
+      )}
+      {/* Logo-block alignment is Auto-only: no selector is rendered here (nor
+          in any other settings home). Portraits render centered and landscapes
+          left by server contract; the staged session normalizes stored
+          explicit values to null and the single Save clears them. */}
       </BadgeGroup>
 
       {/* Base content: genre/year toggles, ratings */}
-      <BadgeGroup id="base" title={t("ui.badgeGroupBase")} icon={Layers} defaultOpen>
+      <BadgeGroup id="base" title={t("ui.badgeGroupBase")} icon={Layers} defaultOpen bare={modeBare} hidden={hideFor("genre", "ratings")}>
 
       {/* Base genre/year toggles (info family kept for the preview sample) */}
-      <div {...famAttrs("info")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-3 shadow-sm">
+      <div {...famAttrs("info")} hidden={hideFor("genre") || modeHide("information")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-3 shadow-sm">
         <span className="font-semibold text-zinc-200 flex items-center gap-1.5">
           <Layers className="w-3.5 h-3.5 text-accent-orange" />
           {t("ui.titleInfoFamily")}
@@ -977,7 +1326,8 @@ export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange }: {
           {/* Sub-controlli Genere / Anno / Voto */}
           {globalBadges && (
             <div className="pl-3 py-1 space-y-2 border-l-2 border-surface2 ml-1 animate-fade-in">
-              <div className={`flex items-center justify-between ${defaultBottomActive ? "opacity-50" : ""}`} title={defaultBottomActive ? t("ui.separateRatingsBottomHint") : undefined} aria-disabled={defaultBottomActive || undefined}>
+              <fieldset disabled={defaultBottomActive} className="contents">
+              <div className="flex items-center justify-between" title={defaultBottomActive ? t("ui.separateRatingsBottomHint") : undefined} aria-disabled={defaultBottomActive || undefined}>
                 <span className="text-muted">{t("ui.badgeGenre")}</span>
                 <Toggle
                   value={badgeGenre}
@@ -988,7 +1338,7 @@ export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange }: {
                   disabled={defaultBottomActive}
                 />
               </div>
-              <div className={`flex items-center justify-between ${defaultBottomActive ? "opacity-50" : ""}`} title={defaultBottomActive ? t("ui.separateRatingsBottomHint") : undefined} aria-disabled={defaultBottomActive || undefined}>
+              <div className="flex items-center justify-between" title={defaultBottomActive ? t("ui.separateRatingsBottomHint") : undefined} aria-disabled={defaultBottomActive || undefined}>
                 <span className="text-muted">{t("ui.badgeYear")}</span>
                 <Toggle
                   value={badgeYear}
@@ -999,21 +1349,26 @@ export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange }: {
                   disabled={defaultBottomActive}
                 />
               </div>
+              </fieldset>
             </div>
           )}
 
           </div>
         </div>
 
-      {/* CARD Ratings: vote, separate, sources, custom */}
-      <div {...famAttrs("ratings")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-3 shadow-sm">
+      {/* CARD Ratings: vote, separate, sources, custom. Visibility lives ONLY
+          in Information: the separate style picker owns a dedicated appearance
+          wrapper below, so in appearance this card would render as an orphan
+          shell (title with every control hidden) — it stays mounted + hidden
+          for state, never visible. */}
+      <div {...famAttrs("ratings")} hidden={hideFor("ratings") || modeHide("information")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-3 shadow-sm">
         <span className="font-semibold text-zinc-200 flex items-center gap-1.5">
           <Star className="w-3.5 h-3.5 text-amber-400" />
           {t("ui.ratingsFamily")}
         </span>
         <div className="space-y-2">
           {globalBadges && (
-            <div className="pl-3 py-1 space-y-2 border-l-2 border-surface2 ml-1 animate-fade-in">
+            <div hidden={mode !== undefined && mode !== "information" ? true : undefined} className="pl-3 py-1 space-y-2 border-l-2 border-surface2 ml-1 animate-fade-in">
               <div className="flex items-center justify-between">
                 <span className="text-muted">{t("ui.badgeRating")}</span>
                 <Toggle
@@ -1030,53 +1385,12 @@ export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange }: {
                   <Toggle value={separateRatings} onChange={(v) => setSeparateRatings(v)} label={t("ui.separateRatings")} />
                 </div>
               )}
-              {badgeRating && separateRatings && (
-                <div className="pt-1 space-y-1.5" title={t("ui.separateRatingsHint")}>
-                  <span className="text-[11px] text-muted font-medium block">{t("ui.separateRatingsStyle")}</span>
-                  <div className="grid grid-cols-3 gap-1">
-                    {([
-                      { id: "column", labelKey: "ui.separateRatingsColumn" },
-                      { id: "bottom-bar", labelKey: "ui.separateRatingsBottomBar" },
-                      { id: "bottom-pills", labelKey: "ui.separateRatingsBottomPills" },
-                      { id: "bottom-mono", labelKey: "ui.separateRatingsBottomMono" },
-                      { id: "bottom-color", labelKey: "ui.separateRatingsBottomColor" },
-                    ] as const).map((opt) => {
-                      // Bar disabled on the landscape target (server normalizes
-                      // to pills): raw value kept, never hidden.
-                      const barOff = opt.id === "bottom-bar" && targetShape === "landscape"
-                      const pressed = getSeparateRatingsStyleForShape(
-                        separateRatingsStyle, targetShape === "landscape" ? "landscape" : "poster",
-                      ) === opt.id
-                      return (
-                        <button
-                          key={opt.id}
-                          type="button"
-                          onClick={() => { if (!barOff) setSeparateRatingsStyle(opt.id) }}
-                          aria-pressed={pressed}
-                          disabled={barOff}
-                          title={barOff ? t("ui.separateRatingsBarLandscapeHint") : undefined}
-                          className={`flex-1 py-1 px-1 rounded-lg text-[11px] font-semibold transition-all duration-150 ${
-                            pressed
-                              ? "bg-white/20 text-white shadow-sm"
-                              : "bg-white/5 text-muted hover:bg-white/10 hover:text-zinc-200"
-                          } ${barOff ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}
-                        >
-                          {t(opt.labelKey)}
-                        </button>
-                      )
-                    })}
-                  </div>
-                  {targetShape === "landscape" && (
-                    <p className="text-[10px] text-muted italic leading-tight">{t("ui.separateRatingsBarLandscapeHint")}</p>
-                  )}
-                  {globalBadges && badgeRating && separateRatings && isBottomSeparateRatingsStyle(separateRatingsStyle) && (
-                    <p className="text-[10px] text-muted italic leading-tight">{t("ui.separateRatingsBottomHint")}</p>
-                  )}
-                </div>
-              )}
+              {badgeRating && separateRatings && mode === undefined && separateStylePicker}
 
-              {/* Rating sources stay global in both targets. */}
-              {badgeRating && (
+              {/* Rating sources stay global in both targets. Legacy path only:
+                  family mode owns a dedicated Sources card (always accessible,
+                  no rating/master gate on the container). */}
+              {!familyMode && badgeRating && (mode === undefined || mode === "information") && (
                 <div className="pt-2 pb-1 space-y-2 border-t border-surface2/50">
                   <button
                     type="button"
@@ -1175,6 +1489,7 @@ export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange }: {
             </div>
           )}
           {/* Voti Personalizzati */}
+          {!familyMode && (mode === undefined || mode === "information") && (
           <div className="pt-1">
             <div className="flex items-center justify-between" title={t("ui.customRatingsHint")}>
               <span className="text-zinc-300 font-medium flex items-center gap-1.5">
@@ -1209,46 +1524,94 @@ export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange }: {
                 <div className="pt-1">
                   <button
                     type="button"
-                    disabled={crTestBusy}
+                    disabled={crTestBusy || customTestBlocked}
+                    title={customTestBlocked ? t("ui.customRatingSaveFirstHint") : undefined}
                     onClick={runCustomRatingTest}
-                    className="px-3 py-1.5 rounded-lg text-[11px] font-semibold bg-teal-500/15 text-teal-300 border border-teal-500/30 hover:bg-teal-500/25 disabled:opacity-50 transition-colors cursor-pointer"
+                    className="px-3 py-1.5 rounded-lg text-[11px] font-semibold bg-teal-500/15 text-teal-300 border border-teal-500/30 hover:bg-teal-500/25 disabled:opacity-50 transition-colors cursor-pointer disabled:cursor-not-allowed"
                   >
                     {crTestBusy ? t("ui.customRatingTesting") : t("ui.customRatingTest")}
                   </button>
-                  {crTestResult && (
-                    <div className={`mt-2 p-2 rounded-lg border text-[11px] ${crTestResult.ok ? "bg-emerald-500/10 border-emerald-500/30" : "bg-red-500/10 border-red-500/30"}`}>
-                      {crTestResult.ok ? (
-                        <div className="space-y-1">
-                          <div className="font-semibold text-emerald-300">
-                            {t("ui.customRatingTestOk")} · {crTestResult.status} OK · {crTestResult.ms} ms
-                          </div>
-                          {crTestResult.ratings?.map((r) => (
-                            <div key={r.id} className="flex items-center justify-between text-zinc-200">
-                              <span className="truncate">{r.name}</span>
-                              <span className="font-mono ml-2 shrink-0">{formatRating(r.value, r.format as "decimal" | "percent")}</span>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="text-red-300">
-                          {customRatingTestErrorLabel(crTestResult.error)}
-                          {crTestResult.status ? ` · ${crTestResult.status}` : ""} · {crTestResult.ms} ms
-                        </div>
-                      )}
-                    </div>
+                  {customTestBlocked && (
+                    <p className="text-[10px] text-zinc-500 italic leading-tight pt-1">{t("ui.customRatingSaveFirstHint")}</p>
                   )}
+                  {customRatingTestResult}
                 </div>
               </div>
             )}
           </div>
+          )}
           </div>
         </div>
+      {/* Separate style: appearance-own home (never inside the
+          information-hidden visibility wrapper above). Visibility lives ONLY
+          in Information; the root ratings card stays mounted in both tabs. */}
+      {(mode !== "appearance" || separateStyleActive) && (
+      <div hidden={hideFor("ratings") || (mode !== "appearance" ? true : undefined)} data-testid="badge-separate-style-wrap">
+        {mode === "appearance" && separateStyleActive && (
+          <AvailabilityGate active name={t("ui.separateRatingsStyle")} hint="" testId="badge-separate-style">
+            <div className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-1.5 shadow-sm">
+              {separateStylePicker}
+            </div>
+          </AvailabilityGate>
+        )}
+      </div>
+      )}
       </BadgeGroup>
+      {/* Sources-only card (family mode): rating sources + custom provider,
+          always accessible even when rating/master off; setter semantics
+          unchanged. Legacy standalone keeps the in-card gated version. */}
+      {familyMode && (
+      <div data-testid="badge-sources-card" hidden={hideFor("sources")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-3 shadow-sm">
+        <span className="font-semibold text-zinc-200 flex items-center gap-1.5">
+          <Star className="w-3.5 h-3.5 text-amber-400" />
+          {t("ui.ratingSources")}
+        </span>
+        <p className="text-[11px] text-zinc-400 italic -mt-1">{t("ui.ratingSourcesHint")}</p>
+        <div className="flex items-center gap-1.5 text-[10px]">
+          <button type="button" onClick={() => ed.setDefaultRatingSources(UI_RATING_SOURCES.map((s) => s.id))} className="text-accent-orange hover:underline font-semibold cursor-pointer">{t("ui.enableAll")}</button>
+          <span className="text-zinc-600">·</span>
+          <button type="button" onClick={() => ed.setDefaultRatingSources(["imdb"])} className="text-muted hover:text-zinc-200 cursor-pointer">{t("ui.sourcesImdbOnly")}</button>
+        </div>
+        <div className="grid grid-cols-2 gap-1.5 max-h-52 overflow-y-auto pr-0.5">
+          {UI_RATING_SOURCES.map((s) => {
+            const current = ed.defaultRatingSources ?? ["imdb", "tmdb"]
+            const isSelected = current.includes(s.id)
+            return (
+              <button key={s.id} type="button" onClick={() => {
+                if (isSelected) { if (current.length > 1) ed.setDefaultRatingSources(current.filter((x) => x !== s.id)) }
+                else ed.setDefaultRatingSources([...current, s.id])
+              }} className={`flex items-center justify-between px-2 py-1.5 rounded-lg text-[10.5px] border cursor-pointer ${isSelected ? "bg-accent-orange/[0.12] border-accent-orange/35 text-zinc-100" : "bg-white/[0.03] border-white/[0.04] text-zinc-400"}` }>
+                <span className="flex items-center gap-1.5 truncate"><RatingSourceIcon id={s.id} className="w-3.5 h-3.5 shrink-0" /><span className="truncate">{t(s.labelKey)}</span></span>
+                <span className={`w-2 h-2 rounded-full shrink-0 ml-1 ${isSelected ? "bg-accent-orange" : "bg-zinc-700"}`} />
+              </button>
+            )
+          })}
+        </div>
+        <div className="pt-1 border-t border-surface2/50">
+          <div className="flex items-center justify-between" title={t("ui.customRatingsHint")}>
+            <span className="text-zinc-300 font-medium flex items-center gap-1.5"><Star className="w-3.5 h-3.5 text-teal-400" />{t("ui.customRatings")}</span>
+            <Toggle value={customRatings} onChange={(v) => setCustomRatings(v)} label={t("ui.customRatings")} />
+          </div>
+          {customRatings && (
+            <div className="pl-3 py-1 space-y-2 border-l-2 border-surface2 ml-1 mt-1.5">
+              <label className="text-[11px] text-muted block mb-1">{t("ui.customRatingEndpoint")}</label>
+              <input type="url" value={ed.defaultCustomRatingEndpoint ?? ""} onChange={(e) => ed.setDefaultCustomRatingEndpoint(e.target.value)} placeholder="https://example.com/ratings/{imdbId}" maxLength={500} dir="ltr" className="w-full text-xs font-mono py-1.5 px-2.5 rounded-lg bg-black/40 border border-white/10 text-foreground placeholder-zinc-600 focus:outline-none focus:border-teal-500/50" />
+              <p className="text-[11px] text-zinc-400 italic">{t("ui.customRatingKeyHint")}</p>
+              <button type="button" disabled={crTestBusy || customTestBlocked} title={customTestBlocked ? t("ui.customRatingSaveFirstHint") : undefined} onClick={runCustomRatingTest} className="px-3 py-1.5 rounded-lg text-[11px] font-semibold bg-teal-500/15 text-teal-300 border border-teal-500/30 disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed">{crTestBusy ? t("ui.customRatingTesting") : t("ui.customRatingTest")}</button>
+              {customTestBlocked && (
+                <p className="text-[10px] text-zinc-500 italic leading-tight pt-1">{t("ui.customRatingSaveFirstHint")}</p>
+              )}
+              {customRatingTestResult}
+            </div>
+          )}
+        </div>
+      </div>
+      )}
 
       {/* Special overlays: ranking, sash, network, prerelease */}
-      <BadgeGroup id="overlay" title={t("ui.badgeGroupOverlay")} icon={Trophy} defaultOpen={false}>
+      <BadgeGroup id="overlay" title={t("ui.badgeGroupOverlay")} icon={Trophy} defaultOpen={familyMode ? true : false} bare={modeBare} hidden={hideFor("rank", "info", "logo")}>
       {/* CARD Rankings: rank bucket + single appearance + position */}
-      <div {...famAttrs("rank")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-3 shadow-sm">
+      <div {...famAttrs("rank")} hidden={hideFor("rank") || modeHide("rankings")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-3 shadow-sm">
         <span className="font-semibold text-zinc-200 flex items-center gap-1.5">
           <Trophy className="w-3.5 h-3.5 text-amber-500" />
           {t("ui.rankFamily")}
@@ -1267,11 +1630,11 @@ export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange }: {
               setRankingBadges(v)
               if (v) {
                 // Master ON restores this target's categories (or all).
-                setSashOrder(popStashedSashOrder(sashStashKey) ?? [...DEFAULT_SASH_ORDER])
+                setSashOrder(popStashedSashOrder(sashStashKey, stagedStash) ?? [...DEFAULT_SASH_ORDER])
               } else {
                 // Master OFF clears this target's sash; single categories
                 // stay switchable below.
-                stashSashOrder(sashStashKey, sashOrder)
+                stashSashOrder(sashStashKey, sashOrder, stagedStash)
                 setSashOrder([])
               }
             }}
@@ -1303,12 +1666,25 @@ export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange }: {
             onVariant={handleVariant}
             onRibbonVariant={handleRibbonVariant}
             onSide={(s) => setRibbonSide(s)}
+            {...(isRankingsTab
+              ? {
+                  presentation,
+                  onPresentation: handlePresentation,
+                  cardSkin: isCardSkin(posterLayout) ? posterLayout : rememberedSkin,
+                  onCardSkin: handleCardSkin,
+                }
+              : {})}
           />
+          {isRankingsTab && (presentation === "fresh" || presentation === "card") && (
+            <p className="text-[10px] text-zinc-500 leading-relaxed select-none">
+              {t(presentation === "card" ? "ui.posterLayoutScopeHint" : "ui.posterFreshScopeHint")}
+            </p>
+          )}
         </div>
       </div>
 
       {/* Sash categories (info family kept for the preview sample) */}
-      <div {...famAttrs("info")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-1.5 shadow-sm">
+      <div {...famAttrs("info")} hidden={hideFor("rank", "info") || modeHide("information")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-1.5 shadow-sm">
         <span className="text-[11px] text-muted font-medium block">{t("ui.sashTitle")}</span>
         <div className="space-y-1.5">
           {(["upcoming", "new", "award", "extra"] as const).map((b) => (
@@ -1326,7 +1702,7 @@ export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange }: {
 
       {/* Coming Soon: release state only. The angular ribbon follows the
           shared legacy ribbon flag (no independent switch on purpose). */}
-      <div {...famAttrs("info")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-1.5 shadow-sm" title={t("ui.preReleaseHint")}>
+      <div {...famAttrs("info")} hidden={hideFor("info") || modeHide("information")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-1.5 shadow-sm" title={t("ui.preReleaseHint")}>
         <div className="flex items-center justify-between">
           <span className="text-zinc-300 font-medium flex items-center gap-1.5">
             <Flame className="w-3.5 h-3.5 text-orange-400" />
@@ -1343,8 +1719,11 @@ export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange }: {
       </div>
 
       {/* Advanced: global top-badge priority (a single badge wins) */}
-      <div {...famAttrs("info")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-1.5 shadow-sm">
+      <div {...famAttrs("info")} hidden={hideFor("rank", "info") || modeHide("rankings")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-1.5 shadow-sm">
         <div className="pt-1">
+          {mode === "rankings" && (
+            <p className="text-[10px] text-muted italic leading-tight pb-1">{t("ui.badgePriorityOrderHint")}</p>
+          )}
           <button
             type="button"
             onClick={() => setAdvancedOpen((v) => !v)}
@@ -1396,11 +1775,15 @@ export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange }: {
                         <span className={`text-zinc-300 font-medium ${isOn ? "" : "opacity-50"}`}>{t(`ui.sash_${b}`)}</span>
                       </span>
                       <span className="inline-flex items-center gap-0.5">
+                        {mode === "rankings" ? (
+                          <span className={`text-[10px] font-mono px-1 ${isOn ? "text-zinc-300" : "text-zinc-600"}`}>{isOn ? `#${sash.indexOf(b) + 1}` : "—"}</span>
+                        ) : (
                         <Toggle
                           value={isOn}
                           onChange={(v) => toggleBucket(b, v)}
                           label={t(`ui.sash_${b}`)}
                         />
+                        )}
                       </span>
                     </div>
                   )
@@ -1413,7 +1796,7 @@ export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange }: {
       </div>
 
       {/* Network logo (quality family kept, overlay placement only) */}
-      <div {...famAttrs("quality")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-2 shadow-sm">
+      <div {...famAttrs("quality")} hidden={hideFor("logo") || modeHide("information")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-2 shadow-sm">
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <span className="text-zinc-300 font-medium flex items-center gap-1.5">
@@ -1429,7 +1812,7 @@ export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange }: {
             />
           </div>
 
-          {networkLogo && (
+          {networkLogo && mode === undefined && (
             <div className="flex items-center justify-between gap-3" title={t("ui.networkLogoPosition")}>
               <span className="text-zinc-400 font-medium text-[11px] pl-5">
                 {t("ui.networkLogoPosition")}
@@ -1457,9 +1840,9 @@ export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange }: {
       </BadgeGroup>
 
       {/* Quality & formats: quality badge, style, formats */}
-      <BadgeGroup id="quality" title={t("ui.badgeGroupQuality")} icon={Tv} defaultOpen={false}>
+      <BadgeGroup id="quality" title={t("ui.badgeGroupQuality")} icon={Tv} defaultOpen={familyMode ? true : false} bare={modeBare} hidden={hideFor("quality")}>
       {/* Quality toggle card */}
-      <div {...famAttrs("quality")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-3 shadow-sm">
+      <div {...famAttrs("quality")} hidden={hideFor("quality") || modeHide("information")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-3 shadow-sm">
         {/* Specifiche Tecniche & Network */}
         <div className="space-y-2">
           <div className="flex items-center justify-between">
@@ -1478,10 +1861,14 @@ export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange }: {
         </div>
       </div>
 
-      {/* Age rating: small neutral text badge below the quality stack */}
-      <div {...famAttrs("quality")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-3 shadow-sm">
+      {/* Age rating: small neutral text badge below the quality stack. In
+          appearance the whole card unmounts while the age style is inactive
+          (never an empty shell with a lone heading); Information always keeps
+          the toggle reachable. */}
+      {(mode !== "appearance" || ageStyleActive) && (
+      <div {...famAttrs("quality")} hidden={hideFor("quality") || modeHide("information", "appearance")} data-testid="badge-age-card" className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-3 shadow-sm">
         <div className="space-y-2">
-          <div className="flex items-center justify-between">
+          <div hidden={mode !== undefined && mode !== "information" ? true : undefined} className="flex items-center justify-between">
             <span className="text-zinc-300 font-medium flex items-center gap-1.5">
               <Sparkles className="w-3.5 h-3.5 text-purple-400" />
               {t("ui.ageBadge")}
@@ -1494,8 +1881,8 @@ export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange }: {
               label={t("ui.ageBadge")}
             />
           </div>
-          <p className="text-[11px] text-zinc-500 leading-relaxed">{t("ui.ageBadgeHint")}</p>
-          {ageBadge && (
+          <p hidden={mode !== undefined && mode !== "information" ? true : undefined} className="text-[11px] text-zinc-500 leading-relaxed">{t("ui.ageBadgeHint")}</p>
+          {ageBadge && (mode === undefined || mode === "information") && (
             <div className="flex items-center justify-between gap-3">
               <span className="text-zinc-400 font-medium text-[11px] ps-5">
                 {t("ui.ageBadgeCountry")}
@@ -1516,7 +1903,25 @@ export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange }: {
               </select>
             </div>
           )}
-          {ageBadge && (
+          {(mode === undefined || mode === "appearance") && (mode === "appearance" ? (
+            ageStyleActive ? (
+            <AvailabilityGate active name={t("ui.ageBadgeStyle")} hint="" testId="badge-age-style">
+              <div className="space-y-1.5">
+                <label className="text-[11px] text-muted font-medium block">
+                  {t("ui.ageBadgeStyle")}
+                </label>
+                <BadgeStyleSelector
+                  value={ageBadgeStyle}
+                  options={["standard", "knockout"] as const}
+                  onChange={(v) => {
+                    setAgeBadgeStyle(v)
+                  }}
+                  t={t}
+                />
+              </div>
+            </AvailabilityGate>
+            ) : null
+          ) : ageBadge ? (
             <div className="space-y-1.5">
               <label className="text-[11px] text-muted font-medium block">
                 {t("ui.ageBadgeStyle")}
@@ -1530,12 +1935,27 @@ export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange }: {
                 t={t}
               />
             </div>
-          )}
+          ) : null)}
         </div>
       </div>
+      )}
 
-      <QualityStyleSection shape={targetShape} qualityEnabled={badgeQuality} onPreviewFamilyChange={onPreviewFamilyChange} />
+      {(mode !== "appearance" || qualityStyleActive) && (
+      <div hidden={hideFor("quality") || modeHide("appearance")} data-testid="badge-quality-style-wrap">
+        {mode === "appearance" ? (
+          qualityStyleActive ? (
+          <AvailabilityGate active name={t("ui.qualityBadgeStyle")} hint="" testId="badge-quality-style">
+            <QualityStyleSection shape={targetShape} qualityEnabled={badgeQuality} onPreviewFamilyChange={onPreviewFamilyChange} forceShow />
+          </AvailabilityGate>
+          ) : null
+        ) : (
+          <QualityStyleSection shape={targetShape} qualityEnabled={badgeQuality} onPreviewFamilyChange={onPreviewFamilyChange} />
+        )}
+      </div>
+      )}
       </BadgeGroup>
+        </div>)}
+      </section>
     </div>
   )
 }

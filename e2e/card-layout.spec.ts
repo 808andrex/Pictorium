@@ -406,41 +406,76 @@ test.describe("card layouts — settings selection (portrait + landscape)", () =
     expect(gotLand.posterFreshScope).toBe(wantLand.posterFreshScope)
   })
 
-  async function openBadgeTab(page: Page) {
+  async function openRankingsTab(page: Page) {
     await page.goto("/")
     await page.getByRole("button", { name: /Impostazioni/i }).click()
-    await page.getByRole("tab", { name: "Badge", exact: true }).click()
+    await page.getByRole("tab", { name: "Classifiche", exact: true }).click()
     const controls = page.getByTestId("settings-controls").filter({ visible: true })
     await expect(controls).toBeVisible()
     return controls
   }
 
-  test("five cover choices; Card reveals the apply scope in portrait and landscape", async ({ page }) => {
-    const controls = await openBadgeTab(page)
-    // The cover-layout radiogroup exposes all five choices (portrait default).
-    const group = controls.getByRole("radiogroup", { name: "Layout copertina" })
+  async function saveStaged(page: Page) {
+    // Staged-session era: UI picks never PUT by themselves. The single
+    // global Save persists the draft; the synced status proves the flush.
+    await page.getByTestId("settings-save").click()
+    await expect(page.getByTestId("settings-save-status")).toContainText(/Sincronizzato/i, {
+      timeout: 15_000,
+    })
+  }
+
+  async function portraitTarget(page: Page, formatTarget: ReturnType<Page["getByTestId"]>) {
+    // Back to the portrait edit target when the Orizzontale/Verticale switch
+    // exists (single-top-selector layouts); no-op otherwise.
+    const portraitBtn = formatTarget.getByRole("button", { name: /Verticale|Portrait/i })
+    if (await portraitBtn.count()) await portraitBtn.first().click()
+  }
+
+  test("unified Classifica; Card reveals skins in portrait and landscape", async ({ page }) => {
+    const controls = await openRankingsTab(page)
+    // The unified Classifica radiogroup exposes all five presentations with
+    // exactly one checked (portrait default; which one depends on the
+    // inherited style, so only exclusivity is pinned here).
+    const group = controls.getByRole("radiogroup", { name: "Classifica" })
     await expect(group).toBeVisible()
     await group.scrollIntoViewIfNeeded()
-    for (const name of ["Standard", "Fresh", "Provider Glass", "Nuvio", "Stremio"]) {
+    const presentations = ["Nastro", "Numero", "Badge", "Fresh", "Card"]
+    await expect(group.getByRole("radio")).toHaveCount(5)
+    for (const name of presentations) {
       await expect(group.getByRole("radio", { name, exact: true })).toBeVisible()
     }
-    // Standard: no apply-scope selector (inert, stored value kept).
-    await expect(controls.getByTestId("fresh-scope-selector")).toHaveCount(0)
+    const checked = await group
+      .getByRole("radio")
+      .evaluateAll((els) => els.map((el) => el.getAttribute("aria-checked")))
+    expect(checked.filter((v) => v === "true")).toHaveLength(1)
+    // Classic look: no Card skins subgroup (inert, stored value kept).
+    await expect(controls.getByTestId("poster-layout-skins")).toHaveCount(0)
 
-    // Picking a Card skin reveals the generic (non-Fresh) scope wording.
-    await group.getByRole("radio", { name: "Nuvio", exact: true }).click()
-    const scope = controls.getByTestId("fresh-scope-selector")
-    await expect(scope).toBeVisible()
-    await expect(scope.getByText("Applica layout", { exact: true })).toBeVisible()
-    await expect(scope.getByTestId("fresh-scope-select")).toHaveValue("ranked")
+    // Picking Card reveals the skin subgroup with the three skins.
+    await group.getByRole("radio", { name: "Card", exact: true }).click()
+    const skins = controls.getByTestId("poster-layout-skins")
+    await expect(skins).toBeVisible()
+    for (const name of ["Colore provider", "Nero", "Viola vetro"]) {
+      await expect(skins.getByRole("radio", { name, exact: true })).toBeVisible()
+    }
+    const skinChecked = await skins
+      .getByRole("radio")
+      .evaluateAll((els) => els.map((el) => el.getAttribute("aria-checked")))
+    expect(skinChecked.filter((v) => v === "true")).toHaveLength(1)
 
-    // Landscape edit target keeps the same scope contract (shared stored value).
+    // Pick the Nuvio skin ("Nero" is its grouped-skin label), persist the
+    // staged draft, and prove the server holds the Card while the landscape
+    // profile stays Standard.
+    await skins.getByRole("radio", { name: "Nero", exact: true }).click()
+
+    // Landscape edit target keeps shape isolation (never follows the flat).
     // Strict shape independence: a PORTRAIT Card pick freezes the pre-edit
     // landscape look (previous STANDARD) into the profile instead of following
     // the flat — production must NOT be changed to follow the flat again. So
     // after the portrait Nuvio pick above, landscape is expected to stay
-    // Standard (scope hidden); the Card scope is then selected EXPLICITLY in
+    // Standard (skins hidden); the Card skin is then selected EXPLICITLY in
     // the landscape target below.
+    await saveStaged(page)
     const formatTarget = page
       .getByRole("dialog", { name: /Configura tutti i poster/i })
       .getByTestId("format-target-selector")
@@ -449,11 +484,11 @@ test.describe("card layouts — settings selection (portrait + landscape)", () =
     if (await landscapeBtn.count()) {
       await landscapeBtn.first().click()
       // Independence boundary: portrait Nuvio must NOT leak into landscape.
-      await expect(controls.getByTestId("fresh-scope-selector")).toHaveCount(0)
-      await expect(group.getByRole("radio", { name: "Standard", exact: true })).toHaveAttribute(
-        "aria-checked",
-        "true",
-      )
+      await expect(controls.getByTestId("poster-layout-skins")).toHaveCount(0)
+      const landChecked = await group
+        .getByRole("radio")
+        .evaluateAll((els) => els.map((el) => el.getAttribute("aria-checked")))
+      expect(landChecked.filter((v) => v === "true")).toHaveLength(1)
       // Backend shape isolation: flat holds the Card, the frozen profile holds
       // Standard with the shared scope value.
       await waitDefaults(
@@ -466,11 +501,12 @@ test.describe("card layouts — settings selection (portrait + landscape)", () =
       expect(iso.posterLayout).toBe("nuvio")
       expect(((iso.landscape ?? {}) as Record<string, unknown>).posterLayout).toBe("standard")
 
-      // Explicit landscape Card pick: scope appears in landscape only.
-      await group.getByRole("radio", { name: "Nuvio", exact: true }).click()
-      const landScope = controls.getByTestId("fresh-scope-selector")
-      await expect(landScope).toBeVisible()
-      await expect(controls.getByTestId("fresh-scope-select")).toHaveValue("ranked")
+      // Explicit landscape Card pick: skins appear in landscape only.
+      await group.getByRole("radio", { name: "Card", exact: true }).click()
+      const landSkins = controls.getByTestId("poster-layout-skins")
+      await expect(landSkins).toBeVisible()
+      await landSkins.getByRole("radio", { name: "Nero", exact: true }).click()
+      await saveStaged(page)
       await waitDefaults(
         page,
         (d) => ((d.landscape ?? {}) as Record<string, unknown>).posterLayout === "nuvio",
@@ -479,8 +515,8 @@ test.describe("card layouts — settings selection (portrait + landscape)", () =
       const portraitBtn = formatTarget.getByRole("button", { name: /Verticale|Portrait/i })
       if (await portraitBtn.count()) {
         await portraitBtn.first().click()
-        await expect(controls.getByTestId("fresh-scope-selector")).toBeVisible()
-        await expect(group.getByRole("radio", { name: "Nuvio", exact: true })).toHaveAttribute(
+        await expect(controls.getByTestId("poster-layout-skins")).toBeVisible()
+        await expect(skins.getByRole("radio", { name: "Nero", exact: true })).toHaveAttribute(
           "aria-checked",
           "true",
         )
@@ -490,8 +526,10 @@ test.describe("card layouts — settings selection (portrait + landscape)", () =
       }
     }
 
-    // Restore Standard: the scope selector hides again (no residue).
-    await group.getByRole("radio", { name: "Standard", exact: true }).click()
-    await expect(controls.getByTestId("fresh-scope-selector")).toHaveCount(0)
+    // Restore a classic look: the skins subgroup hides again (no residue).
+    await portraitTarget(page, formatTarget)
+    await group.getByRole("radio", { name: "Nastro", exact: true }).click()
+    await expect(controls.getByTestId("poster-layout-skins")).toHaveCount(0)
+    await saveStaged(page)
   })
 })

@@ -1,14 +1,20 @@
 /**
- * Task17 UIORDER (+ P6 Card exposure): cover-layout card position (order only,
- * no behavior change except the intentional P6 scope widening).
- * - BadgeControls (per-title badge tab): the layout card (both selectors,
- *   scope, hint, controlled callbacks) is the FIRST card, single instance,
- *   ahead of every other card; scope shows for Fresh AND Card skins with the
- *   stored value kept (Standard hides it).
+ * Task17 UIORDER (+ P6 Card exposure + T1 unified per-title ranking
+ * presentation): ONE exclusive Nastro/Numero/Badge/Fresh/Card group in
+ * BadgeControls (no separate layout card, no scope dropdown) and the
+ * settings ranked-only rule (no scope selector: Fresh/Card render only for
+ * titles with a valid displayed rank, the rest fall back to Standard).
+ * - BadgeControls (per-title badge tab): the unified presentation group
+ *   (both rank styles and Fresh/Card skins, ranked-only hints, controlled
+ *   callbacks) is the single exclusive choice, single instance; no
+ *   poster-layout-card anywhere; stored scope kept (Standard hides hints).
  * - BadgeDefaultsSection (settings, portrait AND landscape): preset block,
  *   then layout card, then the remaining controls; scoped setters/inheritance
  *   intact (portrait=flat, landscape=profile override; portrait edits snapshot
  *   pre-edit into the profile, resets restore independent shape defaults).
+ *   The layout card offers the style choices (Fresh + Card skins) with a
+ *   ranked-only hint and NO scope selector: Fresh/Card render only for titles
+ *   with a valid displayed rank, the rest fall back to Standard.
  * Real-DOM order assertions (compareDocumentPosition / firstElementChild),
  * never string matching. No renderer/output behavior is touched.
  */
@@ -51,7 +57,7 @@ beforeEach(() => {
   vi.useFakeTimers()
 })
 
-describe("per-title layout card first (BadgeControls)", () => {
+describe("per-title unified presentation (BadgeControls)", () => {
   function renderEditor() {
     const { Probe, ctx } = probe()
     renderWithCtx(
@@ -61,63 +67,65 @@ describe("per-title layout card first (BadgeControls)", () => {
     return { ctx }
   }
 
-  function layoutGroup(): HTMLElement {
-    return screen.getByRole("radiogroup", { name: "ui.posterLayout" })
+  function presentationGroup(): HTMLElement {
+    return within(screen.getByTestId("ranking-presentation")).getByRole("radiogroup", { name: "ui.rankFamily" })
   }
 
-  it("layout card is the first card and the only instance", () => {
+  it("no separate layout card; single exclusive 5-choice presentation group", () => {
     renderEditor()
-    const cards = screen.getAllByTestId("poster-layout-card")
-    expect(cards).toHaveLength(1)
-    const card = cards[0]
-    // Direct child of the badge-tab panel, ahead of every other card.
-    expect(card.parentElement?.firstElementChild).toBe(card)
+    // The old separate layout card is gone (single instance used to assert).
+    expect(screen.queryByTestId("poster-layout-card")).toBeNull()
+    expect(screen.queryByRole("radiogroup", { name: "ui.posterLayout" })).toBeNull()
+    const groups = screen.getAllByTestId("ranking-presentation")
+    expect(groups).toHaveLength(1)
+    expect(within(presentationGroup()).getAllByRole("radio")).toHaveLength(5)
+    expect(
+      within(presentationGroup()).getAllByRole("radio").filter((o) => o.getAttribute("aria-checked") === "true"),
+    ).toHaveLength(1)
   })
 
-  it("layout precedes ranking appearance and genre badge controls in real DOM", () => {
+  it("presentation group lives in the classifica card between the top badge and the extra style", () => {
     renderEditor()
-    const card = screen.getByTestId("poster-layout-card")
-    const rankGroup = screen.getByRole("radiogroup", { name: "ui.rankFamily" })
-    expect(precedes(card, rankGroup)).toBe(true)
-    // First historic card header (visibility & badge position) comes after.
-    expect(precedes(card, screen.getByText("ui.badgeSectionPoster"))).toBe(true)
-    // Custom-badge/classifica card header comes after.
-    expect(precedes(card, screen.getByText("ui.customBadge"))).toBe(true)
+    const group = screen.getByTestId("ranking-presentation")
+    // Historic first-card header (visibility & badge position) comes before.
+    expect(precedes(screen.getByText("ui.badgeSectionPoster"), group)).toBe(true)
+    // Custom-badge/classifica card header comes before the group…
+    expect(precedes(screen.getByText("ui.customBadge"), group)).toBe(true)
+    // …and the extra style block comes after (single exclusive rank+layout).
+    expect(precedes(group, screen.getByText("ui.extraBadgeStyle"))).toBe(true)
   })
 
-  it("selectors stay enabled with working callbacks; scope is Fresh/Card-only and stored", () => {
+  it("choices stay enabled with working callbacks; hints are Fresh/Card-only and stored scope is kept", () => {
     const { ctx } = renderEditor()
-    const layoutRadios = within(layoutGroup()).getAllByRole("radio")
+    const layoutRadios = within(presentationGroup()).getAllByRole("radio")
     for (const radio of layoutRadios) expect(radio).toBeEnabled()
-    // Standard: scope control absent (stored preference untouched).
+    // Standard: no scope control, no ranked-only hint (stored preference untouched).
     expect(screen.queryByTestId("fresh-scope-selector")).toBeNull()
-    fireEvent.click(within(layoutGroup()).getByRole("radio", { name: "ui.posterLayoutFresh" }))
+    expect(screen.queryByTestId("fresh-scope-select")).toBeNull()
+    expect(screen.queryByText("ui.posterFreshScopeHint")).toBeNull()
+    expect(screen.queryByText("ui.posterLayoutScopeHint")).toBeNull()
+    fireEvent.click(within(presentationGroup()).getByRole("radio", { name: "ui.posterLayoutGroupedFresh" }))
     expect(ctx().posterLayout).toBe("fresh")
-    const scopeSelect = screen.getByTestId("fresh-scope-select")
-    expect(scopeSelect).toBeEnabled()
-    fireEvent.change(scopeSelect, { target: { value: "all" } })
-    expect(ctx().posterFreshScope).toBe("all")
-    // Back to Standard: selector hides again, stored scope is kept.
+    expect(ctx().posterFreshScope).toBe("ranked")
+    expect(screen.getByText("ui.posterFreshScopeHint")).toBeTruthy()
+    // Back to a classic: hints hide again, stored scope is kept.
     fireEvent.click(
-      within(layoutGroup()).getByRole("radio", { name: "ui.posterLayoutStandard" }),
+      within(presentationGroup()).getByRole("radio", { name: "ui.ribbon" }),
     )
     expect(ctx().posterLayout).toBe("standard")
     expect(screen.queryByTestId("fresh-scope-selector")).toBeNull()
-    expect(ctx().posterFreshScope).toBe("all")
-    // Card skins share the same scope control (generic wording, same stored
-    // value): visible for provider-glass, hidden again on Standard, kept.
+    expect(screen.queryByText("ui.posterFreshScopeHint")).toBeNull()
+    expect(ctx().posterFreshScope).toBe("ranked")
+    // Card shares the same ranked-only rule with generic wording: visible
+    // skins, hint, still no scope dropdown.
     fireEvent.click(
-      within(layoutGroup()).getByRole("radio", { name: "ui.posterLayoutProviderGlass" }),
+      within(presentationGroup()).getByRole("radio", { name: "ui.posterLayoutGroupedCard" }),
     )
     expect(ctx().posterLayout).toBe("provider-glass")
-    expect(screen.getByTestId("fresh-scope-select")).toBeEnabled()
-    expect(screen.getByText("ui.posterLayoutScope")).toBeTruthy()
+    expect(screen.getByTestId("poster-layout-skins")).toBeInTheDocument()
     expect(screen.getByText("ui.posterLayoutScopeHint")).toBeTruthy()
-    fireEvent.click(
-      within(layoutGroup()).getByRole("radio", { name: "ui.posterLayoutStandard" }),
-    )
     expect(screen.queryByTestId("fresh-scope-selector")).toBeNull()
-    expect(ctx().posterFreshScope).toBe("all")
+    expect(ctx().posterFreshScope).toBe("ranked")
   })
 })
 
@@ -136,6 +144,10 @@ describe("settings defaults order: presets, then layout, then rest", () => {
   }
 
   function layoutGroup(): HTMLElement {
+    const adv = screen.getByTestId("badge-advanced-toggle")
+    if (adv.getAttribute("aria-expanded") !== "true") fireEvent.click(adv)
+    const g = screen.getByTestId("badge-group-style-toggle")
+    if (g.getAttribute("aria-expanded") !== "true") fireEvent.click(g)
     return screen.getByRole("radiogroup", { name: "ui.posterLayout" })
   }
 
@@ -156,7 +168,7 @@ describe("settings defaults order: presets, then layout, then rest", () => {
     },
   )
 
-  it("portrait writes the flat default; scope selector is Fresh/Card-only", async () => {
+  it("portrait writes the flat default; no scope selector, ranked-only hint for Fresh/Card", async () => {
     const { ctx } = renderBadge("portrait")
     await act(async () => {})
     const freshRadio = within(layoutGroup()).getByRole("radio", {
@@ -168,19 +180,20 @@ describe("settings defaults order: presets, then layout, then rest", () => {
     expect(ctx().defaultPosterLayout).toBe("fresh")
     // 3B1: the inherited key freezes the pre-edit flat instead of following it.
     expect(ctx().landscape.posterLayout).toBe("standard")
-    const scopeSelect = screen.getByTestId("fresh-scope-select")
-    expect(scopeSelect).toBeEnabled()
-    fireEvent.change(scopeSelect, { target: { value: "all" } })
-    expect(ctx().defaultPosterFreshScope).toBe("all")
-    // 3B1: the inherited key freezes the pre-edit flat instead of following it.
-    expect(ctx().landscape.posterFreshScope).toBe("ranked")
-    // Card skins reuse the same scope control with generic wording.
+    // Ranked-only: no scope dropdown for Fresh — the hint states the rule and
+    // the stored scope stays ranked (no UI path to "all" exists in settings).
+    expect(screen.queryByTestId("fresh-scope-selector")).toBeNull()
+    expect(screen.queryByTestId("fresh-scope-select")).toBeNull()
+    expect(screen.getByText("ui.posterFreshScopeHint")).toBeTruthy()
+    expect(ctx().defaultPosterFreshScope).toBe("ranked")
+    // Card skins reuse the same ranked-only rule with generic wording.
     fireEvent.click(
       within(layoutGroup()).getByRole("radio", { name: "ui.posterLayoutStremio" }),
     )
     expect(ctx().defaultPosterLayout).toBe("stremio")
-    expect(screen.getByTestId("fresh-scope-select")).toBeEnabled()
+    expect(screen.queryByTestId("fresh-scope-select")).toBeNull()
     expect(screen.getByText("ui.posterLayoutScopeHint")).toBeTruthy()
+    expect(ctx().defaultPosterFreshScope).toBe("ranked")
   })
 
   it("landscape writes only the profile override; reset restores independent shape defaults", async () => {
@@ -193,10 +206,11 @@ describe("settings defaults order: presets, then layout, then rest", () => {
     )
     expect(ctx().landscape.posterLayout).toBe("fresh")
     expect(ctx().defaultPosterLayout).toBe("standard")
-    fireEvent.change(screen.getByTestId("fresh-scope-select"), {
-      target: { value: "all" },
-    })
-    expect(ctx().landscape.posterFreshScope).toBe("all")
+    // Ranked-only: no scope dropdown in landscape either — the profile scope
+    // stays on the ranked default and the flat is intact.
+    expect(screen.queryByTestId("fresh-scope-select")).toBeNull()
+    expect(screen.getByText("ui.posterFreshScopeHint")).toBeTruthy()
+    expect(ctx().landscape.posterFreshScope).toBe("ranked")
     expect(ctx().defaultPosterFreshScope).toBe("ranked")
     // The landscape-override reset clears the profile back to flat inheritance.
     const reset = screen.getByRole("button", {

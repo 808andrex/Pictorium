@@ -21,7 +21,7 @@
  * URL builders, real BadgeDefaultsSection wiring — never hand-built params).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { act, fireEvent, screen, within } from "@testing-library/react"
+import { act, cleanup, fireEvent, screen, within } from "@testing-library/react"
 import { createElement } from "react"
 import type { NextRequest } from "next/server"
 import { renderHook } from "@testing-library/react"
@@ -558,10 +558,6 @@ describe("Badge tab scoped UI (real wiring)", () => {
     return { ctx: () => ctx as PosterEditorCtx }
   }
 
-  function alignGroup(): HTMLElement {
-    return screen.getByRole("group", { name: "ui.logoAlign" })
-  }
-
   it("landscape follow-rank shows the own-rank inherited look, not the portrait flat; legacy null follows the flat", async () => {
     storage.setItem(
       "badgeDefaults",
@@ -592,29 +588,22 @@ describe("Badge tab scoped UI (real wiring)", () => {
     expect(ctx().landscape.extraBadgeStyle).toBeNull()
   })
 
-  it("logoAlign landscape writes the profile, follow clears it, flats stay", async () => {
-    storage.setItem("badgeDefaults", JSON.stringify({ landscape: {} }))
-    const { ctx } = renderBadge("landscape")
-    await act(async () => {})
-    const group = alignGroup()
-    // Follow-flat initial state (flat null = auto).
-    expect(within(group).getByRole("button", { name: "ui.inherited" })).toHaveAttribute("aria-pressed", "true")
-    fireEvent.click(within(group).getByRole("button", { name: "ui.sideLeft" }))
-    expect(ctx().landscape.logoAlign).toBe("left")
-    expect(ctx().defaultLogoAlign).toBeNull()
-    fireEvent.click(within(group).getByRole("button", { name: "ui.inherited" }))
-    expect(ctx().landscape.logoAlign).toBeUndefined()
-  })
-
-  it("logoAlign portrait writes the flat and snapshots the landscape auto", async () => {
-    storage.setItem("badgeDefaults", JSON.stringify({ landscape: {} }))
-    const { ctx } = renderBadge("portrait")
-    await act(async () => {})
-    const group = alignGroup()
-    expect(within(group).getByRole("button", { name: "ui.auto" })).toHaveAttribute("aria-pressed", "true")
-    fireEvent.click(within(group).getByRole("button", { name: "ui.alignCenter" }))
-    expect(ctx().defaultLogoAlign).toBe("center")
-    expect(ctx().landscape.logoAlign).toBe("left")
+  it("logoAlign has no selector in either shape (Auto-only); style controls remain", async () => {
+    for (const shape of ["portrait", "landscape"] as const) {
+      storage.setItem("badgeDefaults", JSON.stringify({ landscape: {} }))
+      renderBadge(shape)
+      await act(async () => {})
+      const adv = screen.getByTestId("badge-advanced-toggle")
+      if (adv.getAttribute("aria-expanded") !== "true") fireEvent.click(adv)
+      const g = screen.getByTestId("badge-group-style-toggle")
+      if (g.getAttribute("aria-expanded") !== "true") fireEvent.click(g)
+      // Auto-only: no alignment group and no alignment label anywhere.
+      expect(screen.queryByRole("group", { name: "ui.logoAlign" })).toBeNull()
+      expect(screen.queryByText("ui.logoAlign")).toBeNull()
+      // The style group itself stays reachable.
+      expect(screen.getByTestId("badge-group-style")).toBeInTheDocument()
+      cleanup()
+    }
   })
 
   it("Badge tab reset materializes independent logoAlign (portrait copy, never clear-to-follow)", async () => {
@@ -624,6 +613,8 @@ describe("Badge tab scoped UI (real wiring)", () => {
     )
     const { ctx } = renderBadge("landscape")
     await act(async () => {})
+    const adv = screen.getByTestId("badge-advanced-toggle")
+    if (adv.getAttribute("aria-expanded") !== "true") fireEvent.click(adv)
     const badgePanel = screen.getByRole("tabpanel", { name: "ui.badgeSection" })
     const reset = within(badgePanel).getByRole("button", {
       name: "ui.reset · ui.posterShapeLandscape",

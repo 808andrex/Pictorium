@@ -156,7 +156,8 @@ function bufferHash(buf: Buffer): number {
  * Compute mean, stdDev, and per-channel means for a rectangular region of a
  * poster buffer.
  *
- * Pipeline: resize to STD_W × STD_H (fit: fill) → extract region → removeAlpha
+ * Pipeline: resize to the canvas size (default STD_W × STD_H portrait;
+ * landscape callers pass LAND_W × LAND_H) with fit fill → extract region → removeAlpha
  * (RGB, stride 3) → raw pixel buffer → two JS passes over the pixels (first:
  * mean + per-channel means, second: stdDev). Not Sharp's native `.stats()`.
  *
@@ -177,21 +178,25 @@ export async function computeRegionStats(
   top: number,
   width: number,
   height: number,
+  canvas?: { readonly width?: number; readonly height?: number },
 ): Promise<RegionStats | null> {
+  const canvasW = Math.round(canvas?.width ?? STD_W)
+  const canvasH = Math.round(canvas?.height ?? STD_H)
+  if (canvasW <= 0 || canvasH <= 0) return null
   const l = Math.max(0, Math.round(left))
   const t = Math.max(0, Math.round(top))
-  const w = Math.min(STD_W - l, Math.round(width))
-  const h = Math.min(STD_H - t, Math.round(height))
+  const w = Math.min(canvasW - l, Math.round(width))
+  const h = Math.min(canvasH - t, Math.round(height))
   if (w <= 0 || h <= 0) return null
 
-  const cacheKey = `${l}:${t}:${w}:${h}`
+  const cacheKey = `${canvasW}x${canvasH}:${l}:${t}:${w}:${h}`
   const hash = bufferHash(posterBuf)
   const cached = statsCache.get(cacheKey)
   if (cached && cached.hash === hash) return cached.stats
 
   try {
     const { data: rawPixels, info } = await sharp(posterBuf)
-      .resize(STD_W, STD_H, { fit: "fill" })
+      .resize(canvasW, canvasH, { fit: "fill" })
       .extract({ left: l, top: t, width: w, height: h })
       .removeAlpha()
       .raw()

@@ -20,6 +20,8 @@ import {
   getSeparateBadgeDefaultScale,
 } from "@/lib/badge-styles"
 import { captureVisualPreset, portraitPresetPatch } from "@/lib/visual-presets"
+import { DEFAULT_SASH_ORDER } from "@/lib/badge-priority"
+import { KNOWN_VIDEO_FORMATS } from "@/lib/av-specs"
 import { buildDefaultsPreviewUrl } from "@/lib/poster-url"
 
 vi.mock("next/navigation", () => ({
@@ -149,7 +151,7 @@ function expectPortraitNatural(c: PosterEditorCtx) {
   expect(c.defaultBlurFade).toBe(NATURAL_GRADIENT_DEFAULTS.blurFade)
   expect(c.defaultBlurDarkness).toBe(NATURAL_GRADIENT_DEFAULTS.blurDarkness)
   expect(c.defaultTintStrength).toBe(NATURAL_GRADIENT_DEFAULTS.tintStrength)
-  expect(c.defaultTopShade).toBe(50)
+  expect(c.defaultTopShade).toBe(80)
   expect(c.defaultLogoScale).toBeNull()
   expect(c.defaultLogoOffsetX).toBeNull()
   expect(c.defaultLogoOffsetY).toBeNull()
@@ -178,7 +180,7 @@ function expectLandscapeNatural(c: PosterEditorCtx) {
   expect(l.blurFade).toBe(NATURAL_GRADIENT_DEFAULTS.blurFade)
   expect(l.blurDarkness).toBe(NATURAL_GRADIENT_DEFAULTS.blurDarkness)
   expect(l.tintStrength).toBe(NATURAL_GRADIENT_DEFAULTS.tintStrength)
-  expect(l.topShade).toBe(50)
+  expect(l.topShade).toBe(80)
   expect(l.logoScale).toBeNull()
   expect(l.logoOffsetX).toBeNull()
   expect(l.logoOffsetY).toBeNull()
@@ -207,7 +209,18 @@ function expectGlobalsUnchanged(c: PosterEditorCtx) {
   expect(c.defaultPosterShape).toBe("poster")
 }
 
-function expectUnrelatedPreserved(c: PosterEditorCtx) {
+/**
+ * Ready independence: portrait quick looks pin the canonical flats (full
+ * sash order, Inter font) instead of inheriting tuned customs, while
+ * landscape quick looks leave every flat byte-identical (the other shape is
+ * frozen, never rewritten).
+ */
+function expectReadyCanonicalFlats(c: PosterEditorCtx) {
+  expect(c.defaultSashOrder).toEqual([...DEFAULT_SASH_ORDER])
+  expect(c.defaultBadgeFont).toBe("inter")
+}
+
+function expectLandscapeFrozenFlats(c: PosterEditorCtx) {
   expect(c.defaultSashOrder).toEqual(["extra"])
   expect(c.defaultBadgeFont).toBe("oswald")
 }
@@ -243,7 +256,7 @@ describe("quick presets natural+transform isolated", () => {
     expect(c.landscape.gradientHeight).toBe(45)
     // Globals + unrelated preservati.
     expectGlobalsUnchanged(c)
-    expectUnrelatedPreserved(c)
+    expectReadyCanonicalFlats(c)
     // Highlight attivo, poi si disattiva su blur e su offset.
     expect(isActive(presetButton("ui.configPresetEssential"))).toBe(true)
     await act(async () => {
@@ -279,12 +292,14 @@ describe("quick presets natural+transform isolated", () => {
     expect(c.landscape.globalBadges).toBe(true)
     expect(c.landscape.badgeStyle).toBe("minimal")
     expect(c.landscape.badgeRating).toBe(false)
-    // Concreti non toccati dal preset + extra raw sotto il patch.
-    expect(c.landscape.extraBadgeStyle).toBe("vetro")
-    expect(c.landscape.sashOrder).toEqual(["award"])
+    // Ready independence: the edited profile owns the canonical recipe
+    // (follow-own-rank extra, full sash order); raw keys outside the preset
+    // contract still pass through opaquely.
+    expect(c.landscape.extraBadgeStyle).toBe("follow-rank")
+    expect(c.landscape.sashOrder).toEqual([...DEFAULT_SASH_ORDER])
     expect((c.landscape as Record<string, unknown>).minQuality).toBe("4K")
     expectGlobalsUnchanged(c)
-    expectUnrelatedPreserved(c)
+    expectLandscapeFrozenFlats(c)
     expect(isActive(presetButton("ui.configPresetEssential"))).toBe(true)
     await act(async () => {
       ctx().setLandscape({ blurIntensity: 99 })
@@ -317,7 +332,7 @@ describe("quick presets natural+transform isolated", () => {
     // Isolamento: sources custom preservate (mai forzate a imdb/tmdb).
     expect(c.defaultRatingSources).toEqual(["imdb", "letterboxd"])
     expectGlobalsUnchanged(c)
-    expectUnrelatedPreserved(c)
+    expectReadyCanonicalFlats(c)
     // qualityBadgeStyle esplicito nel preset: flat standard, profilo null-ereditario intatto.
     expect(c.landscape.qualityBadgeStyle).toBeNull()
     expectFrozenInheritBoundary(c)
@@ -376,14 +391,17 @@ describe("quick presets natural+transform isolated", () => {
     expect(c.defaultBadgeRating).toBe(true)
     expect(c.defaultBadgeQuality).toBe(true)
     expect(c.defaultRankingBadges).toBe(true)
-    expect(c.defaultRankingBadgeStyle).toBe("default")
+    // User recipe: Nastro rank + minimal genre badge (exact selector
+    // contract `rankingAppearanceValue("nastro")` + minimal `bs`).
+    expect(c.defaultRankingBadgeStyle).toBe("netflix")
+    expect(c.defaultRibbonEnabled).toBe(true)
     expect(c.defaultNetworkLogo).toBe(true)
-    expect(c.defaultBadgeStyle).toBe("pill")
+    expect(c.defaultBadgeStyle).toBe("minimal")
     expectPortraitNatural(c)
     expect(previewUrl(c, "landscape")).toBe(landBefore)
     expect(c.defaultRatingSources).toEqual(["imdb", "letterboxd"])
     expectGlobalsUnchanged(c)
-    expectUnrelatedPreserved(c)
+    expectReadyCanonicalFlats(c)
     expectFrozenInheritBoundary(c)
     expectConcreteOverridesPreserved(c)
     expect(isActive(presetButton("ui.configPresetFull"))).toBe(true)
@@ -411,9 +429,10 @@ describe("quick presets natural+transform isolated", () => {
     expectLandscapeNatural(c)
     expect(c.landscape.badgeGenre).toBe(true)
     expect(c.landscape.rankingBadges).toBe(true)
-    expect(c.landscape.rankingBadgeStyle).toBe("default")
+    expect(c.landscape.rankingBadgeStyle).toBe("netflix")
+    expect(c.landscape.ribbonEnabled).toBe(true)
     expect(c.landscape.networkLogo).toBe(true)
-    expect(c.landscape.badgeStyle).toBe("pill")
+    expect(c.landscape.badgeStyle).toBe("minimal")
     expectGlobalsUnchanged(c)
     expect((c.landscape as Record<string, unknown>).minQuality).toBe("4K")
     expect(isActive(presetButton("ui.configPresetFull"))).toBe(true)
@@ -423,7 +442,7 @@ describe("quick presets natural+transform isolated", () => {
     expect(isActive(presetButton("ui.configPresetFull"))).toBe(false)
   })
 
-  it("landscape sparse-null: render senza throw, quick3/Apple coerenti, null ereditari preservati", async () => {
+  it("landscape sparse-null: render senza throw, quick3/Apple coerenti, inherit boundary intatto", async () => {
     seedSparseLandscape()
     // Il render stesso è la regressione: presetSource copiava i null ereditari
     // nei flat strict e captureVisualPreset lanciava ZodError.
@@ -441,20 +460,26 @@ describe("quick presets natural+transform isolated", () => {
     expect(previewUrl(c, "portrait")).toBe(portBefore)
     expectLandscapeNatural(c)
     // Inherit boundary frozen at customize(): the font shows the pre-edit
-    // factory effective ("inter"), untouched keys keep following (null).
+    // factory effective ("inter"); ready-owned pins (quality style, formats)
+    // take the canonical profile values instead of following.
     expect(c.landscape.badgeFont).toBe("inter")
-    expect(c.landscape.qualityBadgeStyle).toBeNull()
-    expect(c.landscape.videoFormats).toBeNull()
-    expectConcreteOverridesPreserved(c)
+    expect(c.landscape.qualityBadgeStyle).toBe("standard")
+    expect(c.landscape.videoFormats).toEqual([...KNOWN_VIDEO_FORMATS])
+    // Ready independence: the edited profile owns the canonical recipe —
+    // follow-own-rank extra and full sash replace the tuned customs; raw keys
+    // outside the preset contract (minQuality) still pass through opaquely.
+    expect(c.landscape.extraBadgeStyle).toBe("follow-rank")
+    expect(c.landscape.sashOrder).toEqual([...DEFAULT_SASH_ORDER])
+    expect((c.landscape as Record<string, unknown>).minQuality).toBe("4K")
     expectGlobalsUnchanged(c)
     expect(isActive(presetButton("ui.configPresetEssential"))).toBe(true)
     fireEvent.click(presetButton("ui.configPresetRatings"))
     c = ctx()
-    // qualityBadgeStyle esplicito nel preset: profilo concreto, altri inherit
-    // boundary intatti (font congelato al pre-edit, formats ancora ereditario).
+    // qualityBadgeStyle esplicito nel preset: profilo concreto; font e formats
+    // restano ai valori canonici del look precedente (stesso recipe).
     expect(c.landscape.qualityBadgeStyle).toBe("standard")
     expect(c.landscape.badgeFont).toBe("inter")
-    expect(c.landscape.videoFormats).toBeNull()
+    expect(c.landscape.videoFormats).toEqual([...KNOWN_VIDEO_FORMATS])
     expect(JSON.stringify(portraitPresetPatch(captureVisualPreset(c)))).toBe(flatsBefore)
     expect(previewUrl(c, "portrait")).toBe(portBefore)
     expect(isActive(presetButton("ui.configPresetRatings"))).toBe(true)
@@ -463,11 +488,10 @@ describe("quick presets natural+transform isolated", () => {
     expect(isActive(presetButton("ui.configPresetFull"))).toBe(true)
     expect(JSON.stringify(portraitPresetPatch(captureVisualPreset(c)))).toBe(flatsBefore)
     // Apple builtin: stesso path isolato, nessun throw, flat portrait e URL
-    // portrait invariati, profilo valorizzato Apple, extra raw sopravvive.
-    // (Highlight volutamente non asserito: l'extraBadgeStyle "vetro" del seed
-    // resta nel profilo per disegno — gli extra fuori preset sopravvivono
-    // all'apply — quindi l'effettivo non coincide con Apple ed è corretto
-    // che l'highlight resti spento.)
+    // portrait invariati, profilo valorizzato Apple, extra riportato a
+    // follow-own-rank (indipendenza ready: mai ereditato dal seed).
+    // (Highlight volutamente non asserito qui: coperto dalla matrice
+    // ready-preset-independence.)
     const appleBtn = screen.getByText("Stile Apple").closest("button") as HTMLElement
     fireEvent.click(appleBtn)
     c = ctx()

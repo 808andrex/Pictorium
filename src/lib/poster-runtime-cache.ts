@@ -2,6 +2,14 @@ import type { NextRequest } from "next/server"
 import { cacheGet, cacheGetStale, cacheSet } from "@/lib/cache"
 import { createLogger } from "@/lib/logger"
 import { envWithFallback } from "@/lib/env-compat"
+import {
+  ACCENT_META_HEADER,
+  COMPLETED_ACCENT_TTL_MS,
+  MAX_COMPLETED_ACCENT_RECORDS,
+  encodeEffectiveAccentHeader,
+  sanitizeEffectiveAccentMeta,
+  type EffectiveAccentMeta,
+} from "@/lib/effective-accent"
 import { isBadgeStyle, isRankingBadgeStyle, isExtraBadgeStyle, isExtraFollowRank, isBadgeFont, isSeparateRatingsStyle, isAgeBadgeStyle } from "@/lib/badge-styles"
 import { isPosterLayout, isPosterFreshScope, DEFAULT_POSTER_FRESH_SCOPE } from "@/lib/types"
 import { POSTER_CACHE_ALLOWLIST } from "./poster-params-hardening"
@@ -22,6 +30,14 @@ export interface PosterCachePayload {
   readonly buffer: Buffer
   readonly etag: string
   readonly ttlSec?: number
+  /**
+   * Effective-accent sidecar (display sync, `?accentmeta=1`): the fills the
+   * render actually painted, captured via `GenerationInput.onAccentMeta`.
+   * Additive optional — old entries read as undefined (honest unknown).
+   * Rides the same entry with the same TTL/tags (written inside the headers
+   * record below); never trusted without its bytes entry.
+   */
+  readonly accentMeta?: EffectiveAccentMeta | null
 }
 
 // TTL dei poster dinamici (non-mappati, composti al volo): default 6h.
@@ -312,11 +328,25 @@ export function variantEtagFor(canonicalEtag: string, variant: Exclude<PosterIma
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "*",
-  "Access-Control-Expose-Headers": "ETag, Cache-Control",
+  // The accent display-sync header rides the image response itself: remote
+  // previews (and any cross-origin XHR reader) need it exposed explicitly.
+  // Additive only — ETag/Cache-Control exposure is unchanged.
+  "Access-Control-Expose-Headers": `ETag, Cache-Control, ${ACCENT_META_HEADER}`,
   "Vary": "Accept",
 }
 
-export function posterHeaders(etag: string, immutable: boolean, isPreview: boolean = false, dynamic: boolean = false, format: PosterImageFormat = "jpeg", dynamicTtlSec?: number, live: boolean = false): PosterHeaders {
+/**
+ * Additive accent display-sync headers for a poster response. Returns the
+ * compact validated `X-Pictorium-Accent` entry, or an empty object when there
+ * is nothing honest to send (legacy entries without meta stay header-absent
+ * → honest unknown downstream, never a guessed color).
+ */
+function accentMetaHeaders(meta: EffectiveAccentMeta | null | undefined): Record<string, string> {
+  const encoded = encodeEffectiveAccentHeader(meta ?? null)
+  return encoded ? { [ACCENT_META_HEADER]: encoded } : {}
+}
+
+export function posterHeaders(etag: string, immutable: boolean, isPreview: boolean = false, dynamic: boolean = false, format: PosterImageFormat = "jpeg", dynamicTtlSec?: number, live: boolean = false, accentMeta?: EffectiveAccentMeta | null): PosterHeaders {
   const contentType = FORMAT_MIME_TYPES[format] || "image/jpeg"
   if (isPreview) {
     return {
@@ -326,6 +356,7 @@ export function posterHeaders(etag: string, immutable: boolean, isPreview: boole
       "Pragma": "no-cache",
       "Expires": "0",
       "ETag": etag,
+      ...accentMetaHeaders(accentMeta),
     }
   }
   // Percorso live: stessa politica su 200 e 304 (vedi posterNotModifiedHeaders).
@@ -337,6 +368,7 @@ export function posterHeaders(etag: string, immutable: boolean, isPreview: boole
       "CDN-Cache-Control": LIVE_CACHE_CONTROL,
       "Surrogate-Control": LIVE_SURROGATE_CONTROL,
       "ETag": etag,
+      ...accentMetaHeaders(accentMeta),
     }
   }
   // TTL reale della entry (con jitter) o base quando omesso: header e storage
@@ -359,10 +391,11 @@ export function posterHeaders(etag: string, immutable: boolean, isPreview: boole
     "CDN-Cache-Control": cdnCacheControl,
     "Surrogate-Control": surrogate,
     "ETag": etag,
+    ...accentMetaHeaders(accentMeta),
   }
 }
 
-export function posterNotModifiedHeaders(etag: string, immutable: boolean, dynamic: boolean = false, dynamicTtlSec?: number, live: boolean = false): PosterHeaders {
+export function posterNotModifiedHeaders(etag: string, immutable: boolean, dynamic: boolean = false, dynamicTtlSec?: number, live: boolean = false, accentMeta?: EffectiveAccentMeta | null): PosterHeaders {
   // Percorso live: stessa politica del 200 — il client deve rivalidare sempre.
   if (live) {
     return {
@@ -371,6 +404,7 @@ export function posterNotModifiedHeaders(etag: string, immutable: boolean, dynam
       "CDN-Cache-Control": LIVE_CACHE_CONTROL,
       "Surrogate-Control": LIVE_SURROGATE_CONTROL,
       "ETag": etag,
+      ...accentMetaHeaders(accentMeta),
     }
   }
   // Come posterHeaders: un TTL esplicito restringe sempre (audit problema 4).
@@ -387,6 +421,7 @@ export function posterNotModifiedHeaders(etag: string, immutable: boolean, dynam
     "CDN-Cache-Control": cdnCacheControl,
     "Surrogate-Control": surrogate,
     "ETag": etag,
+    ...accentMetaHeaders(accentMeta),
   }
 }
 
@@ -413,7 +448,11 @@ export function serverTimingValue(entries: readonly ServerTimingEntry[]): string
 }
 
 export function posterResponse(payload: PosterCachePayload, immutable: boolean, isPreview: boolean = false, dynamic: boolean = false, format: PosterImageFormat = "jpeg", dynamicTtlSec?: number, serverTiming?: string, live: boolean = false): Response {
-  const headers = posterHeaders(payload.etag, immutable, isPreview, dynamic, format, dynamicTtlSec, live)
+  // The accent display-sync header rides the SAME bytes the editor XHR loads:
+  // every HIT/SWR/stale/coalesced 200 carries the meta of the payload it
+  // serves (legacy payloads without meta stay header-absent → honest
+  // unknown). ETag/Content-Type/Cache-Control behavior is unchanged.
+  const headers = posterHeaders(payload.etag, immutable, isPreview, dynamic, format, dynamicTtlSec, live, payload.accentMeta)
   return new Response(new Uint8Array(payload.buffer), {
     headers: serverTiming ? { ...headers, "Server-Timing": serverTiming } : headers,
   })
@@ -423,14 +462,25 @@ export interface PosterHeadersRecord {
   readonly etag: string
   readonly ttlSec?: number
   readonly immutable?: boolean
+  /** Accent sidecar slot (same TTL/tags as the bytes entry, never KV-alone). */
+  readonly accentMeta?: EffectiveAccentMeta | null
 }
 
 export function readCachedPoster(cacheKey: string): { readonly payload: PosterCachePayload | null; readonly stale: boolean; readonly ttlSec?: number; readonly immutable?: boolean } {
   const cached = cacheGetStale<Buffer>(cacheKey)
   const cachedHeaders = cacheGetStale<PosterHeadersRecord>(`${cacheKey}:headers`)
   if (!cached.data || !cachedHeaders.data) return { payload: null, stale: false }
+  // The sidecar is valid only with its bytes entry (required above): headers
+  // alone — e.g. a KV-served record after a restart — never prove a render.
+  // Legacy entries carry no meta (undefined → honest unknown downstream).
+  const sidecar = sanitizeEffectiveAccentMeta(cachedHeaders.data.accentMeta ?? null)
   return {
-    payload: { buffer: cached.data, etag: cachedHeaders.data.etag, ttlSec: cachedHeaders.data.ttlSec },
+    payload: {
+      buffer: cached.data,
+      etag: cachedHeaders.data.etag,
+      ttlSec: cachedHeaders.data.ttlSec,
+      ...(sidecar ? { accentMeta: sidecar } : {}),
+    },
     stale: cached.stale || cachedHeaders.stale,
     ttlSec: cachedHeaders.data.ttlSec,
     immutable: cachedHeaders.data.immutable,
@@ -470,7 +520,14 @@ export function writeCachedPoster(cacheKey: string, payload: PosterCachePayload,
   const ttlSec = explicitTtlMs !== undefined
     ? Math.max(1, Math.round(explicitTtlMs / 1000))
     : (mappingTag ? undefined : dynamicPosterTtlSec(cacheKey))
-  const record: PosterHeadersRecord = { etag: payload.etag, ttlSec, immutable: opts?.immutable }
+  const record: PosterHeadersRecord = {
+    etag: payload.etag,
+    ttlSec,
+    immutable: opts?.immutable,
+    // Accent sidecar: same two-key write, same TTL/tags — no parallel policy.
+    // Sanitized + cloned (callers keep no mutable alias into the store).
+    ...(payload.accentMeta ? { accentMeta: sanitizeEffectiveAccentMeta(payload.accentMeta) ?? undefined } : {}),
+  }
   cacheSet(cacheKey, payload.buffer, tags, ttl)
   cacheSet(`${cacheKey}:headers`, record, tags, ttl)
 }
@@ -514,6 +571,66 @@ export function posterErrorStats(): { readonly writes: number; readonly hits: nu
 
 export function getPendingPoster(cacheKey: string): Promise<PosterCachePayload | null> | null {
   return inflight.get(cacheKey) ?? null
+}
+
+// ---------------------------------------------------------------------------
+// Completed accent records (effective-accent display sync, `?accentmeta=1`).
+// ---------------------------------------------------------------------------
+// The editor preview (`preview=1`) is no-store by contract and the inflight
+// entry is deleted on completion — a metadata fetch arriving AFTER the
+// `<img>` render settles would otherwise find nothing and stay disabled for
+// a legitimate success. This bounded memory-only map retains the ~250-byte
+// validated meta (never image bytes, never KV) for a short window keyed by
+// the FULL canonical authorized cacheKey. Eviction/expiry answer honest
+// unknown; the next preview `<img>` load re-warms a fresh record.
+// Single-process only: other instances/CDN-cold answer unknown, never a guess.
+
+interface CompletedAccentRecord {
+  readonly meta: EffectiveAccentMeta
+  readonly expiresAt: number
+}
+
+const completedAccent = new Map<string, CompletedAccentRecord>()
+
+/**
+ * Record a successful render's accent meta. Call AFTER the last success
+ * point and BEFORE `completePosterRender` (write-then-complete), for preview
+ * AND non-preview renders alike. Failures/deadlines never record. Invalid
+ * payloads are dropped (honest unknown downstream), never stored.
+ */
+export function recordCompletedAccent(cacheKey: string, meta: EffectiveAccentMeta | null | undefined): void {
+  const clean = sanitizeEffectiveAccentMeta(meta ?? null)
+  if (!clean) return
+  // Deterministic insertion-order eviction (no timers): oldest first.
+  while (completedAccent.size >= MAX_COMPLETED_ACCENT_RECORDS) {
+    const oldest = completedAccent.keys().next().value
+    if (oldest === undefined) break
+    completedAccent.delete(oldest)
+  }
+  completedAccent.set(cacheKey, Object.freeze({
+    meta: Object.freeze(clean) as EffectiveAccentMeta,
+    expiresAt: Date.now() + COMPLETED_ACCENT_TTL_MS,
+  }) as CompletedAccentRecord)
+}
+
+/**
+ * Late-subscriber read: a fresh clone, or null when absent/expired (lazy
+ * expiry, no timers). Cloned per call — callers never share mutable state
+ * across requests.
+ */
+export function readCompletedAccent(cacheKey: string): EffectiveAccentMeta | null {
+  const rec = completedAccent.get(cacheKey)
+  if (!rec) return null
+  if (Date.now() >= rec.expiresAt) {
+    completedAccent.delete(cacheKey)
+    return null
+  }
+  return sanitizeEffectiveAccentMeta(rec.meta)
+}
+
+/** Only for tests: clear the completed-accent map. */
+export function __resetCompletedAccentForTests(): void {
+  completedAccent.clear()
 }
 
 export function beginPosterRender(

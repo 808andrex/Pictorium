@@ -124,6 +124,14 @@ export const configTokenSchema = z.object({
   ribbonEnabled: z.boolean().optional(),
   catalogOrder: z.array(z.string().max(80)).optional(),
   catalogRenames: z.record(z.string().max(80), z.string().max(100)).optional(),
+  // Per-catalog card format (TaskB): ONLY poster|landscape persisted; absent
+  // key = follow the global posterShape. Bounds mirror the defaults schema.
+  catalogShapes: z.record(z.string().max(80), z.enum(["poster", "landscape"])).optional().refine((v) => {
+    if (!v) return true
+    const keys = Object.keys(v)
+    if (keys.length > 200) return false
+    return !keys.some((k) => k === "__proto__" || k === "constructor" || k === "prototype")
+  }),
   customCatalogs: z.array(customCatalogSchema).optional(),
   // Top 20 global ranking source (custom catalog id) per slot: absent =
   // JustWatch (old tokens stay valid). The bound mirrors the custom id;
@@ -158,6 +166,12 @@ export const partialCatalogTokenSchema = z.object({
   homeDisabledCatalogIds: z.array(z.string().max(80)).optional(),
   catalogOrder: z.array(z.string().max(80)).optional(),
   catalogRenames: z.record(z.string().max(80), z.string().max(100)).optional(),
+  catalogShapes: z.record(z.string().max(80), z.enum(["poster", "landscape"])).optional().refine((v) => {
+    if (!v) return true
+    const keys = Object.keys(v)
+    if (keys.length > 200) return false
+    return !keys.some((k) => k === "__proto__" || k === "constructor" || k === "prototype")
+  }),
   region: z.string().max(32).optional(),
 }).strict()
 

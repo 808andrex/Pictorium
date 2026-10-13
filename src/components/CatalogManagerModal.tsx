@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState, useMemo, useEffect, useRef } from "react"
+import React, { useState, useMemo, useEffect } from "react"
 import {
   X,
   Home,
@@ -26,6 +26,7 @@ import { usePosterEditor } from "@/lib/contexts/PosterEditorContext"
 import { PICTORIUM_CATALOGS, regionJwName } from "@/lib/catalog-definitions"
 import { getRegionDef } from "@/lib/regions"
 import { EmojiPicker } from "@/components/ui"
+import { Modal } from "@/components/ui/Modal"
 
 interface CatalogManagerModalProps {
   isOpen: boolean
@@ -48,8 +49,11 @@ export function CatalogManagerModal({ isOpen, onClose }: CatalogManagerModalProp
   // Regione attiva: i nomi dei cataloghi JW seguono la classifica (bandiera
   // dinamica via regionJwName, stessa del manifest Stremio). Senza, il modal
   // restava inchiodato al nome statico "Top 20 Italia" al cambio regione.
-  const { defaultRegion } = usePosterEditor()
+  const { defaultRegion, defaultPosterShape } = usePosterEditor()
   const activeRegion = getRegionDef(defaultRegion)
+  // Live global format for the per-row "follow global" hint: an explicit
+  // per-catalog choice always wins for that catalog, otherwise the card
+  // follows this global shape (same rule as the server resolution).
   const customCatalogs = usePSelector((v) => v.customCatalogs)
   const toggleCustomCatalog = usePSelector((v) => v.toggleCustomCatalog)
   const removeCustomCatalog = usePSelector((v) => v.removeCustomCatalog)
@@ -64,36 +68,36 @@ export function CatalogManagerModal({ isOpen, onClose }: CatalogManagerModalProp
   const renameCatalog = usePSelector((v) => v.renameCatalog)
   const resetCatalogNames = usePSelector((v) => v.resetCatalogNames)
   const resetCatalogOrder = usePSelector((v) => v.resetCatalogOrder)
+  const catalogShapes = usePSelector((v) => v.catalogShapes)
+  const setCatalogShape = usePSelector((v) => v.setCatalogShape)
 
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editName, setEditName] = useState("")
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null)
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
-  const popoverRef = useRef<HTMLDivElement>(null)
 
+  // Escape is handled here (the shared Modal has closeOnEscape={false}):
+  // while renaming it cancels the rename, with a selection it clears the
+  // selection, otherwise it closes. Backdrop click-outside stays owned by the
+  // shared Modal (no duplicated listener, no close race).
   useEffect(() => {
     if (!isOpen) return
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        if (editingId) setEditingId(null)
-        else if (selectedIds.size > 0) setSelectedIds(new Set())
-        else onClose()
-      }
-    }
-    const handleClickOutside = (e: MouseEvent) => {
-      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
+      if (e.key !== "Escape") return
+      if (editingId) {
+        e.stopPropagation()
+        setEditingId(null)
+      } else if (selectedIds.size > 0) {
+        e.stopPropagation()
+        setSelectedIds(new Set())
+      } else {
         onClose()
       }
     }
     window.addEventListener("keydown", handleKeyDown)
-    const timer = setTimeout(() => {
-      window.addEventListener("click", handleClickOutside)
-    }, 50)
     return () => {
       window.removeEventListener("keydown", handleKeyDown)
-      window.removeEventListener("click", handleClickOutside)
-      clearTimeout(timer)
     }
   }, [isOpen, onClose, editingId, selectedIds])
 
@@ -168,8 +172,6 @@ export function CatalogManagerModal({ isOpen, onClose }: CatalogManagerModalProp
 
     return list
   }, [customCatalogs, disabledCatalogIds, homeDisabledCatalogIds, catalogOrder, catalogRenames, activeRegion, t])
-
-  if (!isOpen) return null
 
   const toggleSelect = (id: string) => {
     setSelectedIds((prev) => {
@@ -323,17 +325,20 @@ export function CatalogManagerModal({ isOpen, onClose }: CatalogManagerModalProp
   }
 
   return (
-    <div
-      ref={popoverRef}
-      className="absolute right-0 top-full mt-2 w-[600px] max-w-[calc(100vw-1.5rem)] z-50 bg-surface/95 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[82vh] animate-scale-in"
-      onClick={(e) => e.stopPropagation()}
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      closeOnEscape={false}
+      labelledBy="catalog-manager-title"
+      testId="catalog-manager-modal"
+      className="!max-w-3xl max-h-[90dvh] flex flex-col overflow-hidden !p-0 !space-y-0"
     >
       {/* Header */}
-      <div className="flex items-center justify-between px-5 py-3.5 border-b border-white/10 bg-surface2/50">
+      <div className="flex items-center justify-between px-5 py-3.5 border-b border-white/10 bg-surface2/50 shrink-0">
         <div className="flex items-center gap-2.5">
           <SlidersHorizontal className="w-5 h-5 text-accent-orange" />
           <div>
-            <h3 className="text-sm font-bold text-foreground">{t("ui.catMgrTitle")}</h3>
+            <h3 id="catalog-manager-title" className="text-sm font-bold text-foreground">{t("ui.catMgrTitle")}</h3>
             <p className="text-[11px] text-muted">
               {t("ui.catMgrSubtitle")}
             </p>
@@ -350,7 +355,7 @@ export function CatalogManagerModal({ isOpen, onClose }: CatalogManagerModalProp
       </div>
 
       {/* Multi-Selection & Global Toolbar */}
-      <div className="flex items-center justify-between px-4 py-2.5 bg-surface2/30 border-b border-white/10 text-xs gap-2">
+      <div className="flex items-center justify-between px-4 py-2.5 bg-surface2/30 border-b border-white/10 text-xs gap-2 shrink-0">
         <div className="flex items-center gap-2">
           <button
             type="button"
@@ -430,7 +435,7 @@ export function CatalogManagerModal({ isOpen, onClose }: CatalogManagerModalProp
       </div>
 
       {/* Catalog List */}
-      <div className="p-4 space-y-2 overflow-y-auto flex-1 scrollbar-thin">
+      <div className="p-4 space-y-2 overflow-y-auto flex-1 min-h-0 scrollbar-thin">
         {allCatalogs.map((item, index) => {
           const isEditing = editingId === item.id
           const isSelected = selectedIds.has(item.id)
@@ -596,6 +601,33 @@ export function CatalogManagerModal({ isOpen, onClose }: CatalogManagerModalProp
                     )}
                   </div>
                 )}
+
+                {/* Per-catalog card format: explicit portrait/landscape wins for
+                    this catalog only, "follow global" deletes the override so
+                    the catalog re-inherits the global setting. Independent of
+                    visibility toggles; stopPropagation keeps the select out of
+                    drag/select handling, keyboard works natively. */}
+                {!isEditing && (
+                  <div className="mt-1.5" onClick={(e) => e.stopPropagation()}>
+                    <select
+                      value={catalogShapes?.[item.id] ?? "global"}
+                      onChange={(e) => {
+                        const v = e.target.value
+                        setCatalogShape(item.id, v === "global" ? null : (v as "poster" | "landscape"))
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                      onPointerDown={(e) => e.stopPropagation()}
+                      aria-label={`${item.name} — ${t("ui.posterShape")}`}
+                      className="max-w-full px-2 py-1 bg-surface border border-white/10 rounded-lg text-[11px] text-zinc-300 hover:text-white hover:border-white/20 focus:outline-none focus:border-accent-orange transition-colors"
+                    >
+                      <option value="global">
+                        {t("ui.catalogShapeFollowGlobal")} ({defaultPosterShape === "landscape" ? t("ui.posterShapeLandscape") : t("ui.posterShapePortrait")})
+                      </option>
+                      <option value="poster">{t("ui.posterShapePortrait")}</option>
+                      <option value="landscape">{t("ui.posterShapeLandscape")}</option>
+                    </select>
+                  </div>
+                )}
               </div>
 
               {/* Right: Actions */}
@@ -645,7 +677,7 @@ export function CatalogManagerModal({ isOpen, onClose }: CatalogManagerModalProp
       </div>
 
       {/* Footer */}
-      <div className="flex items-center justify-between px-5 py-3 border-t border-white/10 bg-surface2/40">
+      <div className="flex items-center justify-between px-5 py-3 border-t border-white/10 bg-surface2/40 shrink-0">
         <span className="text-xs text-muted font-medium">
           {t("ui.enabledCount", { count: allCatalogs.filter((c) => c.enabled).length })}
         </span>
@@ -657,6 +689,6 @@ export function CatalogManagerModal({ isOpen, onClose }: CatalogManagerModalProp
           {t("ui.done")}
         </button>
       </div>
-    </div>
+    </Modal>
   )
 }

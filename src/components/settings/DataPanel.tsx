@@ -12,13 +12,25 @@ import { AdminUnlockCard } from "@/components/AdminUnlockCard"
 import { Activity, ChevronDown, Database, Download, ExternalLink, Flame, KeyRound, Lock, Trash2, Upload, Wand2 } from "lucide-react"
 
 /** Scheda Dati & Cache (backup, diagnostica, token admin, PIN). Estratta da SettingsPanel con il suo stato locale. */
-export function DataPanel({ active, exportData, importData, setSettingsOpen, multiUserOn }: {
+export function DataPanel({ active, exportData, importData, setSettingsOpen, multiUserOn, requestAction }: {
   active: boolean
   exportData: (opts?: BackupExportOptions) => void
   importData: (opts?: BackupImportOptions) => void
   setSettingsOpen: (v: boolean) => void
   multiUserOn: boolean | null
+  /**
+   * Guarded close+action (five-tab settings): export/import/repeat-setup
+   * run through the session dirty-guard and execute only on confirmed
+   * close — never an implicit bypass. Absent = legacy direct behavior.
+   */
+  requestAction?: (run: () => void) => void
 }) {
+  // Explicit library/store actions stay explicit: they close the panel and
+  // run, but through the dirty-guard when the owner provides one.
+  const guarded = (run: () => void) => {
+    if (requestAction) requestAction(run)
+    else run()
+  }
   const setShowLangPicker = usePSelector((v) => v.setShowLangPicker)
   const { t } = useT()
   const [clearStatus, setClearStatus] = useState<"idle" | "clearing" | "cleared">("idle")
@@ -170,24 +182,30 @@ export function DataPanel({ active, exportData, importData, setSettingsOpen, mul
             icon={<Download className="w-4 h-4 text-accent-orange" />}
             label={t("ui.exportJson")}
             onClick={() => {
-              exportData({ includePersonalKeys: includeKeysExport })
-              setSettingsOpen(false)
+              guarded(() => {
+                exportData({ includePersonalKeys: includeKeysExport })
+                setSettingsOpen(false)
+              })
             }}
           />
           <MenuItem
             icon={<Upload className="w-4 h-4 text-blue-400" />}
             label={t("ui.importJson")}
             onClick={() => {
-              importData({ importPersonalKeys: importKeys, overwritePersonalKeys: importKeys && overwriteKeys })
-              setSettingsOpen(false)
+              guarded(() => {
+                importData({ importPersonalKeys: importKeys, overwritePersonalKeys: importKeys && overwriteKeys })
+                setSettingsOpen(false)
+              })
             }}
           />
         </div>
         <button
           type="button"
           onClick={() => {
-            setSettingsOpen(false)
-            setShowLangPicker(true)
+            guarded(() => {
+              setSettingsOpen(false)
+              setShowLangPicker(true)
+            })
           }}
           className="w-full flex items-center justify-center gap-2 px-4 py-2.5 min-h-[42px] rounded-xl text-xs sm:text-sm font-medium bg-white/[0.04] text-zinc-200 hover:text-white hover:bg-white/[0.08] active:scale-[0.98] transition-all border border-white/[0.08] cursor-pointer touch-manipulation"
         >

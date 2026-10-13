@@ -1,8 +1,9 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useId, useRef, useState } from "react"
 import { toast } from "sonner"
 import { Check, Copy, Eye, EyeOff, KeyRound, Loader2, Power, PowerOff, ShieldCheck } from "lucide-react"
+import { RatingSourceIcon } from "@/components/RatingSourceIcon"
 import { useT } from "@/lib/contexts/TranslationContext"
 import { copyText } from "@/lib/clipboard"
 import {
@@ -37,6 +38,8 @@ function safeGetItem(key: string): string {
  */
 function KeyRow({
   label,
+  inputId,
+  logo,
   badge,
   value,
   placeholder,
@@ -65,6 +68,10 @@ function KeyRow({
   disabled,
 }: {
   label: React.ReactNode
+  /** Input id for the label htmlFor link (accessibility). */
+  inputId?: string
+  /** Non-interactive brand logo rendered left of the input on the same row. */
+  logo?: React.ReactNode
   badge?: React.ReactNode
   value: string
   placeholder?: string
@@ -96,11 +103,13 @@ function KeyRow({
   return (
     <div>
       <div className="flex items-center justify-between mb-1">
-        <label className="text-[10px] text-muted uppercase tracking-wide">{label}</label>
+        <label htmlFor={inputId} className="text-[10px] text-muted uppercase tracking-wide">{label}</label>
         {badge}
       </div>
       <div className="flex flex-nowrap gap-2">
+        {logo}
         <input
+          id={inputId}
           type={show ? "text" : "password"}
           readOnly={readOnly}
           autoComplete="off"
@@ -183,6 +192,26 @@ const KIND_LABELS: Record<UserKeyKind, string> = {
 }
 
 /**
+ * Provider brand logo left of the key input (same row, non-interactive):
+ * actual brand SVG asset (same files as RatingSourceIcon), 20px high,
+ * width bounded (~32-40px), aspect preserved (contain). No CSS filter
+ * recolor: user art stays untouched. The visible text label above the input
+ * keeps the full brand + credential type wording, so no instruction is
+ * erased (one field per provider: Project vs Key wording kept); the logo
+ * carries the brand tooltip (title) and alt for redundancy.
+ */
+function ProviderLogo({ kind, label }: { kind: UserKeyKind; label: string }) {
+  return (
+    <span title={label} className="inline-flex items-center self-center min-w-0 shrink-0 grow-0 basis-auto">
+      <RatingSourceIcon
+        id={kind}
+        className="h-5 w-auto max-w-10 object-contain inline-block shrink-0"
+      />
+    </span>
+  )
+}
+
+/**
  * Chiavi API server-side del namespace (`/u/<uuid>/configure`).
  * Null fuori dai path utente. Di default i valori non tornano mai dal server
  * (solo booleani di presenza): gli input si precompilano dalle chiavi già presenti
@@ -194,6 +223,7 @@ const KIND_LABELS: Record<UserKeyKind, string> = {
  */
 export function UserKeysSection() {
   const { t } = useT()
+  const idBase = useId()
   const [uuid, setUuid] = useState<string | null>(null)
   const [token, setToken] = useState("")
   const [status, setStatus] = useState<Record<UserKeyKind, boolean> | null>(null)
@@ -558,6 +588,8 @@ export function UserKeysSection() {
           <KeyRow
             key={kind}
             label={KIND_LABELS[kind] || kind}
+            logo={<ProviderLogo kind={kind} label={KIND_LABELS[kind] || kind} />}
+            inputId={`${idBase}-${kind}-key`}
             badge={
               status ? (
                 <span className={`text-[10px] font-medium ${ok && !isDisabledRow ? "text-emerald-400" : broken ? "text-amber-400" : isDisabledRow ? "text-zinc-400" : "text-zinc-500"}`}>

@@ -92,8 +92,21 @@ describe("AppShell PinLockModal bypass sui path /u/", () => {
     const dialogs = await screen.findAllByRole("dialog", { name: "ui.settingsGlobalTitle" }, { timeout: 4000 })
     expect(dialogs.length).toBeGreaterThan(0)
     expect(await screen.findAllByText("ui.userSpaceUuidLabel", {}, { timeout: 4000 })).not.toHaveLength(0)
-    const tabs = screen.getAllByRole("tab", { name: "ui.settingsTabSpace" })
-    expect(tabs.length).toBeGreaterThan(0)
-    for (const tab of tabs) expect(tab).toHaveAttribute("aria-selected", "true")
+    // STALE-role migration — source evidence: SettingsPanel.tsx renders Space
+    // in the desktop secondary nav as a compact button (aria-pressed, never
+    // role=tab); settings-tab.ts documents secondary tabs (Prefs/Data/Space)
+    // as "never equal primary tabs". Intent preserved: the key icon opens the
+    // settings dialog on the Space section (no PIN modal, UUID visible).
+    const spaceBtns = screen.getAllByRole("button", { name: "ui.settingsTabSpace" })
+    expect(spaceBtns.length).toBeGreaterThan(0)
+    const activeSpace = spaceBtns.filter((b) => b.getAttribute("aria-pressed") === "true")
+    expect(activeSpace.length).toBeGreaterThan(0)
+    // Five equal primary tabs only — Space is not among them.
+    expect(screen.getAllByRole("tab")).toHaveLength(5)
+    expect(screen.queryByRole("tab", { name: "ui.settingsTabSpace" })).toBeNull()
+    // The Space tabpanel is the visible panel.
+    const spacePanel = screen.getByRole("tabpanel", { name: "ui.settingsTabSpace" })
+    expect(spacePanel.className).toContain("block")
+    expect(spacePanel.className).not.toContain("hidden")
   })
 })

@@ -55,31 +55,13 @@ export function isMdblistBreakerOpen(): boolean {
   return mdblistBreaker.isOpen()
 }
 
-export const SUPPORTED_RATING_SOURCES = [
-  "imdb",
-  "tmdb",
-  "mdblist",
-  "tomatoes",
-  "popcorntime",
-  "letterboxd",
-  "metacritic",
-  "metacriticuser",
-  "trakt",
-  "simkl",
-  "filmweb",
-  "filmwebcritics",
-  "rogerebert",
-  "mal",
-  "anilist",
-  "kitsu",
-] as const
-
-export type RatingSource = (typeof SUPPORTED_RATING_SOURCES)[number]
-
-// Definita in rating-weights.ts (foglia client-safe senza import runtime):
-// ratings.ts importa cache/KV e non può stare nel bundle browser.
-import { DEFAULT_RATING_SOURCES, UI_RATING_SOURCES } from "./rating-weights"
-export { DEFAULT_RATING_SOURCES, UI_RATING_SOURCES }
+// SUPPORTED_RATING_SOURCES + parseRatingSources/resolveRatingSources vivono
+// in rating-weights.ts (foglia client-safe senza import runtime): ratings.ts
+// importa cache/KV e non può stare nel bundle browser. Ri-esportati qui per
+// compatibilità (route, hardening, test esistenti importano da questo modulo).
+import { DEFAULT_RATING_SOURCES, UI_RATING_SOURCES, SUPPORTED_RATING_SOURCES, parseRatingSources, resolveRatingSources } from "./rating-weights"
+export { DEFAULT_RATING_SOURCES, UI_RATING_SOURCES, SUPPORTED_RATING_SOURCES, parseRatingSources, resolveRatingSources }
+export type { RatingSource } from "./rating-weights"
 
 export interface AggregatedRatings {
   sources: Record<string, number>
@@ -96,36 +78,8 @@ function avg(values: number[]): number {
   return values.reduce((a, b) => a + b, 0) / values.length
 }
 
-/**
- * Parsing unico del parametro `rsrc` (Fix D): split "," → trim → lowercase →
- * whitelist SUPPORTED_RATING_SOURCES. Ritorna null se il parametro è assente
- * (il chiamante applica la catena dei fallback), [] se presente ma senza
- * fonti valide. Unica implementazione usata da poster route, poster-config e
- * tmdb details route (stesso numero ovunque = Golden Rule).
- */
-export function parseRatingSources(raw: string | null | undefined): string[] | null {
-  if (raw === null || raw === undefined) return null
-  const valid = SUPPORTED_RATING_SOURCES as readonly string[]
-  return raw.split(",").map((s) => s.trim().toLowerCase()).filter((s) => valid.includes(s))
-}
-
-/**
- * Catena canonica delle fonti voto: query `rsrc` > fallbacks (mapping >
- * config token > server defaults) > DEFAULT_RATING_SOURCES. Un array vuoto
- * (nessuna fonte / solo garbage) vale come unset e fa cadere al fallback
- * successivo — mai media su zero fonti.
- */
-export function resolveRatingSources(
-  query: string | null | undefined,
-  ...fallbacks: (readonly string[] | null | undefined)[]
-): string[] {
-  const parsed = parseRatingSources(query)
-  if (parsed && parsed.length > 0) return parsed
-  for (const fb of fallbacks) {
-    if (fb && fb.length > 0) return fb.map((s) => s.toLowerCase())
-  }
-  return [...DEFAULT_RATING_SOURCES]
-}
+// parseRatingSources/resolveRatingSources: definiti in rating-weights.ts
+// (foglia client-safe), ri-esportati sopra per compatibilità.
 
 export function calculateAverageRating(
   ratings: AggregatedRatings | null,

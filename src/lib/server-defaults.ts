@@ -91,13 +91,13 @@ export interface LandscapeServerDefaults {
    * Assente/null = segue il flat portrait; `false` esplicito vince sul flat
    * (un portrait ON non attiva mai un landscape mai configurato).
    */
-  ageBadge?: boolean
+  ageBadge?: boolean | null
   /**
    * Paese della classificazione età per-shape (default = flat portrait, a sua
    * volta "IT"). Assente/null/invalido = segue il flat; mai auto-cambiato con
    * lingua UI o regione streaming.
    */
-  ageCountry?: string
+  ageCountry?: string | null
   /**
    * Stile della pill di classificazione per età per-shape (default = flat
    * portrait, a sua volta "standard" = resa storica). Assente/null/invalido =
@@ -124,32 +124,22 @@ export interface LandscapeServerDefaults {
   ribbonSide?: "left" | "right"
   /** Corner Netflix-style ribbon (false = centered rank badge). */
   ribbonEnabled?: boolean
-  /** Graphical poster layout ("standard" = historic render, "fresh" = opt-in). */
-  posterLayout?: import("@/lib/types").PosterLayout
-  /** Fresh apply scope ("ranked" = default: solo con rank; "all" = override esplicito). */
-  posterFreshScope?: import("@/lib/types").PosterFreshScope
+  /** Graphical poster layout ("standard" = historic render, "fresh" = opt-in). Assente/null = segue il flat. */
+  posterLayout?: import("@/lib/types").PosterLayout | null
+  /** Fresh apply scope ("ranked" = default: solo con rank; "all" = override esplicito). Assente/null = segue il flat. */
+  posterFreshScope?: import("@/lib/types").PosterFreshScope | null
   /** Enabled sash buckets (canonical order; empty = all off). */
   sashOrder?: SashBucket[]
 }
 
-/** Solo chiavi definite (undefined = segui il flat, mai clobberare). */
-function pickDefined<T extends object>(obj: T): Partial<T> {
-  const out: Partial<T> = {}
-  for (const [k, v] of Object.entries(obj)) {
-    if (v !== undefined) (out as Record<string, unknown>)[k] = v
-  }
-  return out
-}
-
 /**
- * Default effettivi per il formato richiesto: in landscape i valori definiti
- * di `defaults.landscape` vincono sui flat. Ritorna lo stesso oggetto quando
- * non c'è overlay da applicare (shape portrait o nessun profilo).
+ * Risoluzione pura per-formato — definita nella foglia client-safe
+ * `server-defaults-shape.ts` (zero import runtime: `server-defaults.ts`
+ * importa `node:fs`/KV e non può stare nel bundle browser). Ri-esportata qui
+ * per compatibilità: route, builder URL e test esistenti continuano a
+ * importarla da questo modulo.
  */
-export function effectiveDefaultsForShape(defaults: ServerDefaults, shape: "poster" | "landscape"): ServerDefaults {
-  if (shape !== "landscape" || !defaults.landscape) return defaults
-  return { ...defaults, ...pickDefined(defaults.landscape) }
-}
+export { effectiveDefaultsForShape } from "./server-defaults-shape"
 
 export interface ServerDefaults {
   badgeStyle?: BadgeStyle
@@ -169,7 +159,7 @@ export interface ServerDefaults {
   blurDarkness?: number
   /** Intensità tinta di scena 0-100 (default 20). */
   tintStrength?: number
-  /** Ombra lineare superiore 0-100 (default 50). */
+  /** Ombra lineare superiore 0-100 (default 80). */
   topShade?: number
   gradientHeight?: number
   globalBadges?: boolean
@@ -295,6 +285,13 @@ export interface ServerDefaults {
   homeDisabledCatalogIds?: string[]
   catalogOrder?: string[]
   catalogRenames?: Record<string, string>
+  /**
+   * Per-catalog card format overrides, keyed by the actual manifest/route
+   * catalog id. Persisted values are ONLY `poster`|`landscape`; an
+   * absent/deleted key follows the global `posterShape`. See
+   * `catalog-shape.ts` for the resolution contract.
+   */
+  catalogShapes?: Record<string, import("@/lib/types").PosterShape>
 }
 
 const FILE = path.join(DATA_DIR, "defaults.json")

@@ -1,5 +1,20 @@
 import { test, expect, type Page } from "@playwright/test"
 
+async function ensureManageOpen(dialog: ReturnType<Page["getByRole"]>) {
+  // Personal presets live in a gallery disclosure closed by default, and the
+  // save form in a nested manage disclosure (also closed by default; both
+  // bodies unmount while closed and reset on tab switches/remounts). Expand
+  // whatever is collapsed. All save/apply/delete assertions unchanged.
+  if ((await dialog.getByRole("button", { name: "Salva stile attuale" }).count()) === 0) {
+    const gallery = dialog.getByRole("button", { name: /I miei preset/ }).first()
+    if ((await gallery.getAttribute("aria-expanded")) !== "true") await gallery.click()
+  }
+  if ((await dialog.getByRole("button", { name: "Salva stile attuale" }).count()) === 0) {
+    await dialog.getByTestId("visual-presets-manage-toggle").click()
+  }
+  await expect(dialog.getByRole("button", { name: "Salva stile attuale" })).toBeVisible()
+}
+
 async function openSettings(page: Page) {
   await page.addInitScript(() => {
     localStorage.setItem("pictorium_profile_id", "e2e-visual-presets")
@@ -15,10 +30,9 @@ async function openSettings(page: Page) {
     if (!await dialog.count()) await page.getByRole("button", { name: /Configura tutti i poster|Impostazioni/i }).filter({ visible: true }).click()
     await expect(dialog).toBeVisible({ timeout: 1000 })
   }).toPass()
-  // Personal presets live in a disclosure closed by default: expand it first
-  // (body unmounts while closed). All save/apply/delete assertions unchanged.
-  await dialog.getByRole("button", { name: /I miei preset/ }).click()
-  await expect(dialog.getByRole("button", { name: "Salva stile attuale" })).toBeVisible()
+  // The save form lives on the Preset tab (dialog default): expand the
+  // gallery + nested manage disclosures before asserting it.
+  await ensureManageOpen(dialog)
   return dialog
 }
 
@@ -28,13 +42,20 @@ test("personal styles are saved on the server and can be applied from another de
   await dialog.getByRole("tab", { name: "Trasforma", exact: true }).click()
   const scale = dialog.locator('input[type="range"]').first()
   await scale.fill("42")
+  // The save form lives on the Preset tab: go back (disclosures reset on
+  // the tab switch) and reopen them. The staged slider edit survives.
+  await dialog.getByRole("tab", { name: "Preset", exact: true }).click()
+  await ensureManageOpen(dialog)
   const name = `Cinema ${Date.now()}`
   await dialog.getByRole("textbox", { name: "Nome del preset" }).fill(name)
   const saveResponse = page.waitForResponse((res) => res.url().includes("/api/defaults/presets") && res.request().method() === "POST")
   await dialog.getByRole("button", { name: "Salva stile attuale" }).click()
   expect((await saveResponse).ok()).toBeTruthy()
   await expect(dialog.getByRole("button", { name, exact: true })).toBeVisible()
+  await dialog.getByRole("tab", { name: "Trasforma", exact: true }).click()
   await scale.fill("65")
+  await dialog.getByRole("tab", { name: "Preset", exact: true }).click()
+  await ensureManageOpen(dialog)
   await dialog.getByRole("textbox", { name: "Nome del preset" }).fill(name)
   const overwriteResponse = page.waitForResponse((res) => res.url().includes("/api/defaults/presets") && res.request().method() === "POST")
   await dialog.getByRole("button", { name: "Salva stile attuale" }).click()
@@ -52,10 +73,13 @@ test("personal styles are saved on the server and can be applied from another de
     await expect(secondDialog.locator('input[type="range"]').first()).toHaveValue("65")
     await secondPage.screenshot({ path: "artifacts/personal-visual-presets.png" })
     await secondPage.setViewportSize({ width: 390, height: 844 })
-    // Resize swaps the responsive branch and remounts the section (collapsed
-    // by design): reopen the disclosure. Assertions below are unchanged.
+    // Resize swaps the responsive branch and may remount the section
+    // (collapsed by design): go back to Preset (the dialog sits on
+    // Trasforma here, where the gallery is hidden) and reopen the
+    // disclosures. Assertions below are unchanged.
     if ((await secondDialog.getByRole("button", { name, exact: true }).count()) === 0) {
-      await secondDialog.getByRole("button", { name: /I miei preset/ }).click()
+      await secondDialog.locator("#mobile-settings-category").selectOption("preset")
+      await ensureManageOpen(secondDialog)
     }
     const presetButton = secondDialog.getByRole("button", { name, exact: true })
     const deleteButton = secondDialog.getByRole("button", { name: `Elimina ${name}`, exact: true })
@@ -63,7 +87,9 @@ test("personal styles are saved on the server and can be applied from another de
     await expect(deleteButton).toBeVisible()
     const presetBox = await presetButton.boundingBox()
     const deleteBox = await deleteButton.boundingBox()
-    expect(deleteBox!.y).toBeLessThan(presetBox!.y)
+    // Gallery-first layout (demonstrated source order: thumbnail grid above,
+    // manage disclosure below): the preset tile sits above its delete row.
+    expect(deleteBox!.y).toBeGreaterThan(presetBox!.y)
     await secondPage.screenshot({ path: "artifacts/personal-visual-presets-mobile.png" })
     const deleted = secondPage.waitForResponse((res) => res.url().includes("/api/defaults/presets") && res.request().method() === "DELETE")
     await secondDialog.getByRole("button", { name: `Elimina ${name}`, exact: true }).click()

@@ -194,6 +194,28 @@ sicuro**, senza toccare id/tipo/ordine/paginazione/videos:
 - Il manifest NON dichiara i prefissi `kitsu:`/`anilist:`/`mal:`/`anidb:`
   (il resolver `/meta` non li risolve: restano agli addon dedicati).
 
+## Formato per catalogo (override esplicito, solo catalogo)
+
+Ogni catalogo può forzare il proprio formato card (`catalogShapes` in
+`ServerDefaults`, chiave = id manifest/route del catalogo, valori SOLO
+`poster`|`landscape`; chiave assente/cancellata = segue il formato globale
+`posterShape`). Scelta esplicita dell'utente, non suggerimento:
+
+- `poster` esplicito forza SEMPRE la verticale per quel catalogo
+  (globale/mapping ignorati); `landscape` esplicito forza SEMPRE
+  l'orizzontale per quel catalogo (globale/mapping ignorati).
+- Chiave assente = comportamento storico byte-identico
+  (`stremioPosterShape`: il globale orizzontale forza anche i mapping
+  portrait, il globale verticale onora un mapping landscape).
+- Vale SOLO per le card di quel catalogo: stesso titolo in altro catalogo
+  invariato, mapping salvato mai riscritto, `/meta` resta globale (nessun
+  contesto catalogo inventato). `banner` resta sempre landscape+hideLogo;
+  `landscapePoster`/`logo` seguono la forma card risolta.
+- Chiavi legacy `posterium-*` normalizzate, id ignoti preservati senza fetch
+  di lista, chiavi `__proto__`/`constructor`/`prototype` rifiutate, enum
+  ignoti rifiutati dal server (mai default silenziosi), tetto ragionevole
+  come gli altri record catalogo. Nessuna chiave API negli URL.
+
 ## Cosa NON fare
 
 - Non emettere mai `id` numerici nudi nel catalogo.

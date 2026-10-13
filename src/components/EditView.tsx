@@ -22,6 +22,7 @@ import { LogoOptions } from "@/components/LogoOptions"
 import { EditorPanel } from "@/components/EditorPanel"
 import { copyText } from "@/lib/clipboard"
 import { isCustomPosterUrl } from "@/lib/utils"
+import { isTvdbArtworkUrl } from "@/lib/tvdb-gallery-types"
 import { loadCustomTiles, storeCustomTiles } from "@/lib/custom-tiles-store"
 import { userFetch } from "@/lib/http"
 import { SearchBar } from "@/components/SearchBar"
@@ -360,8 +361,13 @@ export default function EditView() {
   const savedCustomTile = useMemo(() => {
     if (!savedCustomUrl || !isCustomPosterUrl(savedCustomUrl)) return null
     if (customTiles.some((tile) => tile.file_path === savedCustomUrl)) return null
-    return { file_path: savedCustomUrl, iso_639_1: null, vote_average: 0, width: 0, height: 0 } as TMDBImage
-  }, [customTiles, savedCustomUrl])
+    // Saved TVDB base reuses the stored mapping language (no new schema):
+    // with-text reopens honestly non-clean so reselecting the saved tile
+    // never reads as clean; legacy-ambiguous (null) and generic custom URLs
+    // keep the historical null.
+    const savedLang = isTvdbArtworkUrl(savedCustomUrl) ? (selectedMapping?.language ?? null) : null
+    return { file_path: savedCustomUrl, iso_639_1: savedLang, vote_average: 0, width: 0, height: 0 } as TMDBImage
+  }, [customTiles, savedCustomUrl, selectedMapping])
 
   // Mobile: dopo il tap su un poster salta ad "Anteprima" (nella tab Poster
   // non si vedrebbe alcun feedback). Solo sotto lg, dove lo switcher esiste;

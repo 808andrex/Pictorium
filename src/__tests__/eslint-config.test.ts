@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest"
+import { beforeAll, describe, expect, it } from "vitest"
 import { mkdir, rm, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { ESLint } from "eslint"
@@ -8,20 +8,41 @@ import { ESLint } from "eslint"
 // che generano artefatti di build in `.next-e2e` (distDir di playwright).
 // Senza gli ignore qui sotto, eslint lintava quei file generati e falliva
 // con centinaia di errori (require() style import, @ts-ignore, ...).
-// Nota: `new ESLint({})` carica la flat config completa di Next (lenta,
-// dipendente dal carico CPU) — serve un timeout esplicito oltre i 5s default.
-const ESLINT_TEST_TIMEOUT = 30_000
+//
+// Measured cold cost: the first `isPathIgnored` loads the whole flat config
+// (eslint-config-next + `next/dist/compiled/babel`) - roughly 0.9s in an
+// isolated Node process - and it is a FIXED startup cost, not logical test
+// work. Under the default Vitest pool (11 workers on 12 CPU, 496 files) that
+// fixed cost is amplified by contention: measured 1.0s isolated -> 2.0s
+// (32 files) -> 22.3s (40 heaviest files, this file first) -> 37.2s in the full
+// gate (496 files), where it blew the previous 30s cap. The bound below is 3.2x
+// the worst value observed at the full gate: not an arbitrary raise, it covers
+// a known fixed cost with the contention multiplier measured at the real worst
+// case.
+//
+// Shared ESLint instance: the resolved config is cached per process, but every
+// `new ESLint({})` repeats its own setup (measured: the second isPathIgnored
+// still costs ~323ms under contention). A single instance keeps every assertion
+// intact while removing that repeated work under the pool.
+const ESLINT_TEST_TIMEOUT = 120_000
 
 describe("eslint config", () => {
+  // Single instance shared by the three tests: the flat config is resolved once
+  // per process instead of once per test.
+  let sharedEslint: ESLint
+  beforeAll(() => {
+    sharedEslint = new ESLint({})
+  })
+
   it("ignores generated build dirs (.next, .next-e2e)", async () => {
-    const eslint = new ESLint({})
+    const eslint = sharedEslint
     for (const file of [".next/dev/build/probe.js", ".next-e2e/dev/build/probe.js"]) {
       expect(await eslint.isPathIgnored(file), `${file} should be ignored`).toBe(true)
     }
   }, ESLINT_TEST_TIMEOUT)
 
   it("does not ignore real source files", async () => {
-    const eslint = new ESLint({})
+    const eslint = sharedEslint
     expect(await eslint.isPathIgnored("src/app/layout.tsx")).toBe(false)
   }, ESLINT_TEST_TIMEOUT)
 
@@ -32,10 +53,12 @@ describe("eslint config", () => {
     // Same patterns that used to break the lint: require() + @ts-ignore
     await writeFile(probe, "const x = require('x')\n// @ts-ignore\nmodule.exports = x\n")
     try {
-      const eslint = new ESLint({})
+      const eslint = sharedEslint
       const [result] = await eslint.lintFiles(probe)
       expect(result.errorCount).toBe(0)
     } finally {
+      // Removes ONLY this test's probe file. `.next-e2e/dev/build` already
+      // exists: the mkdir above created it, so the distDir is left in place.
       await rm(probe, { force: true })
     }
   }, ESLINT_TEST_TIMEOUT)

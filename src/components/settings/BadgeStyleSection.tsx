@@ -11,7 +11,7 @@ import type { DefaultsPreviewFamily } from "@/lib/poster-url"
 /** Default genre style + font (Badge tab, Stile group). Follows the Badge edit
  *  target: portrait reads/writes the shared flats, landscape the profile
  *  overrides. Reports the genre preview family — preview-only, never writes. */
-export function GenreStyleSection({ shape, onPreviewFamilyChange }: { shape?: BadgeShapeTarget; onPreviewFamilyChange?: (f: DefaultsPreviewFamily) => void }) {
+export function GenreStyleSection({ shape, onPreviewFamilyChange, styleDisabled, showFont = true }: { shape?: BadgeShapeTarget; onPreviewFamilyChange?: (f: DefaultsPreviewFamily) => void; styleDisabled?: boolean; showFont?: boolean }) {
   const { t } = useT()
   const ed = usePosterEditor()
   const { scoped } = useShapeBadgeDefaults(shape)
@@ -33,6 +33,7 @@ export function GenreStyleSection({ shape, onPreviewFamilyChange }: { shape?: Ba
         <label className="text-[11px] text-muted font-medium block">
           {t("ui.styleGenreBadge")}
         </label>
+        <fieldset disabled={styleDisabled} className="contents">
         <BadgeStyleSelector
           value={badgeStyle}
           options={["shadow", "pill", "bar", "colored", "bordo", "vetro", "minimal"]}
@@ -41,8 +42,10 @@ export function GenreStyleSection({ shape, onPreviewFamilyChange }: { shape?: Ba
           }}
           t={t}
         />
+        </fieldset>
       </div>
 
+      {showFont && (
       <div {...famAttrs("genre")} className="pt-2 border-t border-surface2/50 space-y-1.5">
         <label className="text-[11px] text-muted font-medium block">
           {t("ui.badgeFont")}
@@ -54,6 +57,7 @@ export function GenreStyleSection({ shape, onPreviewFamilyChange }: { shape?: Ba
           }}
         />
       </div>
+      )}
     </div>
   )
 }
@@ -61,7 +65,7 @@ export function GenreStyleSection({ shape, onPreviewFamilyChange }: { shape?: Ba
 /** Default quality style + video formats (Badge tab, Qualità group). Same
  *  target scoping as the genre section. Reports the quality preview family —
  *  preview-only, never writes. Hidden when the quality badge is off. */
-export function QualityStyleSection({ shape, qualityEnabled, onPreviewFamilyChange }: { shape?: BadgeShapeTarget; qualityEnabled?: boolean; onPreviewFamilyChange?: (f: DefaultsPreviewFamily) => void }) {
+export function QualityStyleSection({ shape, qualityEnabled, onPreviewFamilyChange, forceShow }: { shape?: BadgeShapeTarget; qualityEnabled?: boolean; onPreviewFamilyChange?: (f: DefaultsPreviewFamily) => void; forceShow?: boolean }) {
   const { t } = useT()
   const ed = usePosterEditor()
   const { scoped } = useShapeBadgeDefaults(shape)
@@ -73,9 +77,11 @@ export function QualityStyleSection({ shape, qualityEnabled, onPreviewFamilyChan
     onFocusCapture: () => onPreviewFamilyChange?.(family),
     onPointerDownCapture: () => onPreviewFamilyChange?.(family),
   })
-  if (!showQuality) return null
+  if (!showQuality && !forceShow) return null
+  const disabled = !showQuality
   return (
     <div {...famAttrs("quality")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-3 shadow-sm">
+      <fieldset disabled={disabled} className="contents">
       <div className="space-y-1.5">
         <label className="text-[11px] text-muted font-medium block">
           {t("ui.qualityBadgeStyle")}
@@ -100,6 +106,7 @@ export function QualityStyleSection({ shape, qualityEnabled, onPreviewFamilyChan
           />
         </div>
       </div>
+      </fieldset>
     </div>
   )
 }

@@ -20,7 +20,8 @@ const TVDB_API = process.env.TVDB_API_URL || TVDB_BASE
 export const ARTWORKS_BASE = "https://artworks.thetvdb.com"
 
 // Phase 4 (Provider Resilience): per-fetch deadline 8000/10000 → 5000ms.
-const TVDB_TIMEOUT_MS = (() => {
+// Also serves as the aggregate gallery budget (see the tvdb artworks route).
+export const TVDB_TIMEOUT_MS = (() => {
   const raw = envWithFallback("TVDB_TIMEOUT_MS")
   const n = raw ? parseInt(raw, 10) : 5000
   return Number.isFinite(n) && n >= 1000 && n <= 15000 ? n : 5000
@@ -226,9 +227,19 @@ export async function getTvdbToken(apiKey: string, signal?: AbortSignal): Promis
 // namespace diversi su TVDB).
 const movieIdCache = new Map<string, { tvdbId: number; expiry: number }>()
 
-// Artworks cache: (movie|tv:tvdbId -> artworks), 6h come gli episodi.
-const artworksCache = new Map<string, { arts: TvdbArtwork[]; expiry: number }>()
+// Artworks cache: (movie|tv:tvdbId -> artworks), 6h hits like episodes.
+// Confirmed-empty responses use a short 10min TTL (Fanart negative-cache
+// pattern) so titles without artworks revalidate quickly; failures are
+// never cached. Both getTvdbArtworks (rescue, fail-open) and the strict
+// gallery fetch share this map and these TTLs. `validated` marks a proven
+// strict envelope (top-level array or `{ artworks: [] }`, or a 404): the
+// strict reader trusts only validated entries, so an unvalidated legacy
+// fail-open empty (malformed JSON / wrong shape) can never poison the
+// gallery. Legacy rescue reads any entry (fail-open); strict writes are
+// always validated.
+const artworksCache = new Map<string, { arts: TvdbArtwork[]; expiry: number; validated: boolean }>()
 const CACHE_TTL_ARTWORKS = 6 * 60 * 60 * 1000 // 6 ore
+const CACHE_TTL_ARTWORKS_EMPTY = 10 * 60 * 1000 // 10 minuti (assenza confermata)
 const MAX_ARTWORK_ENTRIES = 200
 
 /**
@@ -304,6 +315,103 @@ async function getTvdbIdByRemoteId(
     log.error("TVDB search remoteid exception", { error: e instanceof Error ? e.message : String(e) })
     return null
   }
+}
+
+/**
+ * Strict TVDB id lookup for the gallery: same shared login/token layer and
+ * the same `/search/remoteid` endpoint as the legacy matcher, but lookup
+ * failures propagate as typed errors instead of collapsing to null.
+ *
+ * - Missing key throws `not_configured`; a null token throws `auth`, except
+ *   with an open breaker (sustained upstream outage), which throws
+ *   `upstream` — checked BEFORE the id cache so a cached mapping can never
+ *   mask a bad key. Aborted callers throw `timeout`.
+ * - 401/403 throw `auth`; network/429/5xx throw `upstream`; invalid JSON
+ *   throws `upstream`; any other 4xx throws `upstream`.
+ * - Genuine absence returns null (cacheable-empty at the route level):
+ *   404, an empty result list, or results without a usable numeric id.
+ *   Positive hits reuse the same id caches as the legacy matcher.
+ * The legacy nullable matcher below is unchanged for the render pipeline.
+ */
+export async function getTvdbSeriesIdStrict(remoteId: string, apiKey: string, signal?: AbortSignal): Promise<number | null> {
+  return getTvdbIdByRemoteIdStrict("series", remoteId, apiKey, remoteIdCache, signal)
+}
+
+export async function getTvdbMovieIdStrict(remoteId: string, apiKey: string, signal?: AbortSignal): Promise<number | null> {
+  return getTvdbIdByRemoteIdStrict("movie", remoteId, apiKey, movieIdCache, signal)
+}
+
+async function getTvdbIdByRemoteIdStrict(
+  kind: "series" | "movie",
+  remoteId: string,
+  apiKey: string,
+  cache: Map<string, { tvdbId: number; expiry: number }>,
+  signal?: AbortSignal,
+): Promise<number | null> {
+  const cleanRemoteId = remoteId.trim()
+  if (!cleanRemoteId) return null
+  const cleanKey = (apiKey || "").trim()
+  if (!cleanKey) throw new TvdbArtworksError("not_configured", "TVDB API key is not configured")
+  if (signal?.aborted) throw new TvdbArtworksError("timeout", "TVDB request aborted")
+
+  // Auth-before-cache, mirroring getTvdbArtworksStrict. A null token with an
+  // open breaker is a sustained upstream outage (401s never trip it).
+  const token = await getTvdbToken(cleanKey, signal)
+  if (signal?.aborted) throw new TvdbArtworksError("timeout", "TVDB request aborted")
+  if (!token) {
+    if (isTvdbBreakerOpen()) throw new TvdbArtworksError("upstream", "TVDB login unavailable")
+    throw new TvdbArtworksError("auth", "TVDB login failed (invalid key or login unavailable)")
+  }
+
+  const cached = cache.get(cleanRemoteId)
+  if (cached && Date.now() < cached.expiry) {
+    return cached.tvdbId
+  }
+
+  let res: Response
+  try {
+    res = await timedFetch(
+      `${TVDB_API}/search/remoteid/${encodeURIComponent(cleanRemoteId)}`,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json",
+        },
+        signal: combineAbortSignals(signal, TVDB_TIMEOUT_MS),
+      },
+    )
+  } catch (e) {
+    if (isTvdbTimeoutError(e) || signal?.aborted) throw new TvdbArtworksError("timeout", "TVDB id lookup timed out")
+    log.warn("TVDB strict remoteid network failure", { remoteId: cleanRemoteId })
+    throw new TvdbArtworksError("upstream", "TVDB id lookup unavailable")
+  }
+  if (res.status === 401 || res.status === 403) throw new TvdbArtworksError("auth", "TVDB rejected the API key")
+  if (res.status === 404) return null
+  if (res.status === 429 || res.status >= 500) throw new TvdbArtworksError("upstream", `TVDB id lookup responded with status ${res.status}`)
+  if (!res.ok) throw new TvdbArtworksError("upstream", `TVDB id lookup responded with status ${res.status}`)
+  let json: TvdbSearchResponse
+  try {
+    json = (await res.json()) as TvdbSearchResponse
+  } catch {
+    throw new TvdbArtworksError("upstream", "TVDB id lookup returned invalid JSON")
+  }
+  const results = json?.data
+  if (!Array.isArray(results) || results.length === 0) return null
+
+  // First usable numeric id wins (same defensive decoding as the legacy
+  // matcher: `{ series: { id } }` / `{ movie: { id } }`, flat-id fallback).
+  for (const item of results) {
+    const rawId = (kind === "series" ? item?.series?.id : (item as { movie?: { id?: number | string } })?.movie?.id)
+      ?? item.tvdb_id ?? item.id
+    if (rawId) {
+      const numId = typeof rawId === "number" ? rawId : parseInt(String(rawId), 10)
+      if (Number.isFinite(numId) && numId > 0) {
+        setBounded(cache, cleanRemoteId, { tvdbId: numId, expiry: Date.now() + CACHE_TTL_REMOTE }, MAX_REMOTE_ENTRIES)
+        return numId
+      }
+    }
+  }
+  return null
 }
 
 /**
@@ -403,6 +511,94 @@ export interface TvdbArtwork {
   height?: number
   score?: number
   includesText?: boolean
+  /**
+   * Numeric TVDB artwork `type` id (`ArtworkBaseRecord.type`), preserved
+   * additively so per-kind grouping is possible. `null`/missing = legacy
+   * payload without a type (never guessed into a group by callers that
+   * group; the rescue picker treats it as a legacy candidate).
+   */
+  type?: number | null
+}
+
+/**
+ * Authoritative TVDB artwork `type`-id whitelist (verified against current
+ * official TVDB v4 docs at build time via Context7 + official repos).
+ *
+ * Provenance:
+ * - Official swagger `GET /artwork/types` is the authoritative id table
+ *   (https://github.com/thetvdb/v4-api/blob/main/docs/swagger.yml):
+ *   `ArtworkBaseRecord.type` is numeric.
+ * - Official TVDB-owned movie SDK (current):
+ *   https://raw.githubusercontent.com/thetvdb/metadata.movies.thetvdb.com.v4.python/main/metadata.movies.thetvdb.com.v4.python/resources/lib/movies.py
+ *   declares movie POSTER = 14, BACKGROUND = 15, CLEARLOGO = 25.
+ * - Official API repo issue #106 (`/artwork/types` response): series
+ *   Poster = 2, Background = 3, ClearLogo = 23 (seasonPoster = 7 is
+ *   deliberately NOT a series poster).
+ * - Official API repo issue #194 (maintainer): 2 = poster, 3 = background.
+ * - ClearArt 22/24 are NOT logos and are never classified as such.
+ *
+ * Only these six ids are whitelisted. Every other kind (season 7, ClearArt
+ * 22/24, banner, icon, artifact, MP4, unknown numerics) is skipped honestly —
+ * never inferred from URL substrings (`/poster/`, `/fanart/`) or geometry.
+ */
+export const TVDB_MOVIE_POSTER_TYPE_ID = 14
+export const TVDB_MOVIE_BACKDROP_TYPE_ID = 15
+export const TVDB_MOVIE_LOGO_TYPE_ID = 25
+export const TVDB_SERIES_POSTER_TYPE_ID = 2
+export const TVDB_SERIES_BACKDROP_TYPE_ID = 3
+export const TVDB_SERIES_LOGO_TYPE_ID = 23
+
+/** Poster type ids across both media (used when the media is untyped/legacy). */
+const TVDB_POSTER_TYPE_IDS: ReadonlySet<number> = new Set([
+  TVDB_MOVIE_POSTER_TYPE_ID,
+  TVDB_SERIES_POSTER_TYPE_ID,
+])
+
+const TVDB_BACKDROP_TYPE_IDS: ReadonlySet<number> = new Set([
+  TVDB_MOVIE_BACKDROP_TYPE_ID,
+  TVDB_SERIES_BACKDROP_TYPE_ID,
+])
+
+const TVDB_LOGO_TYPE_IDS: ReadonlySet<number> = new Set([
+  TVDB_MOVIE_LOGO_TYPE_ID,
+  TVDB_SERIES_LOGO_TYPE_ID,
+])
+
+/** Server gallery caps (deduped safe URLs per group). */
+export const TVDB_GALLERY_POSTERS_CAP = 30
+export const TVDB_GALLERY_BACKDROPS_CAP = 20
+export const TVDB_GALLERY_LOGOS_CAP = 20
+
+/**
+ * Gallery leaf for the editor (client-future): TMDB-compatible shape with an
+ * explicit TVDB source + preserved type id. The existing rescue response is
+ * unchanged — this is a new additive leaf only.
+ */
+export interface TvdbGalleryImage {
+  url: string
+  thumbnail: string | null
+  language: string | null
+  width?: number
+  height?: number
+  includesText?: boolean
+  score?: number
+  source: "tvdb"
+  type: number | null
+}
+
+export interface TvdbGallery {
+  posters: TvdbGalleryImage[]
+  backdrops: TvdbGalleryImage[]
+  logos: TvdbGalleryImage[]
+}
+
+/** Typed errors: only these distinguish absence from failure (Fanart pattern). */
+export class TvdbArtworksError extends Error {
+  readonly code: "not_configured" | "auth" | "upstream" | "timeout"
+  constructor(code: TvdbArtworksError["code"], message: string) {
+    super(message)
+    this.code = code
+  }
 }
 
 /**
@@ -446,6 +642,13 @@ export async function getTvdbArtworks(
       data?: unknown
     } | null
     const data = json?.data
+    // Provenance for the shared cache: only a top-level array or
+    // `{ artworks: [] }` proves the envelope. Anything else (invalid JSON,
+    // missing `data`, wrong shape) stays fail-open [] for rendering but is
+    // marked unvalidated so the strict gallery never trusts it as absence.
+    const envelopeValid =
+      Array.isArray(data) ||
+      (data !== null && typeof data === "object" && Array.isArray((data as { artworks?: unknown })?.artworks))
     const raw: unknown[] = Array.isArray(data)
       ? data
       : Array.isArray((data as { artworks?: unknown })?.artworks)
@@ -464,9 +667,18 @@ export async function getTvdbArtworks(
         height: typeof r.height === "number" ? r.height : undefined,
         score: typeof r.score === "number" ? r.score : undefined,
         includesText: typeof r.includesText === "boolean" ? r.includesText : undefined,
+        // Additive: preserve the numeric ArtworkBaseRecord.type when present
+        // (number or numeric string); missing/unparseable stays null so legacy
+        // typeless payloads keep flowing through the rescue picker unchanged.
+        type: parseTvdbArtworkType(r.type),
       })
     }
-    setBounded(artworksCache, cacheKey, { arts, expiry: Date.now() + CACHE_TTL_ARTWORKS }, MAX_ARTWORK_ENTRIES)
+    setBounded(
+      artworksCache,
+      cacheKey,
+      { arts, expiry: Date.now() + (arts.length > 0 ? CACHE_TTL_ARTWORKS : CACHE_TTL_ARTWORKS_EMPTY), validated: envelopeValid },
+      MAX_ARTWORK_ENTRIES,
+    )
     return arts
   } catch (e) {
     log.error("TVDB artworks exception", { error: e instanceof Error ? e.message : String(e) })
@@ -475,10 +687,34 @@ export async function getTvdbArtworks(
 }
 
 /**
+ * Parse the TVDB `ArtworkBaseRecord.type` defensively: finite numbers pass
+ * through, numeric strings are coerced, everything else (missing, null,
+ * non-numeric strings, NaN, non-positive) becomes null (legacy/unknown —
+ * never guessed). Per-kind grouping skips null; the rescue picker treats
+ * null as a legacy candidate to avoid regressing typeless fixtures.
+ */
+function parseTvdbArtworkType(raw: unknown): number | null {
+  if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) return Math.floor(raw)
+  if (typeof raw === "string") {
+    const t = raw.trim()
+    if (/^\d+$/.test(t)) {
+      const n = parseInt(t, 10)
+      if (Number.isFinite(n) && n > 0) return n
+    }
+  }
+  return null
+}
+
+/**
  * Sceglie il miglior poster 2:3 dagli artwork TVDB (funzione pura, testabile).
  * Solo portrait (o dimensioni ignote); textless (`includesText === false`)
  * batte sempre il testo; a parità vince la lingua (null > preferita > eng >
  * altre) e poi lo score TVDB.
+ *
+ * Type-guard (additive, no regression): artwork CON type noto devono essere
+ * veri poster (2 serie / 14 film); i non-poster noti (backdrop 3/15, logo
+ * 23/25, season 7, clearart 22/24, altri) sono esclusi. Artwork SENZA type
+ * (null/missing, legacy + vecchi fixture) restano candidati come prima.
  */
 export function pickTvdbPoster(
   artworks: readonly TvdbArtwork[],
@@ -488,6 +724,8 @@ export function pickTvdbPoster(
   const scored: { art: TvdbArtwork; rank: number; score: number }[] = []
   for (const art of artworks) {
     if (!art.image) continue
+    const knownType = parseTvdbArtworkType(art.type)
+    if (knownType !== null && !TVDB_POSTER_TYPE_IDS.has(knownType)) continue
     const w = art.width ?? 0
     const h = art.height ?? 0
     if (w > 0 && h > 0 && w >= h) continue
@@ -497,6 +735,327 @@ export function pickTvdbPoster(
   }
   scored.sort((a, b) => a.rank - b.rank || b.score - a.score)
   return scored[0]?.art ?? null
+}
+
+/**
+ * Sceglie il miglior backdrop 16:9 (funzione pura, testabile). Mirror del
+ * ranking poster: solo landscape (o dimensioni ignote), textless prima, poi
+ * lingua (null > preferita > eng > altre), poi score. Type-guard analogo:
+ * con type noto serve un vero backdrop (3 serie / 15 film); senza type
+ * (legacy) resta candidato.
+ */
+export function pickTvdbBackdrop(
+  artworks: readonly TvdbArtwork[],
+  preferredLanguage?: string | null,
+): TvdbArtwork | null {
+  const pref = (preferredLanguage || "").toLowerCase()
+  const scored: { art: TvdbArtwork; rank: number; score: number }[] = []
+  for (const art of artworks) {
+    if (!art.image) continue
+    const knownType = parseTvdbArtworkType(art.type)
+    if (knownType !== null && !TVDB_BACKDROP_TYPE_IDS.has(knownType)) continue
+    const w = art.width ?? 0
+    const h = art.height ?? 0
+    if (w > 0 && h > 0 && h >= w) continue
+    const lang = (art.language || "").toLowerCase()
+    const langRank = !lang ? 0 : lang === pref ? 1 : lang === "eng" || lang === "en" ? 2 : 3
+    scored.push({ art, rank: (art.includesText === false ? 0 : 10) + langRank, score: art.score ?? 0 })
+  }
+  scored.sort((a, b) => a.rank - b.rank || b.score - a.score)
+  return scored[0]?.art ?? null
+}
+
+/**
+ * Sceglie il miglior logo/clearlogo (funzione pura, testabile). SOLO su type
+ * id documentati (25 film / 23 serie); nessuna euristica geometrica o da
+ * URL. Senza type noto (legacy) nessun logo viene inventato: ritorna null
+ * (honest empty) — i loghi non si indovinano.
+ */
+export function pickTvdbLogo(artworks: readonly TvdbArtwork[]): TvdbArtwork | null {
+  const scored: { art: TvdbArtwork; score: number }[] = []
+  for (const art of artworks) {
+    if (!art.image) continue
+    const knownType = parseTvdbArtworkType(art.type)
+    if (knownType === null || !TVDB_LOGO_TYPE_IDS.has(knownType)) continue
+    scored.push({ art, score: art.score ?? 0 })
+  }
+  scored.sort((a, b) => b.score - a.score)
+  return scored[0]?.art ?? null
+}
+
+/**
+ * Normalizza la lingua TVDB onestamente: i codici sono ISO 639-2 a 3
+ * lettere (`eng/ita/spa`), null = neutrale alla lingua. Ritorna il codice
+ * in minuscolo così com'è o null per assente/vuoto; MAI "textless" e MAI
+ * mapping inventati 2↔3 lettere. La distinzione `includesText === false`
+ * (textless) resta sul suo campo, separata dalla lingua.
+ */
+export function normalizeTvdbLanguage(raw: unknown): string | null {
+  if (typeof raw !== "string") return null
+  const t = raw.trim().toLowerCase()
+  if (!t) return null
+  if (!/^[a-z]{2,3}$/.test(t)) return t
+  return t
+}
+
+const TVDB_SAFE_IMAGE_EXT_RE = /\.(jpe?g|png|webp)$/i
+const TVDB_KEY_QUERY_RE = /api[_-]?key|apikey|[^a-z]key$|^key[^a-z]|token|auth|secret|password|signature/i
+
+/**
+ * Normalizza un URL immagine TVDB a un `https://artworks.thetvdb.com/...`
+ * sicuro, oppure null (skip onesto, mai inventato).
+ *
+ * Accetta: assoluti https con host ESATTO `artworks.thetvdb.com` (niente
+ * sottodomini generici, niente lookalike `*.evil.com`), relativi `/...`
+ * (prefisso con ARTWORKS_BASE). Rifiuta: userinfo (`@`), porte esplicite,
+ * protocolli non-https, query con materiale chiave (`api_key/token/...`),
+ * estensioni non-raster (SVG/MP4/GIF/AVIF inclusi: il pipeline raster
+ * `validateImageBytes` li rifiuterebbe comunque al fetch), redirect
+ * off-host (non seguibili qui: l'URL emesso resta sempre sullo stesso
+ * host). Il controllo SSRF pieno (DNS/IP privati) resta al fetch
+ * (`safeFetchRemote`/`resolveAndCheckBlocked`), non a questa normalizzazione.
+ */
+export function normalizeTvdbImageUrl(raw: unknown): string | null {
+  if (typeof raw !== "string") return null
+  const clean = raw.trim()
+  if (!clean || /\s|[<>"\\]/.test(clean)) return null
+  // Explicit port on the artworks host (even the https default :443, which
+  // URL parsing normalizes away): rejected before parsing so `host:port`
+  // never slips through as the bare host.
+  if (/artworks\.thetvdb\.com\s*:/i.test(clean)) return null
+  try {
+    let u: URL
+    if (clean.startsWith("/") && !clean.startsWith("//")) {
+      u = new URL(`${ARTWORKS_BASE}${clean}`)
+    } else {
+      u = new URL(clean)
+    }
+    if (u.protocol !== "https:") return null
+    if (u.hostname.toLowerCase() !== "artworks.thetvdb.com") return null
+    if (u.username || u.password) return null
+    if (u.port) return null
+    if (u.search && TVDB_KEY_QUERY_RE.test(u.search)) return null
+    // Decoded param-name guard: URLSearchParams decodes % encoding, so bare
+    // `?key=`, case variants (`?KEY=`), and encoded forms (`?%6Bey=`) are
+    // all caught even though the raw-search regex above misses a bare
+    // `?key=` (its `[^a-z]key$` / `^key[^a-z]` anchors are defeated by the
+    // leading `?` / trailing `=`). Only names are tested here, so benign
+    // values stay accepted unless the pre-existing raw check already
+    // rejects them; the raw check above is preserved unchanged (strict).
+    for (const name of u.searchParams.keys()) {
+      if (name.toLowerCase() === "key" || TVDB_KEY_QUERY_RE.test(name)) return null
+    }
+    if (!TVDB_SAFE_IMAGE_EXT_RE.test(u.pathname)) return null
+    return `https://artworks.thetvdb.com${u.pathname}${u.search}`
+  } catch {
+    return null
+  }
+}
+
+function posterTypeFor(mediaType: "movie" | "tv"): number {
+  return mediaType === "movie" ? TVDB_MOVIE_POSTER_TYPE_ID : TVDB_SERIES_POSTER_TYPE_ID
+}
+
+function backdropTypeFor(mediaType: "movie" | "tv"): number {
+  return mediaType === "movie" ? TVDB_MOVIE_BACKDROP_TYPE_ID : TVDB_SERIES_BACKDROP_TYPE_ID
+}
+
+function logoTypeFor(mediaType: "movie" | "tv"): number {
+  return mediaType === "movie" ? TVDB_MOVIE_LOGO_TYPE_ID : TVDB_SERIES_LOGO_TYPE_ID
+}
+
+/**
+ * Raggruppa artwork TVDB per kind sul SOLO type id documentato per quel
+ * media (film 14/15/25, serie 2/3/23). Item con type ignoto/mancante o kind
+ * non supportato (season 7, clearart 22/24, banner, icon, artifact, MP4)
+ * sono omessi (mai indovinati in un gruppo). URL normalizzati
+ * (`normalizeTvdbImageUrl`), thumbnail non valida → null (l'item resta),
+ * lingua normalizzata onesta, metadati preservati (width/height/score/
+ * includesText + distinzione textless). Dedup per URL (tiene lo score
+ * massimo), ordinati per score desc, cappati (30/20/20). Pura e testabile.
+ */
+export function classifyTvdbArtworks(
+  artworks: readonly TvdbArtwork[],
+  mediaType: "movie" | "tv",
+): TvdbGallery {
+  const wantPoster = posterTypeFor(mediaType)
+  const wantBackdrop = backdropTypeFor(mediaType)
+  const wantLogo = logoTypeFor(mediaType)
+  const posters = new Map<string, TvdbGalleryImage>()
+  const backdrops = new Map<string, TvdbGalleryImage>()
+  const logos = new Map<string, TvdbGalleryImage>()
+  for (const art of artworks) {
+    const t = parseTvdbArtworkType(art.type)
+    if (t === null) continue
+    let bucket: Map<string, TvdbGalleryImage> | null = null
+    if (t === wantPoster) bucket = posters
+    else if (t === wantBackdrop) bucket = backdrops
+    else if (t === wantLogo) bucket = logos
+    else continue
+    const url = normalizeTvdbImageUrl(art.image)
+    if (!url) continue
+    const thumbRaw = typeof art.thumbnail === "string" && art.thumbnail ? normalizeTvdbImageUrl(art.thumbnail) : null
+    const entry: TvdbGalleryImage = {
+      url,
+      thumbnail: thumbRaw,
+      language: normalizeTvdbLanguage(art.language),
+      width: typeof art.width === "number" ? art.width : undefined,
+      height: typeof art.height === "number" ? art.height : undefined,
+      includesText: typeof art.includesText === "boolean" ? art.includesText : undefined,
+      score: typeof art.score === "number" ? art.score : undefined,
+      source: "tvdb",
+      type: t,
+    }
+    const prev = bucket.get(url)
+    if (!prev || (entry.score ?? 0) > (prev.score ?? 0)) bucket.set(url, entry)
+  }
+  const byScore = (a: TvdbGalleryImage, b: TvdbGalleryImage) => (b.score ?? 0) - (a.score ?? 0)
+  return {
+    posters: [...posters.values()].sort(byScore).slice(0, TVDB_GALLERY_POSTERS_CAP),
+    backdrops: [...backdrops.values()].sort(byScore).slice(0, TVDB_GALLERY_BACKDROPS_CAP),
+    logos: [...logos.values()].sort(byScore).slice(0, TVDB_GALLERY_LOGOS_CAP),
+  }
+}
+
+function isTvdbTimeoutError(e: unknown): boolean {
+  return e instanceof Error && (e.name === "AbortError" || e.name === "TimeoutError")
+}
+
+/**
+ * Strict TVDB artworks fetch for the editor gallery (thin shared fetch, no
+ * duplicated client): same host / 5s per-call cap (`TVDB_TIMEOUT_MS`), same
+ * `timedFetch` + `combineAbortSignals(signal, budget)` as the rescue path —
+ * the caller signal carries the aggregate budget (no stacked timeouts, no
+ * unbounded retries: one attempt per artworks fetch). Intentionally outside
+ * the shared fail-open breaker: gallery failures must surface as typed
+ * errors, never as silent empty lists.
+ *
+ * - Missing key throws `not_configured` (the route maps it to 503).
+ * - Auth is validated BEFORE serving the cache: a gallery cached under one
+ *   key must never mask a rejected key on the next request. A null token
+ *   throws `auth`, except with an open breaker (sustained upstream outage —
+ *   401s never trip it), which throws `upstream` instead.
+ * - Artworks 401/403 throw `auth`; 429/5xx/network throw `upstream`;
+ *   abort/timeout throw `timeout`; any other 4xx throws `upstream`
+ *   (never cached as empty).
+ * - Only 404 and a well-formed 200 with no artworks return `[]`
+ *   (confirmed absence, 10min cache). A 200 with malformed JSON, a missing
+ *   `data` envelope, or a non-array `data`/`data.artworks` is an UPSTREAM
+ *   failure and throws `upstream` without any cache write. Well-formed
+ *   arrays whose individual items are all malformed/unsupported legitimately
+ *   filter down to `[]` (the envelope itself was fine).
+ * - Successes (including confirmed-empty ones) land in `artworksCache`
+ *   (6h hits / 10min empty, neutral `media:tvdbId` key without secrets,
+ *   `validated: true`); failures are NEVER cached. Unvalidated legacy
+ *   rescue empties sharing the map are skipped, never trusted as absence.
+ *   The fail-open rescue (`getTvdbArtworks`) is unchanged for rendering.
+ */
+export async function getTvdbArtworksStrict(
+  mediaType: "movie" | "tv",
+  tvdbId: number,
+  apiKey: string,
+  signal?: AbortSignal,
+): Promise<TvdbArtwork[]> {
+  const cleanKey = (apiKey || "").trim()
+  if (!cleanKey) throw new TvdbArtworksError("not_configured", "TVDB API key is not configured")
+  if (!Number.isInteger(tvdbId) || tvdbId <= 0) return []
+  if (signal?.aborted) throw new TvdbArtworksError("timeout", "TVDB request aborted")
+
+  // Auth-before-cache: a neutral cache hit must never mask a bad key, so the
+  // token (key-hashed, 25d cache: cheap on hits) is resolved first. A null
+  // token with an open breaker means a sustained upstream outage (401s never
+  // trip the breaker), so it surfaces as `upstream`, not `auth`.
+  const token = await getTvdbToken(cleanKey, signal)
+  if (signal?.aborted) throw new TvdbArtworksError("timeout", "TVDB request aborted")
+  if (!token) {
+    if (isTvdbBreakerOpen()) throw new TvdbArtworksError("upstream", "TVDB login unavailable")
+    throw new TvdbArtworksError("auth", "TVDB login failed (invalid key or login unavailable)")
+  }
+
+  const cacheKey = `${mediaType}:${tvdbId}`
+  // Provenance guard: an unvalidated legacy fail-open empty (malformed JSON
+  // / wrong shape cached by the rescue path) is NOT confirmed absence, so it
+  // is skipped and refetched below. Only `validated` entries (proven
+  // envelope or 404) are trusted here.
+  const cached = artworksCache.get(cacheKey)
+  if (cached && Date.now() < cached.expiry && cached.validated) return cached.arts
+
+  const url = mediaType === "tv"
+    ? `${TVDB_API}/series/${tvdbId}/artworks`
+    : `${TVDB_API}/movies/${tvdbId}/extended`
+  let res: Response
+  try {
+    res = await timedFetch(url, {
+      headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+      signal: combineAbortSignals(signal, TVDB_TIMEOUT_MS),
+    })
+  } catch (e) {
+    if (isTvdbTimeoutError(e) || signal?.aborted) throw new TvdbArtworksError("timeout", "TVDB artworks request timed out")
+    log.warn("TVDB strict artworks network failure", { mediaType, tvdbId })
+    throw new TvdbArtworksError("upstream", "TVDB artworks unavailable")
+  }
+  if (res.status === 401 || res.status === 403) throw new TvdbArtworksError("auth", "TVDB rejected the API key")
+  if (res.status === 404) {
+    setBounded(artworksCache, cacheKey, { arts: [], expiry: Date.now() + CACHE_TTL_ARTWORKS_EMPTY, validated: true }, MAX_ARTWORK_ENTRIES)
+    return []
+  }
+  if (res.status === 429 || res.status >= 500) throw new TvdbArtworksError("upstream", `TVDB artworks responded with status ${res.status}`)
+  if (!res.ok) throw new TvdbArtworksError("upstream", `TVDB artworks responded with status ${res.status}`)
+  // Envelope validation: only a top-level array or `{ artworks: [] }` is a
+  // readable payload. Anything else (invalid JSON, null, missing `data`,
+  // non-array `data.artworks`) is an upstream failure, NOT confirmed-empty.
+  let raw: unknown[]
+  try {
+    const json = (await res.json()) as { data?: unknown } | null
+    const data = (json as { data?: unknown } | null)?.data
+    if (Array.isArray(data)) {
+      raw = data
+    } else if (data !== null && typeof data === "object" && Array.isArray((data as { artworks?: unknown }).artworks)) {
+      raw = (data as { artworks: unknown[] }).artworks
+    } else {
+      throw new TvdbArtworksError("upstream", "TVDB artworks returned an unrecognized payload")
+    }
+  } catch (e) {
+    if (e instanceof TvdbArtworksError) throw e
+    throw new TvdbArtworksError("upstream", "TVDB artworks returned invalid JSON")
+  }
+  const arts: TvdbArtwork[] = []
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue
+    const r = item as Record<string, unknown>
+    if (typeof r.image !== "string" || !r.image) continue
+    arts.push({
+      image: r.image,
+      thumbnail: typeof r.thumbnail === "string" ? r.thumbnail : null,
+      language: typeof r.language === "string" ? r.language : null,
+      width: typeof r.width === "number" ? r.width : undefined,
+      height: typeof r.height === "number" ? r.height : undefined,
+      score: typeof r.score === "number" ? r.score : undefined,
+      includesText: typeof r.includesText === "boolean" ? r.includesText : undefined,
+      type: parseTvdbArtworkType(r.type),
+    })
+  }
+  setBounded(
+    artworksCache,
+    cacheKey,
+    { arts, expiry: Date.now() + (arts.length > 0 ? CACHE_TTL_ARTWORKS : CACHE_TTL_ARTWORKS_EMPTY), validated: true },
+    MAX_ARTWORK_ENTRIES,
+  )
+  return arts
+}
+
+/**
+ * Gallery TVDB raggruppata (strict + classify): il compose che la route
+ * editor usa. Lancia `TvdbArtworksError` come `getTvdbArtworksStrict`;
+ * la classificazione non lancia mai (item malformati = skip).
+ */
+export async function getTvdbGallery(
+  mediaType: "movie" | "tv",
+  tvdbId: number,
+  apiKey: string,
+  signal?: AbortSignal,
+): Promise<TvdbGallery> {
+  return classifyTvdbArtworks(await getTvdbArtworksStrict(mediaType, tvdbId, apiKey, signal), mediaType)
 }
 
 export interface TvdbEpisodesResult {

@@ -32,8 +32,11 @@ function paramsOf(url: string): URLSearchParams {
 }
 
 // T3 macro-groups: overlay/quality start collapsed (bodies mounted + hidden).
-// Open disclosures before touching their controls; assertions unchanged.
+// Preset-first: groups live inside the Advanced disclosure (mounted +
+// hidden) — open it before the groups. Assertions unchanged.
 function openBadgeGroup(...ids: Array<"style" | "base" | "overlay" | "quality">) {
+  const adv = screen.getByTestId("badge-advanced-toggle")
+  if (adv.getAttribute("aria-expanded") !== "true") fireEvent.click(adv)
   for (const id of ids) {
     const t = screen.getByTestId(`badge-group-${id}-toggle`)
     if (t.getAttribute("aria-expanded") !== "true") fireEvent.click(t)
@@ -244,7 +247,7 @@ describe("card press/focus reports the family without mutating anything", () => 
     fireEvent.focus(infoSwitch)
     fireEvent.pointerDown(infoSwitch)
     fireEvent.focus(infoSwitch)
-    expect(screen.getByText("ui.badgeGenre")).toBeInTheDocument()
+    expect(within(screen.getByTestId("badge-group-base")).getByText("ui.badgeGenre")).toBeInTheDocument()
     expect(screen.getByTestId("family").textContent).toBe("info")
     expect(Number(screen.getByTestId("changes").textContent) - Number(mountCommits)).toBe(1)
     expect(spy.mock.calls.flat()).toEqual(["info", "info", "info", "info"])

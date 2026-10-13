@@ -75,7 +75,14 @@ export default function RootLayout({
           </a>
           <main id="main-content">{children}</main>
           <Toaster
-            position="bottom-right"
+            // Top-center: a bottom-right toast overlays the settings footer
+            // Save after a failed save (the dialog layer sits below the
+            // toaster layer), so pointer users cannot click retry. Top-center
+            // clears every footer while keeping toast actions/dismiss intact.
+            position="top-center"
+            // Sotto lg l'offset sotto-header vive in globals.css (regola
+            // canonica unica): qui restano solo position/duration, con il
+            // default desktop invariato.
             duration={3000}
             closeButton={false}
             richColors={false}

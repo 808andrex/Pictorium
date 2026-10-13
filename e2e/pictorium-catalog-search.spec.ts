@@ -33,7 +33,12 @@ test(filtered ? "filtered search exposes a silent page failure and retries it" :
   await search.press("Enter")
   if (filtered) await page.getByRole("button", { name: /^Film/ }).click()
   await page.getByRole("button", { name: "Mostra più risultati" }).click()
-  await page.getByRole("button", { name: "Riprova", exact: true }).click()
+  // Scope the retry to the search page-failure alert: a background
+  // custom-catalog sync failure raises a sonner warning toast whose action
+  // button carries the identical "Riprova" label (useCustomCatalogs), and an
+  // unscoped lookup clicks the toast instead of retrying the failed page
+  // (proven sweep flake: toast data-action click, no 4th search request).
+  await page.getByRole("alert").getByRole("button", { name: "Riprova", exact: true }).click()
   await expect(page.getByText("Recovered title", { exact: true })).toBeVisible()
   expect(pages).toEqual([1, 2, 2, 2, 2])
 })
@@ -98,4 +103,70 @@ test("a 400-title catalog loads thirty at a time and retries the next page", asy
   await expect(dialog.getByText("60 di 400 titoli", { exact: true })).toBeVisible()
   await expect(dialog.getByRole("button", { name: /^Paged title / })).toHaveCount(60)
   expect(offsets).toEqual([0, 30, 30])
+})
+
+test("search retry targets the page alert when a background sync toast also offers Riprova", async ({ page }) => {
+  // Deterministic reproduction of the serial-sweep flake: the custom-catalog
+  // background sync PUT fails with 429, so its sonner warning toast (action
+  // button also labelled "Riprova", see useCustomCatalogs) is in the DOM
+  // while the search page-2 failure alert is up. The retry click must hit
+  // the alert, never the toast.
+  const pages: number[] = []
+  let resolveSyncFail: (() => void) | null = null
+  const syncFailGate = new Promise<void>((resolve) => { resolveSyncFail = resolve })
+  let syncPutSeen = false
+  await page.route("**/api/defaults", async (route) => {
+    if (route.request().method() === "GET") {
+      // Real server state with diverged catalogs: forces the background sync
+      // PUT (lastSync !== local payload) without touching other defaults.
+      const res = await route.fetch()
+      const body = (await res.json()) as Record<string, unknown>
+      await route.fulfill({
+        response: res,
+        json: {
+          ...body,
+          customCatalogs: [],
+          disabledCatalogIds: [],
+          homeDisabledCatalogIds: [],
+          catalogOrder: [],
+          catalogRenames: {},
+          catalogShapes: {},
+        },
+      })
+      return
+    }
+    // Hold the sync PUT failure until the search exhausted its internal
+    // retries (3rd page-2 attempt): the toast then overlaps the page alert
+    // deterministically — event-gated on real requests, no fixed sleeps.
+    syncPutSeen = true
+    await syncFailGate
+    await route.fulfill({ status: 429, headers: { "Retry-After": "1" }, json: { error: "Rate limited" } })
+  })
+  await page.route("**/api/tmdb/search?**", async (route) => {
+    const n = Number(new URL(route.request().url()).searchParams.get("page"))
+    pages.push(n)
+    if (n === 2) {
+      const attempt = pages.filter((p) => p === 2).length
+      if (attempt >= 3) resolveSyncFail?.()
+      if (attempt <= 3) {
+        await route.fulfill({ status: 502, json: { error: "Temporary outage" } })
+        return
+      }
+    }
+    const movie = { id: 19994 + n, media_type: "movie", title: n === 1 ? "First title" : "Recovered title", poster_path: null }
+    await route.fulfill({ json: { results: [movie], total_pages: 2, total_results: 21 } })
+  })
+  await page.goto("/")
+  await expect(page.getByPlaceholder(/cerca/i)).toBeVisible({ timeout: 30_000 })
+  const search = page.getByPlaceholder(/cerca/i)
+  await search.fill("audit")
+  await search.press("Enter")
+  await page.getByRole("button", { name: "Mostra più risultati" }).click()
+  // Both failure surfaces up at once: the page alert AND the sync toast.
+  await expect(page.getByRole("alert")).toBeVisible()
+  await expect(page.getByRole("button", { name: "Riprova", exact: true })).toHaveCount(2)
+  await page.getByRole("alert").getByRole("button", { name: "Riprova", exact: true }).click()
+  await expect(page.getByText("Recovered title", { exact: true })).toBeVisible()
+  expect(syncPutSeen).toBe(true)
+  expect(pages).toEqual([1, 2, 2, 2, 2])
 })

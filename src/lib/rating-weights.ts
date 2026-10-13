@@ -7,10 +7,16 @@
  * qui invece che in `ratings.ts` perché `ratings.ts` importa la cache/KV
  * (ioredis): se questa foglia importasse `ratings.ts` a runtime, il bundle
  * browser includerebbe ioredis e la build Turbopack fallirebbe con
- * "Can't resolve 'net'/'tls'/'dns'". `ratings.ts` re-esporta la costante per
- * compatibilità (i test di route usano importOriginal). `computeVote` è
+ * "Can't resolve 'net'/'tls'/'dns'". `ratings.ts` re-esporta costante e parser
+ * per compatibilità (i test di route usano importOriginal). `computeVote` è
  * l'unico choke point usato da poster route, details route e client (stesso
  * numero ovunque = Golden Rule).
+ *
+ * `SUPPORTED_RATING_SOURCES` + `parseRatingSources`/`resolveRatingSources`
+ * vivono qui (e non in `ratings.ts`) per lo stesso motivo: `poster-config`
+ * (importato dai settings `"use client"`) risolve `rsrc` a runtime, e un
+ * import runtime da `ratings.ts` trascinerebbe `node:crypto`/cache/KV nel
+ * bundle browser. `ratings.ts` li ri-esporta (route e hardening invariati).
  *
  * NOTA sui voti-per-fonte: il payload MDBList NON riporta conteggi voti per
  * fonte (verificato live: ogni rating ha solo source/value/score) — quindi
@@ -18,10 +24,62 @@
  * (renormalizzazione), mai trascinamento verso il basso.
  */
 
-import type { AggregatedRatings, RatingSource } from "./ratings"
+import type { AggregatedRatings } from "./ratings"
+
+export const SUPPORTED_RATING_SOURCES = [
+  "imdb",
+  "tmdb",
+  "mdblist",
+  "tomatoes",
+  "popcorntime",
+  "letterboxd",
+  "metacritic",
+  "metacriticuser",
+  "trakt",
+  "simkl",
+  "filmweb",
+  "filmwebcritics",
+  "rogerebert",
+  "mal",
+  "anilist",
+  "kitsu",
+] as const
+
+export type RatingSource = (typeof SUPPORTED_RATING_SOURCES)[number]
 
 /** Fonti default del voto medio (imdb/tmdb). Definita qui (foglia client-safe), re-esportata da ratings.ts. */
 export const DEFAULT_RATING_SOURCES: RatingSource[] = ["imdb", "tmdb"]
+
+/**
+ * Parsing unico del parametro `rsrc` (Fix D): split "," → trim → lowercase →
+ * whitelist SUPPORTED_RATING_SOURCES. Ritorna null se il parametro è assente
+ * (il chiamante applica la catena dei fallback), [] se presente ma senza
+ * fonti valide. Unica implementazione usata da poster route, poster-config e
+ * tmdb details route (stesso numero ovunque = Golden Rule).
+ */
+export function parseRatingSources(raw: string | null | undefined): string[] | null {
+  if (raw === null || raw === undefined) return null
+  const valid = SUPPORTED_RATING_SOURCES as readonly string[]
+  return raw.split(",").map((s) => s.trim().toLowerCase()).filter((s) => valid.includes(s))
+}
+
+/**
+ * Catena canonica delle fonti voto: query `rsrc` > fallbacks (mapping >
+ * config token > server defaults) > DEFAULT_RATING_SOURCES. Un array vuoto
+ * (nessuna fonte / solo garbage) vale come unset e fa cadere al fallback
+ * successivo — mai media su zero fonti.
+ */
+export function resolveRatingSources(
+  query: string | null | undefined,
+  ...fallbacks: (readonly string[] | null | undefined)[]
+): string[] {
+  const parsed = parseRatingSources(query)
+  if (parsed && parsed.length > 0) return parsed
+  for (const fb of fallbacks) {
+    if (fb && fb.length > 0) return fb.map((s) => s.toLowerCase())
+  }
+  return [...DEFAULT_RATING_SOURCES]
+}
 
 /** Metadati UI delle fonti voto (id + label i18n + emoji). Pura, definita qui per gli editor client. */
 export const UI_RATING_SOURCES: { id: RatingSource; labelKey: string; emoji: string }[] = [

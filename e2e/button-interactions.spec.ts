@@ -143,15 +143,22 @@ test.describe("Button interactions and immediate updates", () => {
     await page.goto("/")
     await expect(page.getByPlaceholder(/cerca/i)).toBeVisible({ timeout: 30_000 })
 
-    // Open settings panel
+    // Open settings panel (default Preset tab): Badge content lives on the
+    // Badge tab, so navigate there before asserting it.
     const settingsBtn = page.getByRole("button", { name: /Impostazioni/i }).first()
     await settingsBtn.click()
-    await expect(page.getByText(/Stile badge predefinito/i).first()).toBeVisible()
+    await page.getByRole("tab", { name: "Badge", exact: true }).click()
+    // Scope to the visible tabpanel: the inactive sections stay mounted +
+    // hidden with their own copies of this heading earlier in DOM order.
+    const badgePanel = page.getByRole("tabpanel", { name: "Badge" })
+    await expect(badgePanel).toBeVisible()
+    await expect(badgePanel.getByText(/Stile badge predefinito/i)).toBeVisible()
 
-    // Test Badge Style selector buttons within the 6-col grid
-    const styleGrid = page.locator(".grid.grid-cols-3.sm\\:grid-cols-5").first()
-    const pillBtn = styleGrid.getByRole("button", { name: "Pill" })
-    const bordoBtn = styleGrid.getByRole("button", { name: "Bordo" })
+    // Test Badge Style selector buttons (genre style grid: 7 options; the
+    // grid column count follows the option count in BadgeStyleSelector).
+    const genreWrap = badgePanel.getByTestId("badge-genre-style-wrap")
+    const pillBtn = genreWrap.getByRole("button", { name: "Pill" })
+    const bordoBtn = genreWrap.getByRole("button", { name: "Bordo" })
 
     await pillBtn.click()
     await expect(pillBtn).toHaveClass(/bg-accent-orange\/15/)
@@ -160,7 +167,8 @@ test.describe("Button interactions and immediate updates", () => {
     await expect(bordoBtn).toHaveClass(/bg-accent-orange\/15/)
     await expect(pillBtn).not.toHaveClass(/bg-accent-orange\/15/)
 
-    // Test Toggles (switch)
+    // Test Toggles (switch): the genre toggle lives on the Informazioni tab.
+    await page.getByRole("tab", { name: "Informazioni", exact: true }).click()
     const genreToggle = page.getByRole("switch", { name: "Genere" }).first()
     const initialGenreChecked = await genreToggle.getAttribute("aria-checked")
     await genreToggle.click()
@@ -188,8 +196,9 @@ test.describe("Button interactions and immediate updates", () => {
 
     // Test rank side control: position radios Sinistra/Destra (defaults-only —
     // shared by the ribbon AND the Numero numeral, T5 RankingAppearanceSelector).
-    // T3 macro-groups: Overlay starts collapsed; expand for rank edits.
-    await page.locator(".settings-panel:visible").first().getByTestId("badge-group-overlay-toggle").click()
+    // The rank appearance lives on the Classifiche tab (macro-groups are
+    // always open in settings: no disclosure toggle).
+    await page.getByRole("tab", { name: "Classifiche", exact: true }).click()
     // Select Numero first so the Posizione row is reachable, then flip sides.
     const rankGroup = page.getByRole("radiogroup", { name: "Classifica" })
     await rankGroup.getByRole("radio", { name: "Numero" }).click()
@@ -204,8 +213,8 @@ test.describe("Button interactions and immediate updates", () => {
     await expect(leftSide).toHaveAttribute("aria-checked", "true")
     await expect(rightSide).toHaveAttribute("aria-checked", "false")
 
-    // Switch to Preferences tab
-    await page.getByRole("tab", { name: /Preferenze|Preferences/i }).click()
+    // Switch to Preferences (secondary nav: compact button, never a tab).
+    await page.getByRole("button", { name: "Preferenze", exact: true }).click()
 
     // Test Episode metadata source buttons
     const episodeSourceSection = page.locator(".flex.gap-2").filter({ hasText: "TMDB" })
@@ -235,12 +244,14 @@ test.describe("Button interactions and immediate updates", () => {
     // Switch back to Badge tab (il tab "Stile" non esiste più: rinominato Badge)
     await page.getByRole("tab", { name: /Badge/i }).click()
 
-    // T4 footer: autosave status truth + Fine primary (no SyncNow button).
-    // Autosave already synced the toggles above; the live region confirms it
-    // and Fine closes the dialog. Scoped to the visible panel: desktop dialog
-    // and mobile panel both mount the shared footer.
-    await expect(page.locator(".settings-panel:visible").first().getByTestId("defaults-sync-status")).toContainText(/Sincronizzato/i)
-    await page.getByRole("button", { name: "Fine", exact: true }).click()
+    // T4 footer (staged-session era: no Fine button, no autosave). The
+    // toggles above only staged the draft: the status names it, the single
+    // global Save persists it, and Chiudi closes the clean dialog. Scoped to
+    // the visible panel: desktop dialog and mobile panel share the footer.
+    await expect(page.locator(".settings-panel:visible").first().getByTestId("settings-save-status")).toContainText(/Modifiche non salvate/i)
+    await page.getByTestId("settings-save").click()
+    await expect(page.locator(".settings-panel:visible").first().getByTestId("settings-save-status")).toContainText(/Sincronizzato/i)
+    await page.getByRole("button", { name: "Chiudi" }).first().click()
     await expect(page.getByRole("dialog")).toHaveCount(0)
   })
 
@@ -277,8 +288,9 @@ test.describe("Button interactions and immediate updates", () => {
     await expect(badgeTab).toHaveAttribute("aria-selected", "true")
     await expect(page.getByText(/Stile badge/i).first()).toBeVisible()
 
-    // Inside Badge tab: single rank appearance (Nastro/Numero/Badge + variants,
-    // T5 RankingAppearanceSelector — no separate style grid, no per-title side).
+    // Inside Badge tab: unified rank presentation (Nastro/Numero/Badge +
+    // Fresh/Card, T5 RankingAppearanceSelector — no separate style grid, no
+    // per-title side). All five are exclusive radios with identical behavior.
     const seen: string[] = []
     page.on("request", (req) => {
       const url = req.url()
@@ -286,9 +298,21 @@ test.describe("Button interactions and immediate updates", () => {
     })
     const rankGroup = page.getByRole("radiogroup", { name: "Classifica" })
     await expect(rankGroup).toBeVisible()
-    await expect(rankGroup.getByRole("radio")).toHaveCount(3)
+    const presentationNames = ["Nastro", "Numero", "Badge", "Fresh", "Card"]
+    await expect(rankGroup.getByRole("radio")).toHaveCount(5)
+    for (const name of presentationNames) {
+      await expect(rankGroup.getByRole("radio", { name, exact: true })).toBeVisible()
+    }
     // Arrange verificato (mai assunto): default+ribbon eredita Nastro.
     await expect(rankGroup.getByRole("radio", { name: "Nastro" })).toHaveAttribute("aria-checked", "true")
+    // Exclusivity over all five: each pick checks exactly itself.
+    for (const name of presentationNames) {
+      await rankGroup.getByRole("radio", { name, exact: true }).click()
+      const states = await rankGroup
+        .getByRole("radio")
+        .evaluateAll((els) => els.map((el) => el.getAttribute("aria-checked")))
+      expect(states).toEqual(presentationNames.map((n) => String(n === name)))
+    }
     // Side is defaults-only: never rendered per-title (not persistible).
     await expect(page.getByRole("radiogroup", { name: "Posizione" })).toHaveCount(0)
     // Badge appearance exposes the 6 centered variants; back to Numero.

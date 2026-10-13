@@ -5,45 +5,28 @@ import { ChevronDown, Sparkles } from "lucide-react"
 import { useT } from "@/lib/contexts/TranslationContext"
 import { usePosterEditor } from "@/lib/contexts/PosterEditorContext"
 import { usePSelector } from "@/lib/context"
+import { requestSettingsTab } from "@/lib/settings-tab"
 import { http } from "@/lib/http"
-import {
-  APPLE_PRESET_LABEL,
-  APPLE_VISUAL_DEFAULTS,
-  BETTER_POSTER_PRESET_LABEL,
-  BETTER_POSTER_VISUAL_DEFAULTS,
-  RPDB_PRESET_LABEL,
-  RPDB_VISUAL_DEFAULTS,
-} from "@/lib/default-visual-presets"
+import { READY_PRESET_ENTRIES } from "@/lib/ready-visual-presets"
 import type { VisualPreset, VisualPresetShape, VisualPresetValues } from "@/lib/visual-presets"
 
 const endpoint = "/api/defaults/presets"
-
-interface BuiltInPreset {
-  label: string
-  descKey: string
-  values: VisualPresetValues
-}
-
-/**
- * Built-in full looks (same snapshots as the global Badge tab): BetterPoster,
- * RPDB and Apple. Reuses the shared labels/descriptions; applying here goes
- * through the per-title action, never the global-defaults one.
- */
-const BUILT_INS: BuiltInPreset[] = [
-  { label: BETTER_POSTER_PRESET_LABEL, descKey: "ui.configPresetBetterPosterDesc", values: BETTER_POSTER_VISUAL_DEFAULTS },
-  { label: RPDB_PRESET_LABEL, descKey: "ui.configPresetRpdbDesc", values: RPDB_VISUAL_DEFAULTS },
-  { label: APPLE_PRESET_LABEL, descKey: "ui.configPresetAppleDesc", values: APPLE_VISUAL_DEFAULTS },
-]
 
 /**
  * PerTitlePresetChooser — compact quick-preset disclosure for single-poster
  * customization (EditView, above the tab-specific controls).
  *
- * Closed by default; expanding shows the built-in full looks plus the saved
+ * Closed by default and keyboard openable; expanding shows the seven
+ * canonical ready looks (same source as the global Preset-tab gallery:
+ * Apple/BetterPoster/RPDB + Essential/Ratings/Full + Fresh) plus the saved
  * personal presets for the current orientation. Every apply goes through
  * `ed.applyPerTitleVisualPreset(values, selectedLogo)`: current title only,
  * no global defaults change, no autosave — the normal Save persists the
- * change. Deliberately NO active-preset highlight (no full live-value
+ * change. The projection owns the title's full visual recipe (badge visuals
+ * + layout/scope + standalone extra style, canonically normalized for legacy
+ * snapshots); the age/classification badge stays global-only (the mapping
+ * carries no age keys — presets here never change it, said explicitly
+ * below). Deliberately NO active-preset highlight (no full live-value
  * comparison here) and no preset management (save/import/export live in the
  * global Defaults panels).
  *
@@ -57,11 +40,14 @@ export function PerTitlePresetChooser({ shape = "portrait" }: { shape?: VisualPr
   const { t } = useT()
   const ed = usePosterEditor()
   const selectedLogo = usePSelector((v) => v.selectedLogo)
+  const setSettingsOpen = usePSelector((v) => v.setSettingsOpen)
   const userId = usePSelector((v) => v.currentUserId)
   const [presets, setPresets] = useState<VisualPreset[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(false)
-  // Collapsible disclosure, closed by default. Body unmounts while closed.
+  // Collapsible disclosure, closed by default. Body unmounts while closed;
+  // the saved list still loads lazily on first open only, with all
+  // orientation/user guards intact.
   const [isOpen, setIsOpen] = useState(false)
   const bodyId = useId()
   // Live targets for async guards: closures capture shape+user at call time,
@@ -183,19 +169,32 @@ export function PerTitlePresetChooser({ shape = "portrait" }: { shape?: VisualPr
       {isOpen && (
       <div id={bodyId} className="space-y-3">
         <p className="text-[11px] text-muted">{t("ui.perTitlePresetsHint")}</p>
+        {/* Honest scope: this title only, nothing global; save to persist. */}
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <p data-testid="per-title-scope-note" className="text-[11px] text-muted italic">{t("ui.perTitleScopeNote")}</p>
+          <button
+            type="button"
+            data-testid="per-title-go-global"
+            onClick={() => { requestSettingsTab("badge"); setSettingsOpen(true) }}
+            className="text-[11px] font-semibold text-accent-orange hover:underline cursor-pointer"
+          >
+            {t("ui.perTitleGoGlobal")}
+          </button>
+        </div>
         <div className="space-y-2">
           <p className="text-[11px] font-semibold text-zinc-300">{t("ui.configPresetTitle")}</p>
+          <p data-testid="per-title-age-note" className="text-[11px] text-muted italic">{t("ui.perTitleAgeGlobalNote")}</p>
           <div className="flex flex-wrap gap-3 pt-1">
-            {BUILT_INS.map((preset) => (
+            {READY_PRESET_ENTRIES.map((preset) => (
               <button
-                key={preset.label}
+                key={preset.id}
                 type="button"
                 title={t(preset.descKey)}
-                onClick={() => applyPreset(preset.values)}
+                onClick={() => applyPreset(preset.desired(shape === "portrait"))}
                 className="flex items-center gap-2 max-w-full min-h-[44px] rounded-2xl border border-white/10 bg-linear-to-b from-white/[0.06] to-white/[0.02] py-2 pl-3.5 pr-5 text-zinc-300 shadow-sm hover:border-white/25 hover:text-white transition-colors cursor-pointer"
               >
                 <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-zinc-500" />
-                <span className="max-w-[200px] truncate">{preset.label}</span>
+                <span className="max-w-[200px] truncate">{t(preset.labelKey)}</span>
               </button>
             ))}
           </div>

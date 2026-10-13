@@ -193,9 +193,9 @@ async function coverAll(
   firstExit: "start" | "coverage",
 ): Promise<{ steps: number; visited: string[]; rounds: number; distinct: number; end: LiveHandle }> {
   // Fresh identity registry per phase. Round 1 is a single clean live cycle;
-  // a missed node (focus-caused insertion behind the pointer: mobile preview
-  // sits above the controls) is picked up by continuing to walk instead of
-  // restarting, which would re-trigger the unmount/remount chase.
+  // a missed node (a focus-caused insertion behind the pointer, desktop
+  // only: the static preview chip) is picked up by continuing to walk
+  // instead of restarting, which would re-trigger the unmount/remount chase.
   await page.evaluate(() => {
     ;(window as unknown as { __f2seen: Element[] }).__f2seen = []
   })
@@ -254,9 +254,18 @@ for (const viewport of [
 
     const dialog = page.getByRole("dialog", { name: "Configura tutti i poster" }).filter({ visible: true })
     await expect(dialog).toBeVisible()
-    await expect(dialog.getByRole("button", { name: "Fine", exact: true })).toBeVisible()
+    await expect(dialog.getByRole("button", { name: "Salva modifiche", exact: true })).toBeVisible()
     // T4 footer live region: exactly one status (the footer one, no stray toasts).
     await expect(dialog.getByRole("status")).toHaveCount(1)
+    // Mount focus lands on the initial close control. The traversal itself
+    // runs on the Badge tab: the family preview reset (mounted by focusing
+    // a family card) only exists off the default Preset tab.
+    const mountFirst = dialog.locator(
+      'button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    ).filter({ visible: true }).first()
+    await expect(mountFirst).toBeFocused()
+    if (viewport.width < 640) await dialog.locator("#mobile-settings-category").selectOption("badge")
+    else await dialog.getByRole("tab", { name: "Badge", exact: true }).click()
     // Async server-defaults hydration remounts conditional rows (rank
     // appearance/variant/side): start only after the first preview round-trip
     // committed them. Assertions below traverse the full order in both
@@ -277,7 +286,8 @@ for (const viewport of [
     ).filter({ visible: true })
     const initialCount = await controls.count()
     expect(initialCount).toBeGreaterThan(3)
-    await expect(controls.first()).toBeFocused()
+    // Re-anchor: pointer tab navigation moves focus off the close control.
+    await controls.first().focus()
     const start = await controls.first().elementHandle()
     expect(start).not.toBeNull()
     if (start === null) throw new Error("initial tabbable resolved to null")
@@ -292,14 +302,24 @@ for (const viewport of [
     // reset button mounts behind the pointer, so a second round picks it up.
     const forward = await coverAll(page, controls, start, start, "forward", cap, "start")
     expect(forward.rounds).toBeLessThanOrEqual(2)
-    // The family preview reset is a legitimate focus-caused insertion: pin
-    // the single +1 and require the new button to be keyboard-reachable via
-    // native Tab (a regression must not hide the mutation).
-    expect(await controls.count()).toBe(initialCount + 1)
-    expect(forward.distinct).toBe(initialCount + 1)
-    await expect(dialog.getByTestId("defaults-preview-reset-family")).toBeVisible()
-    expect(forward.visited.some((d) => d.includes("defaults-preview-reset-family"))).toBe(true)
-    expect(forward.visited.some((d) => d.includes("Fine"))).toBe(true)
+    // The family preview reset is a legitimate focus-caused insertion on
+    // desktop (static preview chip); the mobile floating preview renders no
+    // chip by design (DefaultsPosterPreview floating branch), so the list
+    // never grows there. Pin the per-viewport growth exactly, and require
+    // the new button to be keyboard-reachable via native Tab on desktop.
+    const expectedGrowth = viewport.width < 640 ? 0 : 1
+    expect(await controls.count()).toBe(initialCount + expectedGrowth)
+    expect(forward.distinct).toBe(initialCount + expectedGrowth)
+    if (expectedGrowth === 0) {
+      await expect(dialog.getByTestId("defaults-preview-reset-family")).toHaveCount(0)
+      expect(forward.visited.some((d) => d.includes("defaults-preview-reset-family"))).toBe(false)
+    } else {
+      await expect(dialog.getByTestId("defaults-preview-reset-family")).toBeVisible()
+      expect(forward.visited.some((d) => d.includes("defaults-preview-reset-family"))).toBe(true)
+    }
+    // Staged-session era (no Fine button): the footer Save is disabled while
+    // the draft is clean, so it cannot be a traversal stop above. Its
+    // keyboard reachability is proven explicitly below once dirty.
 
     // Backward: every Shift+Tab lands on the exact live-previous node,
     // including the wrap from the initial close control to the footer. The
@@ -310,10 +330,47 @@ for (const viewport of [
     const backward = await coverAll(page, controls, forward.end, start, "backward", cap, "coverage")
     expect(backward.rounds).toBe(1)
     expect(backward.distinct).toBeGreaterThanOrEqual(await controls.count())
-    expect(backward.visited.some((d) => d.includes("Fine"))).toBe(true)
 
+    // Explicit Save keyboard reachability: back to the Preset tab, dirty the
+    // draft with one staged ready-preset apply (pointer; staged only, never
+    // saved), re-anchor focus (the tab switch drops it), then walk native
+    // Tab until the enabled Save owns focus.
+    if (viewport.width < 640) await dialog.locator("#mobile-settings-category").selectOption("preset")
+    else await dialog.getByRole("tab", { name: "Preset", exact: true }).click()
+    const inactivePreset = dialog.getByTestId("poster-style-cards").locator('button[aria-pressed="false"]').first()
+    await inactivePreset.click()
+    const saveBtn = dialog.getByTestId("settings-save")
+    await expect(saveBtn).toBeEnabled()
+    const saveHandle = await saveBtn.elementHandle()
+    if (saveHandle === null) throw new Error("save button resolved to null")
+    // Re-anchor: the tab switch + staged apply drop browser focus, so start
+    // the native walk from the first stop. Every step below stays native Tab.
+    await controls.first().focus()
+    const anchor = await controls.first().elementHandle()
+    if (anchor === null) throw new Error("anchor resolved to null")
+    let current: LiveHandle = anchor
+    for (let i = 0; i < cap; i++) {
+      const total = await controls.count()
+      const currentIndex = await controls.evaluateAll(
+        (nodes, active) => nodes.indexOf(active as unknown as HTMLElement),
+        current,
+      )
+      expect(currentIndex).toBeGreaterThanOrEqual(0)
+      const next = await controls.nth((currentIndex + 1) % total).elementHandle()
+      expect(next).not.toBeNull()
+      if (next === null) throw new Error("live tabbable resolved to null")
+      await assertNativeStep(page, next, "forward")
+      current = next
+      const saveFocused = await saveHandle.evaluate((node) => document.activeElement === node)
+      if (saveFocused) break
+    }
+    await expect(saveBtn).toBeFocused()
+
+    // Dirty Escape guards instead of closing: discard the staged draft.
     await page.keyboard.press("Escape")
-    await expect(dialog).toBeHidden()
+    await expect(page.getByTestId("settings-dirty-dialog")).toBeVisible({ timeout: 10_000 })
+    await page.getByTestId("settings-dirty-discard").click()
+    await expect(dialog).toBeHidden({ timeout: 10_000 })
     await expect(trigger).toBeFocused()
   })
 }

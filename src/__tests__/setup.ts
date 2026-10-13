@@ -185,6 +185,12 @@ const itDict: Record<string, string> = {
   "ui.configPresetRpdb": "Stile RPDB",
   "ui.configPresetApple": "Stile Apple",
   "ui.configPresetUnofficialNote": "Preset non ufficiali, senza affiliazione ai marchi citati.",
+  "ui.settingsSaveAndClose": "Salva e chiudi",
+  "ui.settingsSaveAndContinue": "Salva e continua",
+  "ui.settingsExitWithoutSaving": "Esci senza salvare",
+  "ui.settingsUnsavedTitle": "Modifiche non salvate",
+  "ui.settingsUnsavedHint": "Uscire senza salvare? Le modifiche andranno perse.",
+  "ui.settingsContinueEditing": "Continua a modificare",
 }
 
 function mockT(key: string, params?: Record<string, string | number>): string {

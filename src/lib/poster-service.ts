@@ -18,9 +18,15 @@ import {
   isValidHex,
   BadgeRender,
   PosterComposite,
+  topBandMeanRGB,
+  bottomBandMeanRGB,
+  effectiveTopBackgroundLuminance,
+  effectiveBottomBackgroundLuminance,
+  adaptiveAccentHexForBand,
 } from "./poster-render-helpers"
 import { LAND_W, LAND_H } from "./image-utils"
 import { normalizeAutomaticAccentHex } from "./accent-color"
+import type { EffectiveAccentMeta } from "./effective-accent"
 import { renderGenreBadge, renderRankingBadge, renderExtraBadge, renderQualityBadge, renderQualityTierBadge, renderQualityKnockoutBadge, renderComingSoonRibbon, comingSoonRibbonLayout, renderSVG, buildCustomPresetBadgeSVG, buildHousePresetBadgeSVG } from "./svg-badge"
 import { buildLogoScrim, logoContrast, logoInkLuminance, logoScrimStrength, posterLogoZoneLuminance } from "./logo-contrast"
 import { renderFirstMatchingNetworkLogoBadge, renderFirstMatchingNetworkRawBadge, renderFirstMatchingNetworkLogoBadgeHybrid, renderFirstMatchingNetworkRawBadgeHybrid, type NetworkCandidate } from "./network-svgs"
@@ -55,6 +61,7 @@ import { composeFreshOverlay, composeFreshOverlaySplit, isEffectiveFreshLayout, 
 import { renderCardPoster, aggregateCardRating, cardMetadataBand } from "./card-layout"
 import { cardLayoutGeometry } from "./card-layout-geometry"
 import { isEffectiveCardLayout, type CardSkin } from "./card-layout-skins"
+import { resolveProviderGlassAccent } from "./provider-brand-palette"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -331,6 +338,15 @@ export interface GenerationInput {
    * Solo numeri, nessun dato sensibile. Assente = nessun overhead.
    */
   onNetworkGeometry?: ((geo: NetworkGeometry | null) => void) | null
+  /**
+   * Collettore una-tantum dei fill accent EFFETTIVAMENTE dipinti sui badge
+   * (display sync del picker, ramo `?accentmeta=1`): invocato una sola volta
+   * per render riuscito, con gli stessi fill già passati ai builder (Std per
+   * gli slot standard, adaptive condiviso per gli house preset attivi, null
+   * per gli slot che non dipingono alcun accent automatico). Puro osservatore:
+   * non altera pixel, chiavi o cache. Assente = nessun overhead.
+   */
+  onAccentMeta?: ((meta: EffectiveAccentMeta) => void) | null
   sd: ServerDefaults
   accentOverride: { genreColor: string; rankColor: string } | null
   /** Pre-resolved IMDb Top 250 membership. Falls back gracefully when falsy. */
@@ -989,13 +1005,17 @@ export async function resolveBadgeColors(
 }
 
 /**
- * Card provider-glass brand accent (P5 correction): an explicit manual accent
- * (`ac=` query or saved per-title mapping, via `accentOverride`) wins when
- * present — that is the existing control semantics (the user's explicit color
- * choice), so it tints the glass. Otherwise the tint derives from the
- * ALREADY-RESOLVED original brand bitmap (`networkLogoForLayout`, raw
- * provider colors passed to the Card below — no new fetch, no copied
+ * Card NON-provider-glass brand accent (P5 correction): an explicit manual
+ * accent (`ac=` query or saved per-title mapping, via `accentOverride`)
+ * wins when present — that is the existing control semantics (the user's
+ * explicit color choice), so it tints the glass. Otherwise the tint derives
+ * from the ALREADY-RESOLVED original brand bitmap (`networkLogoForLayout`,
+ * raw provider colors passed to the Card below — no new fetch, no copied
  * per-provider catalog matcher): bounded sampling of opaque pixels only
+ * (alpha >= 200, so the raw badge's soft drop-shadow halo never votes).
+ * NOTE: `provider-glass` no longer uses this sampler — it resolves from
+ * the fixed brand palette by identity (`resolveProviderGlassAccent` in
+ * `provider-brand-palette.ts`, brand key from the original match record).
  * (alpha >= 200, so the raw badge's soft drop-shadow halo never votes).
  * A white / achromatic brand (all-white wordmarks, monochrome marks, TMDB
  * logo fallbacks which render white) carries no brand hue and falls back to
@@ -1195,6 +1215,45 @@ export function resolveTopBadgeStyle(params: {
 }): RankingBadgeStyle {
   if (params.topBadgeType === "extra") return normalizeExtraBadgeStyleForRender(params.extraBadgeStyle) ?? params.rankingBadgeStyle
   return params.rankingBadgeStyle
+}
+
+/**
+ * Whether a genre badge style actually paints the accent color. Only
+ * `colored` fills with the accent (`buildHouseGenreSvg`); every other style
+ * (shadow/pill/bar/minimal/vetro/bordo) ignores it, so those styles must
+ * neither trigger scene-tint extraction / band sampling nor carry the
+ * adaptive tint in their badge cache key.
+ */
+export function genreBadgeConsumesAccent(style: BadgeStyle | string | null | undefined): boolean {
+  return style === "colored"
+}
+
+/**
+ * Whether the effective top badge actually paints the accent. Mirrors the
+ * render call sites below (`renderExtraBadge` / `renderRankingBadge`):
+ * - `colored` always paints (ribbon, or the degraded default via accentFill);
+ * - `corner` always paints the flat accent pill (rank and extra);
+ * - `number` paints only for extra badges (degraded to the corner pill);
+ *   rank numerals are bare digits and ignore the accent;
+ * - `default` paints only with `accentFill` (colored degraded by ribbon off);
+ * - every other style (pill/bordo/vetro/netflix/netflix-color) ignores it.
+ * The extra `follow-rank`/absent sentinel resolves through the same legacy
+ * `rs` fallback as the renderer, so the gate never invents a new path.
+ */
+export function topBadgeConsumesAccent(params: {
+  readonly topBadgeType: "rank" | "extra" | null | undefined
+  readonly rankingBadgeStyle: RankingBadgeStyle
+  readonly extraBadgeStyle?: ExtraBadgeStyle | ExtraBadgeFollowRank | string | null
+  readonly rankingBadgeAccent?: boolean
+}): boolean {
+  const { topBadgeType, rankingBadgeStyle, rankingBadgeAccent } = params
+  const eff: string = topBadgeType === "extra"
+    ? (normalizeExtraBadgeStyleForRender(params.extraBadgeStyle) ?? (rankingBadgeAccent ? "colored" : rankingBadgeStyle))
+    : rankingBadgeStyle
+  if (eff === "colored" || eff === "corner") return true
+  if (eff === "number") return topBadgeType === "extra"
+  if (eff === "default") return topBadgeType === "rank" && rankingBadgeAccent === true
+  return false
 }
 
 /**
@@ -1404,8 +1463,8 @@ export async function generatePosterBuffer(input: GenerationInput): Promise<Buff
     blurEnabled, blurHeight, blurIntensity, blurFade, blurDarkness,
     // Default 20 quando il chiamante non lo passa (test diretti, vecchi adapter).
     tintStrength = 20,
-    // Ombra superiore: default 50 = catena di default (test diretti inclusi).
-    topShade = 50,
+    // Ombra superiore: default 80 = catena di default (test diretti inclusi).
+    topShade = 80,
     badgesEnabled, rankingEnabled, genreName, voteAverage, badgeStyle,
     rankingBadgeStyle, extraBadgeStyle, badgeGenre, badgeYear, badgeRating, badgeQuality, quality,
     qualityBadgeStyle, videoFormats,
@@ -1435,7 +1494,7 @@ export async function generatePosterBuffer(input: GenerationInput): Promise<Buff
     tvType, tvStatus, releaseDate, firstAirDate,
     lastAirDate, seasonCount, originCountries,
     wikidataResult, tmdbKeywords, locale, t,
-    qLabel, queryExtra, qNetLogo, networkLogo, networkLogoPosition = "auto", networkLogoFollowTitle, networkFixedX, networkFixedY, onNetworkGeometry, sd, accentOverride, imdbTop250,
+    qLabel, queryExtra, qNetLogo, networkLogo, networkLogoPosition = "auto", networkLogoFollowTitle, networkFixedX, networkFixedY, onNetworkGeometry, onAccentMeta, sd, accentOverride, imdbTop250,
     logoSrc, backdropSrc, analysisKey,
     preRelease = false,
     hideLogo = false,
@@ -1660,21 +1719,91 @@ export async function generatePosterBuffer(input: GenerationInput): Promise<Buff
   // portraits with faces at the bottom (e.g. Silo) instead of the scene
   // emerald. An explicit `ac=` override always wins; safety net: genre/gray
   // fallback. resolveBadgeColors stays exported and tested but is no longer
-  // on the render path. The gate also covers the extra top badge with
-  // ranking off (via preRelease, the only branch turning it on without
-  // rankingEnabled): the corner tint stays automatic there too.
-  const sceneTintHex = (blurEnabled || hasGenreBadge || rankingEnabled || preRelease)
+  // on the render path.
+  // Style-gated extraction: the tint decodes only when a consumer needs it —
+  // the bottom blur overlay, a standard genre badge with the `colored` style,
+  // a top badge whose effective style paints the accent (colored/corner/
+  // extra-number/accent-filled default, via topBadgeConsumesAccent — the same
+  // resolution as the renderer, follow-rank included), the Card main badge
+  // with the `colored` style, or a badge preset carrying the scene accent.
+  // Styles that ignore the accent (default/minimal/vetro/bar/pill/shadow/
+  // bordo, plain ribbons/numerals) and manual `ac=` bands never trigger a
+  // decode here. The gate also covers the extra top badge with ranking off
+  // (via preRelease, the only branch turning it on without rankingEnabled):
+  // the corner tint stays automatic there too.
+  const genrePaintsAccent = hasGenreBadge && !isFresh && !isCard && genreBadgeConsumesAccent(badgeStyle)
+  const cardGenrePaints = isCard && badgesEnabled !== false && genreBadgeConsumesAccent(badgeStyle)
+  const topPaintsAccent = topBadgeConsumesAccent({
+    topBadgeType: topBadge?.type ?? null,
+    rankingBadgeStyle,
+    extraBadgeStyle,
+    rankingBadgeAccent,
+  })
+  const needsSceneTint =
+    (blurEnabled && !accentOverride?.genreColor) ||
+    (genrePaintsAccent && !accentOverride?.genreColor) ||
+    (cardGenrePaints && !accentOverride?.genreColor) ||
+    (!!topBadge && !showComingSoon && topPaintsAccent && !accentOverride?.rankColor) ||
+    (!!badgePresetId && (!accentOverride?.genreColor || !accentOverride?.rankColor))
+  const sceneTintHex = needsSceneTint
     ? await extractSceneTint(posterBuf, genreName, analysisKey ? `${analysisKey}:${genreName ?? "x"}` : null)
     : null
 
-  // Automatic badge accent at fixed 5/12 HSL lightness (Windows dialog
-  // 100/240): scene-tint hue/saturation stay, only L is normalized — this
-  // also applies to the automatic genre/gray fallbacks. The manual `ac=`
-  // override never goes through normalization. Blur stays on the natural
-  // tint (never from the normalized badge): with no scene the fallback is
-  // the natural genre/gray, not the normalized accent.
-  const accentColorGenre = accentOverride?.genreColor ?? normalizeAutomaticAccentHex(sceneTintHex ?? (GENRE_FALLBACK[genreName || ""] || "#555555"))
-  const accentColorRank = accentOverride?.rankColor ?? normalizeAutomaticAccentHex(sceneTintHex ?? "#555555")
+  // Automatic badge accent: per-band adaptive on the extracted scene tint
+  // (same hue/saturation, L in [0.24, 0.60], renderer text 4.5:1 first, 3:1
+  // background separation second, deterministic best-effort when infeasible).
+  // Each band samples the EFFECTIVE canvas the route already fitted
+  // (portrait STD_W × STD_H, landscape LAND_W × LAND_H — near-identity
+  // resize, no new fetch, at most one small cached crop decode per band per
+  // title): top 8% strip veiled by the black top-shade edge alpha
+  // (0.75·topShade/100; topShade = 0 = no veil) for rank/extra, bottom 8%
+  // strip veiled by blurDarkness ONLY when the bottom blur is actually
+  // enabled for genre. Two-band approximation, NOT per-badge pixel-exact:
+  // explicit offsets can move a badge outside its band (anchor-nearest still
+  // applies); vignette/pre-release/side scrims are not modeled
+  // (conservative). Manual `ac=` overrides bypass adaptation byte-identically;
+  // without extraction the genre/gray fallbacks keep the legacy fixed 5/12
+  // normalization byte-identically (every GENRE_FALLBACK entry, Comedy
+  // included); without a band sample the extracted tint does too. Blur keeps
+  // the natural tint (never the adapted badge). Fresh/Card chrome is
+  // suppressed below (`!isFresh && !isCard` gates) so their fixed looks are
+  // untouched — only a standard automatic colored extra reused inside
+  // Fresh/Card adapts through this shared path. Provider-glass/neutral fixed
+  // palettes never pass through here.
+  const needsTopAdaptive = !!topBadge && !showComingSoon && topPaintsAccent && !accentOverride?.rankColor && !!sceneTintHex
+  const needsBottomAdaptive = genrePaintsAccent && !accentOverride?.genreColor && !!sceneTintHex
+  const [topBand, bottomBand] = await Promise.all([
+    needsTopAdaptive
+      ? topBandMeanRGB(posterBuf, {
+          cacheKey: analysisKey ? `accent:${analysisKey}` : null,
+          canvasW: CW,
+          canvasH: CH,
+        }).catch(() => null)
+      : Promise.resolve(null),
+    needsBottomAdaptive
+      ? bottomBandMeanRGB(posterBuf, {
+          cacheKey: analysisKey ? `accent:${analysisKey}` : null,
+          canvasW: CW,
+          canvasH: CH,
+        }).catch(() => null)
+      : Promise.resolve(null),
+  ])
+  const topBgLum = topBand ? effectiveTopBackgroundLuminance(topBand, topShade) : null
+  const bottomBgLum = bottomBand ? effectiveBottomBackgroundLuminance(bottomBand, blurDarkness, blurEnabled) : null
+  const accentColorGenre = accentOverride?.genreColor ?? adaptiveAccentHexForBand(sceneTintHex, GENRE_FALLBACK[genreName || ""] || "#555555", bottomBgLum)
+  const accentColorRank = accentOverride?.rankColor ?? adaptiveAccentHexForBand(sceneTintHex, "#555555", topBgLum)
+  // Styles that ignore the accent keep the legacy stable value in the
+  // STANDARD badge cache keys/renders below: no per-title tint means no new
+  // cache color and no key churn when an extraction ran for another consumer
+  // (e.g. the blur overlay). The rendered bitmaps are identical either way
+  // (the builders ignore the accent for these styles). Presets, the Card
+  // main badge and consuming styles keep the adaptive values above.
+  const genreStdAccent = genrePaintsAccent
+    ? accentColorGenre
+    : (accentOverride?.genreColor ?? normalizeAutomaticAccentHex(GENRE_FALLBACK[genreName || ""] || "#555555"))
+  const rankStdAccent = (!!topBadge && !showComingSoon && topPaintsAccent)
+    ? accentColorRank
+    : (accentOverride?.rankColor ?? normalizeAutomaticAccentHex("#555555"))
 
   // Override esplicito `ac=` vince sempre; poi tinta di scena; rete di sicurezza: fallback genere
   const blurTintHex = accentOverride?.genreColor ?? sceneTintHex ?? (GENRE_FALLBACK[genreName || ""] || "#555555")
@@ -1930,10 +2059,10 @@ export async function generatePosterBuffer(input: GenerationInput): Promise<Buff
   const isRankDetached = !!topBadge && !isRankNetflixRibbonStyle && topBadgeStyle !== "number" && effTopBadgeOffsetY !== 0
 
   const genreBadgeKey = hasGenreBadge
-    ? badgeCacheKey("genre", genreName, voteAverage, CW, year, badgeStyle, badgeFont, accentColorGenre, bottomLight, badgeGenre, badgeYear, badgeRating, genreBadgeScale)
+    ? badgeCacheKey("genre", genreName, voteAverage, CW, year, badgeStyle, badgeFont, genreStdAccent, bottomLight, badgeGenre, badgeYear, badgeRating, genreBadgeScale)
     : null
   const rankBadgeKey = !showComingSoon && topBadge
-    ? badgeCacheKey("rank", topBadge.type === "extra" ? topBadge.label : `${(topBadge as { rank: number }).rank}:${topBadge!.label}:${(topBadge as { ribbonLabel?: string }).ribbonLabel ?? ""}`, CW, topLight, topBadgeStyle, badgeFont, accentColorRank, ribbonSide, isAnimeRank, effTopBadgeScale, isRankDetached ? "detached" : undefined, rankingBadgeAccent ? "accent" : undefined)
+    ? badgeCacheKey("rank", topBadge.type === "extra" ? topBadge.label : `${(topBadge as { rank: number }).rank}:${topBadge!.label}:${(topBadge as { ribbonLabel?: string }).ribbonLabel ?? ""}`, CW, topLight, topBadgeStyle, badgeFont, rankStdAccent, ribbonSide, isAnimeRank, effTopBadgeScale, isRankDetached ? "detached" : undefined, rankingBadgeAccent ? "accent" : undefined)
     : null
   const formatsKey = (effectiveFormats && effectiveFormats.length > 0) ? effectiveFormats.join(",") : "none"
   // L'età entra nella chiave (etichetta distinta = bitmap distinto) insieme
@@ -1979,7 +2108,7 @@ export async function generatePosterBuffer(input: GenerationInput): Promise<Buff
     genreBadgeKey
       ? (cacheGet<{ png: Buffer; w: number; h: number }>(genreBadgeKey)
           || coalesceBadgeRender(genreBadgeKey, () =>
-                renderGenreBadge(genreName ?? "", voteAverage ?? 0, badgePw, year, badgeStyle, accentColorGenre, bottomLight, { showGenre: badgeGenre, showYear: badgeYear, showRating: badgeRating }, badgeStyle === "bar" ? genreBadgeScale : 100, badgeFont)
+                renderGenreBadge(genreName ?? "", voteAverage ?? 0, badgePw, year, badgeStyle, genreStdAccent, bottomLight, { showGenre: badgeGenre, showYear: badgeYear, showRating: badgeRating }, badgeStyle === "bar" ? genreBadgeScale : 100, badgeFont)
                 .then((r) => { if (r) cacheSet(genreBadgeKey, r, ["badge"], BADGE_CACHE_TTL); return r })
             ))
       : Promise.resolve(null)
@@ -1991,10 +2120,10 @@ export async function generatePosterBuffer(input: GenerationInput): Promise<Buff
                 // Extra badges render with the standalone style when set, else
                 // the legacy `rs` fallback (plus the no-ribbon accent rule).
                 // The follow-rank sentinel normalizes to null (own-rank).
-                return renderExtraBadge(topBadge!.label, topBadgePw, topLight, normalizeExtraBadgeStyleForRender(extraBadgeStyle) ?? (rankingBadgeAccent ? "colored" : rankingBadgeStyle), accentColorRank, isRankDetached, badgeFont)
+                return renderExtraBadge(topBadge!.label, topBadgePw, topLight, normalizeExtraBadgeStyleForRender(extraBadgeStyle) ?? (rankingBadgeAccent ? "colored" : rankingBadgeStyle), rankStdAccent, isRankDetached, badgeFont)
                   .then((r) => { const v = { ...r, isRank: false }; cacheSet(rankBadgeKey, v, ["badge"], BADGE_CACHE_TTL); return v })
               }
-              return renderRankingBadge((topBadge as { rank: number }).rank, isRibbonRankingStyle(rankingBadgeStyle) ? badgePw : topBadgePw, topBadge!.label, topLight, rankingBadgeStyle, accentColorRank, ribbonSide, isAnimeRank, isRankDetached, rankingBadgeAccent, (topBadge as { ribbonLabel?: string }).ribbonLabel, badgeFont)
+              return renderRankingBadge((topBadge as { rank: number }).rank, isRibbonRankingStyle(rankingBadgeStyle) ? badgePw : topBadgePw, topBadge!.label, topLight, rankingBadgeStyle, rankStdAccent, ribbonSide, isAnimeRank, isRankDetached, rankingBadgeAccent, (topBadge as { ribbonLabel?: string }).ribbonLabel, badgeFont)
                 .then((r) => { const v = { ...r, isRank: true }; cacheSet(rankBadgeKey, v, ["badge"], BADGE_CACHE_TTL); return v })
             }))
       : Promise.resolve(null)
@@ -2036,12 +2165,38 @@ export async function generatePosterBuffer(input: GenerationInput): Promise<Buff
             ))
       : Promise.resolve(null)
 
+  // Tracking del vincitore dello slot preset per i metadata accent (vedi
+  // onAccentMeta in sezione 7): house/custom/fallback decidono quale fill è
+  // stato effettivamente dipinto. Booleani mutabili locali, mai cross-request.
+  let genrePresetHouseApplied = false
+  let genrePresetCustomApplied = false
+  let topPresetHouseApplied = false
+  let topPresetCustomApplied = false
   const [genreBadgeResult, rankBadgeResult, qualityBadgeResult, comingSoonResult] = await Promise.all([
     useGenrePreset && presetForPoster
-      ? renderPresetGenre().then((r) => r ?? renderStandardGenre())
+      ? renderPresetGenre().then((r) => {
+          // Quale bitmap ha vinto lo slot genere: house = fill adaptive
+          // condiviso (riportato nei metadata), custom = colore proprio del
+          // design (nessun accent automatico da riportare), null = fallback
+          // standard (fill Std). Puro tracking, resa invariata.
+          if (r) {
+            if (presetForPoster?.variant === "house") genrePresetHouseApplied = true
+            else genrePresetCustomApplied = true
+            return r
+          }
+          return renderStandardGenre()
+        })
       : renderStandardGenre(),
     useTopPreset && presetForPoster
-      ? renderPresetTop().then((r) => r ?? renderStandardRank())
+      ? renderPresetTop().then((r) => {
+          // Stesso tracking per lo slot superiore (house/custom/fallback).
+          if (r) {
+            if (presetForPoster?.variant === "house") topPresetHouseApplied = true
+            else topPresetCustomApplied = true
+            return r
+          }
+          return renderStandardRank()
+        })
       : renderStandardRank(),
     qualityBadgeKey
       ? (cacheGet<{ png: Buffer; w: number; h: number }>(qualityBadgeKey)
@@ -2158,12 +2313,12 @@ export async function generatePosterBuffer(input: GenerationInput): Promise<Buff
       // divergono con shrink overflow e metriche dei font).
       let sepCenterShift = 0
       if (anchorRight && !useGenrePreset && genreBadgeResult && (input.separateRatings?.length ?? 0) > 0) {
-        const fullKey = badgeCacheKey("genre", genreName, voteAverage, CW, year, badgeStyle, badgeFont, accentColorGenre, bottomLight, badgeGenre, badgeYear, true, genreBadgeScale)
+        const fullKey = badgeCacheKey("genre", genreName, voteAverage, CW, year, badgeStyle, badgeFont, genreStdAccent, bottomLight, badgeGenre, badgeYear, true, genreBadgeScale)
         const fullHit = cacheGet<{ png: Buffer; w: number; h: number }>(fullKey)
         const fullW = fullHit
           ? fullHit.w
           : await coalesceBadgeRender(fullKey, () =>
-              renderGenreBadge(genreName ?? "", voteAverage ?? 0, badgePw, year, badgeStyle, accentColorGenre, bottomLight, { showGenre: badgeGenre, showYear: badgeYear, showRating: true }, 100, badgeFont)
+              renderGenreBadge(genreName ?? "", voteAverage ?? 0, badgePw, year, badgeStyle, genreStdAccent, bottomLight, { showGenre: badgeGenre, showYear: badgeYear, showRating: true }, 100, badgeFont)
                 .then((r) => { if (r) cacheSet(fullKey, r, ["badge"], BADGE_CACHE_TTL); return r }),
             ).then((r) => (r ? r.w : null), () => null)
         if (fullW != null && fullW > genreBadgeResult.w) {
@@ -3073,6 +3228,9 @@ export async function generatePosterBuffer(input: GenerationInput): Promise<Buff
   // (vedi sezione 7).
   // -----------------------------------------------------------------------
   let cardPng: Buffer | null = null
+  // Tracking per i metadata accent: il main badge Card è stato composto
+  // (fill accentColorGenre effettivamente dipinto) oppure no.
+  let cardMainBadgeRendered = false
   if (isCard) {
     // Stessa priorità dello standard: il rank arriva dal topBadge già
     // risolto (queryExtra > computato > Coming Soon). Mai inventato: solo un
@@ -3169,6 +3327,7 @@ export async function generatePosterBuffer(input: GenerationInput): Promise<Buff
       cardMainBadge = rendered && genreBadgeScale !== 100 && badgeStyle !== "bar"
         ? await scaleBitmapForLayout(rendered, genreBadgeScale)
         : rendered
+      cardMainBadgeRendered = cardMainBadge !== null
     }
     // P15 individuals via the EXISTING renderers only (never Card text rows,
     // never silently dropped while the toggle is on):
@@ -3293,11 +3452,25 @@ export async function generatePosterBuffer(input: GenerationInput): Promise<Buff
         composites.push({ input: stackFitted.png, top: sepTop, left: sepLeft })
       }
     }
-    // Automatic provider-glass brand tint from the already-resolved raw brand
-    // bitmap (manual `ac=`/mapping accent wins when present; white brands and
-    // missing providers render the documented neutral — never the scene tint,
-    // see `resolveCardBrandAccent`).
-    const cardBrandAccent = await resolveCardBrandAccent(networkLogoForLayout, accentOverride)
+    // Automatic provider-glass brand tint from the already-resolved brand
+    // IDENTITY (`networkLogoResult`/`rawLogoResult` canonical `networkKey`,
+    // same priority as the drawn logo — no new matcher, no pixel sampling,
+    // no extra fetch): a valid manual `ac=`/mapping accent wins (existing
+    // public contract); otherwise the fixed 8-provider palette applies
+    // (`provider-brand-palette.ts`); unlisted/missing providers render the
+    // documented neutral — never the scene tint, which describes the
+    // artwork atmosphere, not the provider brand. The key is read from the
+    // ORIGINAL match records (not the geometry-fitted bitmap, which only
+    // carries pixels). Other Card skins keep the existing pixel-sampling
+    // resolver below (`resolveCardBrandAccent`) untouched.
+    const cardSkin = input.posterLayout as CardSkin
+    const cardBrandAccent =
+      cardSkin === "provider-glass"
+        ? resolveProviderGlassAccent(
+            networkLogoResult?.networkKey ?? rawLogoResult?.networkKey ?? null,
+            accentOverride,
+          )
+        : await resolveCardBrandAccent(networkLogoForLayout, accentOverride)
     // Bottom-blur exception (Card only): the user-controlled bottom blur is
     // an artwork treatment, not chrome. The SAME already-computed raw RGBA
     // overlay (same algorithm/tint/controls, single computation, no extra
@@ -3353,10 +3526,11 @@ export async function generatePosterBuffer(input: GenerationInput): Promise<Buff
       providerLogo: rawLogoResult ? rawLogoResult.png : null,
       providerScale: networkLogoScale,
       // Brand tint: manuale esplicito (`ac=`/mapping) quando presente,
-      // altrimenti tinta automatica dal bitmap brand già risolto (brand
-      // colorati), neutro documentato per provider assenti e brand bianchi
-      // (mai cataloghi di match copiati, mai testo raw nel SVG, mai tinta di
-      // scena come brand).
+      // altrimenti tinta fissa dalla palette 8 provider per identità brand
+      // già risolta (`provider-glass`), neutro documentato per provider
+      // assenti e non listati (mai cataloghi di match copiati, mai testo
+      // raw nel SVG, mai tinta di scena come brand, mai campionamento
+      // pixel per `provider-glass`).
       brandAccent: cardBrandAccent,
       // Metadati già risolti con le scelte di resa effettive condivise con
       // Fresh (vedi sopra: custom > separati > media ★, mai valori inventati).
@@ -3376,6 +3550,70 @@ export async function generatePosterBuffer(input: GenerationInput): Promise<Buff
     }
   }
 
+
+  // -----------------------------------------------------------------------
+  // 6d. Effective-accent metadata (display sync, `?accentmeta=1`).
+  // -----------------------------------------------------------------------
+  // Pure observer: reports the fills ACTUALLY passed to the builders above
+  // (same variables, no second derivation, no extra decode, no pixel/key
+  // changes). Std for the standard slots, shared adaptive for the active
+  // house presets, null for anything painting no automatic accent
+  // (non-consuming styles, custom presets with their own design, suppressed
+  // Fresh/Card chrome, fixed provider-glass/neutral glass).
+  if (onAccentMeta) {
+    try {
+      const topComposited =
+        !!finalRankBadge &&
+        finalRankLeft !== null &&
+        (!!topBadge && !showComingSoon && topPaintsAccent) &&
+        ((!isFresh && !isCard) || isExtraTopBadge)
+      const genreStdPaints =
+        genrePaintsAccent && !!safeGenreBadgeResult &&
+        (!useGenrePreset || (!genrePresetHouseApplied && !genrePresetCustomApplied))
+      const genrePresetPaints =
+        !isFresh && !isCard && !!safeGenreBadgeResult && useGenrePreset && genrePresetHouseApplied
+      const genrePaintsEff =
+        genreStdPaints || genrePresetPaints || (cardGenrePaints && cardMainBadgeRendered)
+      const genreEffHex = genrePresetPaints
+        ? accentColorGenre
+        : genreStdPaints || (cardGenrePaints && cardMainBadgeRendered)
+          ? (isCard ? accentColorGenre : genreStdAccent)
+          : null
+      const topEffHex = topComposited
+        ? (topPresetHouseApplied ? accentColorRank : topPresetCustomApplied ? null : rankStdAccent)
+        : null
+      const topPaintsEff = topComposited && topEffHex !== null
+      const manualGenre = accentOverride && isValidHex(accentOverride.genreColor)
+        ? accentOverride.genreColor
+        : null
+      const manualRank = accentOverride && isValidHex(accentOverride.rankColor)
+        ? accentOverride.rankColor
+        : null
+      const provFor = (
+        paints: boolean,
+        manual: string | null,
+        tint: string | null,
+        band: { r: number; g: number; b: number } | null,
+      ): EffectiveAccentMeta["provGenre"] => {
+        if (!paints) return "not-painted"
+        if (manual) return "manual"
+        if (!tint) return "fallback-genre"
+        if (!band) return "fallback-tint"
+        return "extracted"
+      }
+      onAccentMeta({
+        genreHex: genrePaintsEff ? (manualGenre ?? genreEffHex) : null,
+        rankHex: topPaintsEff ? (manualRank ?? topEffHex) : null,
+        genrePaints: genrePaintsEff,
+        topPaints: topPaintsEff,
+        topType: topBadge?.type ?? null,
+        provGenre: provFor(genrePaintsEff, manualGenre, sceneTintHex, bottomBand),
+        provRank: provFor(topPaintsEff, manualRank, sceneTintHex, topBand),
+      })
+    } catch {
+      // The observer must never break the render.
+    }
+  }
 
   // -----------------------------------------------------------------------
   // 7. Final composite

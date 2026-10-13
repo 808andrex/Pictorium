@@ -187,7 +187,16 @@ interface Seen {
 }
 
 function collectPreviewRequests(page: Page, seen: Seen) {
+  // Dialog stream only: the Trasforma UI mounts the same preset-gallery
+  // thumbnails (<img>) as every settings dialog, and the rank/extra
+  // nextPreview predicates (tscale/exscale) also match preset-pinned
+  // thumbnail URLs (proven: the extra-edit poll latched a tscale=100
+  // thumbnail sent synchronously while the cumulative dialog XHR
+  // tscale=150/exscale=150 needed its 200ms debounce). resourceType xhr is
+  // the HAR-proven dialog discriminator; API-level byte assertions below
+  // are untouched (page.request, not the recorder).
   page.on("request", (req) => {
+    if (req.resourceType() !== "xhr") return
     if (tryDemoUrl(req.url())) seen.urls.push(req.url())
   })
 }

@@ -258,6 +258,17 @@ input[type="range"]::-moz-range-thumb:active {
   z-index: 999999;
 }
 
+/* Sotto lg il toast top-center scavalca l'header mobile sticky (Back + Save):
+   un solo offset canonico sotto l'header + safe-area. !important vince sulle
+   CSS var inline di sonner (--offset-top/--mobile-offset-top, 24px/16px di
+   default); da lg in su resta il default desktop invariato. */
+@media (max-width: 1023.5px) {
+  [data-sonner-toaster][data-y-position="top"] {
+    --offset-top: calc(160px + env(safe-area-inset-top, 0px)) !important;
+    --mobile-offset-top: calc(160px + env(safe-area-inset-top, 0px)) !important;
+  }
+}
+
 /* Capsula a Pillola fluttuante dinamica (larghezza adattiva al contenuto) */
 [data-sonner-toast] {
   width: fit-content !important;

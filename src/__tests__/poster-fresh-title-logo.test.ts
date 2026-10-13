@@ -398,14 +398,14 @@ describe("editor Fresh-100 wiring (shared resolver, no baked 75)", () => {
       { selected: { id: 11, media_type: "movie", title: "Probe", poster_path: "/p.jpg" } as never, metaInfo: { genres: [], voteAverage: 0 } as never },
     )
     const layoutGroup = (): HTMLElement =>
-      screen.getByRole("radiogroup", { name: "ui.posterLayout" })
+      within(screen.getByTestId("ranking-presentation")).getByRole("radiogroup", { name: "ui.rankFamily" })
     await act(async () => {
       ctx().setLogoScale(75)
     })
-    fireEvent.click(within(layoutGroup()).getByRole("radio", { name: "ui.posterLayoutFresh" }))
+    fireEvent.click(within(layoutGroup()).getByRole("radio", { name: "ui.posterLayoutGroupedFresh" }))
     expect(ctx().posterLayout).toBe("fresh")
     expect(ctx().logoScale).toBe(75)
-    fireEvent.click(within(layoutGroup()).getByRole("radio", { name: "ui.posterLayoutStandard" }))
+    fireEvent.click(within(layoutGroup()).getByRole("radio", { name: "ui.ribbon" }))
     expect(ctx().posterLayout).toBe("standard")
     expect(ctx().logoScale).toBe(75)
   })

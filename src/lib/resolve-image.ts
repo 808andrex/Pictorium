@@ -35,10 +35,19 @@ const PINIMG_HOST_RE = /(^|\.)pinimg\.com$/
 const IMGUR_HOST_RE = /(^|\.)imgur\.com$/
 const REDDIT_HOST_RE = /(^|\.)(reddit\.com|redd\.it)$/
 const FANART_HOST_RE = /(^|\.)fanart\.tv$/
+// TVDB artworks: host ESATTO (niente sottodomini generici, niente lookalike
+// via suffisso — il boundary check sotto rifiuta `evilartworks.thetvdb.com`
+// e `artworks.thetvdb.com.evil.com`). Serve gli URL assoluti
+// `https://artworks.thetvdb.com/...` scelti nella gallery TVDB quando salvati
+// come customPosterUrl (stesso bar SSRF/byte-validation delle altre origini:
+// DNS/IP/redirect via safeFetchRemote + raster-only via validateImageBytes,
+// quindi gli SVG/logo vettoriali restano rifiutati al fetch).
+const TVDB_ARTWORKS_HOST = "artworks.thetvdb.com"
 
 export function isAllowedResolveHost(hostname: string): boolean {
   const h = hostname.toLowerCase().replace(/\.$/, "")
   if (h === "pin.it" || h.endsWith(".pin.it")) return true
+  if (h === TVDB_ARTWORKS_HOST) return true
   return (
     PINTEREST_HOST_RE.test(h) ||
     PINIMG_HOST_RE.test(h) ||
@@ -57,7 +66,8 @@ function isImageCdnHost(hostname: string): boolean {
     h === "i.redd.it" ||
     h === "preview.redd.it" ||
     h === "share.redd.it" ||
-    h === "assets.fanart.tv"
+    h === "assets.fanart.tv" ||
+    h === TVDB_ARTWORKS_HOST
   )
 }
 

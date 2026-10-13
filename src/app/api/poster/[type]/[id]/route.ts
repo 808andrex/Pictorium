@@ -47,7 +47,9 @@ import {
   variantEtagFor,
   dynamicPosterTtlSec,
   readCachedPoster,
+  readCompletedAccent,
   readPosterError,
+  recordCompletedAccent,
   recordZombieRenderStart,
   schedulePosterRefresh,
   writeCachedPoster,
@@ -64,6 +66,7 @@ import {
   type PosterCachePayload,
   type PosterErrorStatus,
 } from "@/lib/poster-runtime-cache"
+import { sanitizeEffectiveAccentMeta, type EffectiveAccentMeta } from "@/lib/effective-accent"
 import { hashUserFragment, userTagFragment } from "@/lib/cache"
 import { FormatOverloadError, runFormatConversion } from "@/lib/poster-format-gate"
 import { hardenPosterSearchParams, isPresetsPosterMode, isPreviewAuthRequired, isPreviewDowngraded, isPublicPosterInstance } from "@/lib/poster-params-hardening"
@@ -482,6 +485,14 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
   // so the entry collapses to the canonical key (same render, no split).
   const demoSamples = isDemoSamplesRequest({ isPreview, flag: hardenedParams.get(DEMOSAMPLES_FLAG) })
   if (!isPreview) hardenedParams.delete(DEMOSAMPLES_FLAG)
+  // Effective-accent display sync (`?accentmeta=1`, server-only Stage 1): a
+  // read-only JSON branch served below from the SAME canonical key. The flag
+  // is the ONLY param stripped here (mirror of the L479 preview-delete
+  // pattern): preview/tl/bl/config and every render input stay in the key, so
+  // the metadata key is byte-identical to the image key — including the
+  // preview-downgrade path above, which applies equally to both.
+  const wantAccentMeta = req.nextUrl.searchParams.get("accentmeta") === "1"
+  hardenedParams.delete("accentmeta")
   const cacheParams = normalizePosterCacheParams(hardenedParams)
   cacheParams.delete("config")
   cacheParams.delete("c")
@@ -676,6 +687,74 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
   const ifNoneMatch = isPreview ? null : req.headers.get("If-None-Match")
   const isConditional = ifNoneMatch !== null
 
+  // Effective-accent metadata branch (`?accentmeta=1`, read-only, no-store).
+  // DIAGNOSTIC ONLY: the editor picker does NOT use this branch — it reads
+  // the `X-Pictorium-Accent` response header of the image itself (same XHR,
+  // same bytes, zero extra requests; see `posterHeaders` + `usePosterPreview`).
+  // Same authorized key as the image above (auth/namespace/mapping/shape/
+  // ranking-preflight all ran on the identical lines): fresh sidecar HIT →
+  // 200; stale sidecar ignored → overlapping inflight → bounded coalesced wait → 200 on settle (one
+  // render, two readers); late preview (inflight already deleted, no
+  // persisted entry) → 200 from the short-lived completed record; otherwise
+  // 202 honest unknown. NEVER renders, NEVER acquires a slot, NEVER writes
+  // negative cache. Format variants read the canonical entry (meta is
+  // format-independent fills, never a conversion); the JSON validator is
+  // derived from the meta body, never the PNG ETag.
+  if (wantAccentMeta) {
+    const serveAccentMeta = (meta: EffectiveAccentMeta | null): Response => {
+      const clean = sanitizeEffectiveAccentMeta(meta ?? null)
+      const body = clean
+        ? { status: "ready", ...clean }
+        : {
+            status: "unknown",
+            genreHex: null,
+            rankHex: null,
+            genrePaints: false,
+            topPaints: false,
+            topType: null,
+            provGenre: "unknown",
+            provRank: "unknown",
+          }
+      const json = JSON.stringify(body)
+      const jsonEtag = `"${hashKey(json)}"`
+      const headers: Record<string, string> = {
+        ...corsHeaders(),
+        "Content-Type": "application/json",
+        "Cache-Control": "no-store",
+        ETag: jsonEtag,
+      }
+      if (ifNoneMatch === jsonEtag) {
+        return new Response(null, { status: 304, headers })
+      }
+      return new Response(json, { status: clean ? 200 : 202, headers })
+    }
+    const metaHit = readCachedPoster(cacheKey)
+    // Fresh sidecar only: a stale entry may describe bytes a newer image
+    // render already replaced — fall through to the inflight / completed /
+    // 202 chain (read-only, never renders) instead of serving outdated hex.
+    if (metaHit.payload?.accentMeta && !metaHit.stale) {
+      return serveAccentMeta(metaHit.payload.accentMeta)
+    }
+    const metaPending = getPendingPoster(cacheKey)
+    if (metaPending) {
+      let coalesceTimer: ReturnType<typeof setTimeout> | undefined
+      const coalesceTimeout = new Promise<null>((resolve) => {
+        coalesceTimer = setTimeout(() => resolve(null), RENDER_SLOT_WAIT_MS)
+      })
+      const settled = await Promise.race([metaPending, coalesceTimeout])
+      if (coalesceTimer) clearTimeout(coalesceTimer)
+      // Write-then-complete ordering (success path below) guarantees the
+      // completed record exists before waiters resolve — check it too so a
+      // settled payload without meta still finds the late record.
+      const settledMeta = settled?.accentMeta ?? readCompletedAccent(cacheKey)
+      if (settledMeta) return serveAccentMeta(settledMeta)
+      return serveAccentMeta(null)
+    }
+    const lateMeta = readCompletedAccent(cacheKey)
+    if (lateMeta) return serveAccentMeta(lateMeta)
+    return serveAccentMeta(null)
+  }
+
   // C3: risposta non-canonica da payload canonico (cache variante o conversione).
   // opts (ttlMs/immutable) dal fresh render effimero; sulle HIT riuso record.
   // Il chiamante garantisce un canonico fresco o appena renderizzato: una
@@ -690,7 +769,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
     if (!wantNetGeo && variantHit.payload && !variantHit.stale) {
       if (isConditional && ifNoneMatch === variantHit.payload.etag) {
         log.debug("Poster cache: 304 (variant)", { mediaType, tmdbId, ms: Date.now() - startTime })
-        return new Response(null, { status: 304, headers: posterNotModifiedHeaders(variantHit.payload.etag, variantHit.immutable ?? immutablePoster, dynamicPoster, variantHit.ttlSec ?? variantTtlSec, isLive) })
+        return new Response(null, { status: 304, headers: posterNotModifiedHeaders(variantHit.payload.etag, variantHit.immutable ?? immutablePoster, dynamicPoster, variantHit.ttlSec ?? variantTtlSec, isLive, variantHit.payload.accentMeta) })
       }
       return posterResponse(variantHit.payload, variantHit.immutable ?? immutablePoster, isPreview, dynamicPoster, outputFormat, variantHit.ttlSec ?? variantTtlSec, undefined, isLive)
     }
@@ -711,14 +790,21 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
       }
       throw e
     }
-    const variant: PosterCachePayload = { buffer: converted, etag: variantEtagFor(canonical.etag, outputFormat as "jpeg" | "webp") }
+    const variant: PosterCachePayload = {
+      buffer: converted,
+      etag: variantEtagFor(canonical.etag, outputFormat as "jpeg" | "webp"),
+      // Accent fills are format-independent: the converted variant carries the
+      // canonical payload's meta, so its 200 serves the same display-sync
+      // header (and its cache entry round-trips the sidecar like canonical).
+      ...(canonical.accentMeta ? { accentMeta: canonical.accentMeta } : {}),
+    }
     // Le preview editor (`preview=1`, ogni tick di slider) non sporcano lo
     // storage: la chiave le separa già, ma scrivere ogni tick è flood.
     if (!isPreview) writeCachedPoster(variantKey, variant, mappingTag, opts)
     const freshVariantTtl = opts?.ttlMs !== undefined ? Math.max(1, Math.round(opts.ttlMs / 1000)) : variantTtlSec
     if (isConditional && ifNoneMatch === variant.etag) {
       log.debug("Poster cache: 304 (fresh variant)", { mediaType, tmdbId, ms: Date.now() - startTime })
-      return new Response(null, { status: 304, headers: posterNotModifiedHeaders(variant.etag, opts?.immutable ?? immutablePoster, dynamicPoster, freshVariantTtl, isLive) })
+      return new Response(null, { status: 304, headers: posterNotModifiedHeaders(variant.etag, opts?.immutable ?? immutablePoster, dynamicPoster, freshVariantTtl, isLive, variant.accentMeta) })
     }
     return posterResponse(variant, opts?.immutable ?? immutablePoster, isPreview, dynamicPoster, outputFormat, freshVariantTtl, undefined, isLive)
   }
@@ -736,7 +822,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
       recordPosterRequest(true, outputFormat)
       if (isConditional && ifNoneMatch === variantHit.payload.etag) {
         log.debug("Poster cache: 304 (variant)", { mediaType, tmdbId, ms: Date.now() - startTime })
-        return new Response(null, { status: 304, headers: posterNotModifiedHeaders(variantHit.payload.etag, variantHit.immutable ?? immutablePoster, dynamicPoster, variantHit.ttlSec ?? variantTtlSec, isLive) })
+        return new Response(null, { status: 304, headers: posterNotModifiedHeaders(variantHit.payload.etag, variantHit.immutable ?? immutablePoster, dynamicPoster, variantHit.ttlSec ?? variantTtlSec, isLive, variantHit.payload.accentMeta) })
       }
       log.debug("Poster cache: fresh variant hit", { mediaType, tmdbId, ms: Date.now() - startTime })
       return posterResponse(variantHit.payload, variantHit.immutable ?? immutablePoster, isPreview, dynamicPoster, outputFormat, variantHit.ttlSec ?? variantTtlSec, undefined, isLive)
@@ -756,7 +842,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
     recordPosterRequest(true, outputFormat)
     if (!needsVariant && isConditional && ifNoneMatch === cachedPoster.payload.etag) {
       log.debug("Poster cache: 304", { mediaType, tmdbId, ms: Date.now() - startTime })
-      return new Response(null, { status: 304, headers: posterNotModifiedHeaders(cachedPoster.payload.etag, cachedPoster.immutable ?? immutablePoster, dynamicPoster, cachedPoster.ttlSec ?? dynamicTtlSec, isLive) })
+      return new Response(null, { status: 304, headers: posterNotModifiedHeaders(cachedPoster.payload.etag, cachedPoster.immutable ?? immutablePoster, dynamicPoster, cachedPoster.ttlSec ?? dynamicTtlSec, isLive, cachedPoster.payload.accentMeta) })
     }
     log.debug("Poster cache: fresh hit", { mediaType, tmdbId, ms: Date.now() - startTime })
     if (needsVariant) return serveResponseVariant(cachedPoster.payload)
@@ -799,12 +885,12 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
       if (needsVariant) {
         const waiterVariantEtag = variantEtagFor(payload.etag, outputFormat as "jpeg" | "webp")
         if (isConditional && ifNoneMatch === waiterVariantEtag) {
-          return new Response(null, { status: 304, headers: posterNotModifiedHeaders(waiterVariantEtag, immutablePoster, dynamicPoster, payload.ttlSec ?? variantTtlSec, isLive) })
+          return new Response(null, { status: 304, headers: posterNotModifiedHeaders(waiterVariantEtag, immutablePoster, dynamicPoster, payload.ttlSec ?? variantTtlSec, isLive, payload.accentMeta) })
         }
         return serveResponseVariant(payload)
       }
       if (isConditional && ifNoneMatch === payload.etag) {
-        return new Response(null, { status: 304, headers: posterNotModifiedHeaders(payload.etag, immutablePoster, dynamicPoster, payload.ttlSec ?? dynamicTtlSec, isLive) })
+        return new Response(null, { status: 304, headers: posterNotModifiedHeaders(payload.etag, immutablePoster, dynamicPoster, payload.ttlSec ?? dynamicTtlSec, isLive, payload.accentMeta) })
       }
       return posterResponse(payload, immutablePoster, isPreview, dynamicPoster, outputFormat, payload.ttlSec ?? dynamicTtlSec, undefined, isLive)
     }
@@ -2390,8 +2476,12 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
     // Collettore geometria network per il debug (solo numeri): in fissa è la
     // fonte del freeze senza salto; nel path normale resta inutilizzato.
     let netGeo: NetworkGeometry | null = null
-    const genInput: GenerationInput = {
-      // Custom values override internal sources with the same ID, preserving order.
+    // Effective-accent collector (display sync): per-request local, filled by
+    // the service's pure observer with the fills actually painted. Collected
+    // on EVERY render (preview included) — the PNG no-store gate below is
+    // untouched, only the ~250-byte meta is retained (sidecar + completed).
+    let collectedAccentMeta: EffectiveAccentMeta | null = null
+    const genInput: GenerationInput = {      // Custom values override internal sources with the same ID, preserving order.
       // In bottom il custom provider non si rende (suppressCustomRow): la
       // priorità storica della colonna resta invariata.
       ratings: customRatingConfig.enabled && !separateDisplay.suppressCustomRow ? [...new Map([...ratings, ...customRatings].map(item => [item.id, item])).values()] : undefined,
@@ -2436,6 +2526,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
       qLabel, queryExtra, qNetLogo, networkLogo, networkLogoPosition, sd,
       networkLogoFollowTitle, networkFixedX, networkFixedY,
       onNetworkGeometry: isDebug && wantNetGeo ? (geo) => { netGeo = geo } : undefined,
+      onAccentMeta: (m) => { collectedAccentMeta = m },
       demoSamples,
       accentOverride, imdbTop250, preRelease: applyPreRelease,
       shape: posterShape,
@@ -2493,7 +2584,19 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
     }
 
     // 11. Cache + response
-    const payload = { buffer: composited, etag, ttlSec: effectiveTtlSec }
+    const payload: PosterCachePayload = {
+      buffer: composited,
+      etag,
+      ttlSec: effectiveTtlSec,
+      ...(collectedAccentMeta ? { accentMeta: collectedAccentMeta } : {}),
+    }
+    // Effective-accent retention (display sync): the completed record covers
+    // the late preview subscriber (no-store PNG + deleted inflight). Written
+    // AFTER the last success point and BEFORE completePosterRender
+    // (write-then-complete), for preview AND non-preview renders alike —
+    // failures/deadlines never reach here, so uncompleted renders record
+    // nothing. The PNG no-store gate below is unchanged.
+    if (collectedAccentMeta) recordCompletedAccent(cacheKey, collectedAccentMeta)
     // Qualità effimera (timeout/errore upstream) o Wikidata degradato: storage
     // 120s + niente immutable, così il degradato non avvelena CDN per 6h/24h.
     // Resolved (anche null) → TTL pieno invariato.
@@ -2513,13 +2616,13 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
     // se il contenuto ri-risolto è davvero invariato (audit, problema 2).
     const responseEtag = needsVariant ? variantEtagFor(etag, outputFormat as "jpeg" | "webp") : etag
     if (isConditional && ifNoneMatch === responseEtag) {
-      return new Response(null, { status: 304, headers: posterNotModifiedHeaders(responseEtag, effectiveImmutable, dynamicPoster, effectiveTtlSec, isLive) })
+      return new Response(null, { status: 304, headers: posterNotModifiedHeaders(responseEtag, effectiveImmutable, dynamicPoster, effectiveTtlSec, isLive, collectedAccentMeta) })
     }
     log.info("Poster rendered", { mediaType, tmdbId, ms: Date.now() - startTime, bytes: composited.byteLength, cached: !!mappingTag, format: outputFormat, fetchMs: tFetchMs, prepMs: tCompositeStart - startTime - tFetchMs, compositeMs: Date.now() - tCompositeStart })
     // C3: il non-canonico è variante di risposta (convertita + cachata), non un render.
     if (needsVariant) return serveResponseVariant(payload, ephemeralTtl ? { ttlMs: QUALITY_EPHEMERAL_TTL_SEC * 1000, immutable: false } : dynamicCutTtlMs !== null ? { ttlMs: dynamicCutTtlMs, immutable: immutablePoster } : { immutable: immutablePoster })
     const renderHeaders = {
-      ...posterHeaders(etag, effectiveImmutable, isPreview, dynamicPoster, outputFormat, effectiveTtlSec, isLive),
+      ...posterHeaders(etag, effectiveImmutable, isPreview, dynamicPoster, outputFormat, effectiveTtlSec, isLive, collectedAccentMeta),
       "Server-Timing": serverTimingValue([
         { name: "fetch", durMs: tFetchMs },
         { name: "prep", durMs: tCompositeStart - startTime - tFetchMs },

@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test"
+import { test, expect, type Locator, type Page, type Route } from "@playwright/test"
 import { putDefaultsWithRetry } from "./defaults-retry"
 
 // T6 badge-format-final: Badge tab per-format editing (Verticale/Orizzontale),
@@ -6,6 +6,14 @@ import { putDefaultsWithRetry } from "./defaults-retry"
 // rs/xbs API semantics. Transport-level only (preview query params + backend
 // defaults JSON + poster bytes): no snapshots here — pixel baselines live in
 // pictorium-visual.spec.ts. External APIs come from the mock server.
+//
+// Actual five-tab settings (staged, explicit Save only): the dialog opens on
+// the Preset tab (never Badge); rank lives in Classifiche (unified
+// Nastro/Numero/Badge/Fresh/Card presentation, same rs field contract),
+// extra styles in Badge, the quality visibility switch in Informazioni, and
+// geometry in Trasforma. The format selector is the single shared top edit
+// target across tabs; draft edits move the preview URL only and the backend
+// stays at baseline until the footer Save (testid settings-save) PUTs.
 
 const DEMO_PROFILE = "e2e-badge-format"
 
@@ -115,6 +123,37 @@ async function getDefaults(page: Page): Promise<Record<string, unknown>> {
     if (!r.ok) throw new Error(`get defaults: ${r.status}`)
     return (await r.json()) as Record<string, unknown>
   })
+}
+
+/**
+ * Teardown-only 429 tolerance for the final restore verify: the serial file
+ * run legitimately bursts the shared `defaults` bucket (boot GETs per
+ * navigation + staged PUTs + client hydration retries), so a 429 here is
+ * runtime-expected, never an app bug — honor Retry-After and retry (same
+ * rule as putDefaultsWithRetry). Any other status throws immediately, and an
+ * exhausted loop throws with status details: a failed restore never silently
+ * becomes a pass. Test bodies keep the strict getDefaults (a 429 mid-test
+ * must fail loudly, not hide behind retries).
+ */
+async function getDefaultsWithRetry(page: Page, label: string): Promise<Record<string, unknown>> {
+  let last = `${label}: unknown`
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const res = await page.evaluate(async () => {
+      const r = await fetch("/api/defaults")
+      return {
+        ok: r.ok,
+        status: r.status,
+        retryAfter: r.headers.get("Retry-After"),
+        body: await r.text(),
+      }
+    })
+    if (res.ok) return JSON.parse(res.body) as Record<string, unknown>
+    last = `${label}: ${res.status} ${res.body.slice(0, 200)}`
+    if (res.status !== 429 || attempt === 3) break
+    const raw = (res.retryAfter ?? "").trim()
+    await page.waitForTimeout(/^\d+$/.test(raw) ? Number(raw) * 1000 : 3000)
+  }
+  throw new Error(last)
 }
 
 /**
@@ -230,8 +269,9 @@ test.afterEach(async ({ page }) => {
   await page.goto("/")
   // Verify the full canonical surface — a mismatch is a real leak
   // (merge-only PUT cannot delete keys, so every autosaved key must be
-  // covered above with its factory value).
-  const got = await getDefaults(page)
+  // covered above with its factory value). 429-tolerant: serial-run heat is
+  // retried, never weakened.
+  const got = await getDefaultsWithRetry(page, "verify restore")
   expect(got).toMatchObject(FACTORY_RESTORE)
 })
 
@@ -250,6 +290,30 @@ async function waitDefaults(page: Page, pred: (d: Record<string, unknown>) => bo
       { timeout: 30_000, intervals: [500] },
     )
     .toBe("ok")
+}
+
+/** Desktop primary-tab navigation (five equal tabs). Mobile uses the
+ *  #mobile-settings-category select instead (see mobile test). */
+async function gotoTab(dialog: Locator, name: string) {
+  await dialog.getByRole("tab", { name, exact: true }).click()
+}
+
+/**
+ * Explicit staged Save: the single footer PUT. Draft edits never persist on
+ * their own (no autosave), so every persistence assertion below first clicks
+ * this button and awaits the PUT ACK — a passing waitDefaults afterwards
+ * proves the save, never an implicit write.
+ */
+async function explicitSave(page: Page, scope: Locator) {
+  const saveBtn = scope.getByTestId("settings-save")
+  await expect(saveBtn).toBeEnabled()
+  const put = page.waitForResponse(
+    (r) => r.url().includes("/api/defaults") && r.request().method() === "PUT",
+    { timeout: 30_000 },
+  )
+  await saveBtn.click()
+  const res = await put
+  expect(res.ok()).toBeTruthy()
 }
 
 /**
@@ -305,7 +369,7 @@ test.describe("Badge Verticale/Orizzontale: isolation + persistence", () => {
         await page.getByRole("button", { name: /Impostazioni/i }).click()
         await expect(dialog).toBeVisible()
       },
-      (u) => u.searchParams.get("shape") === "poster" && u.searchParams.get("rs") === "pill",
+      (u) => u.searchParams.get("shape") === "poster" && u.searchParams.get("rs") === "pill" && u.searchParams.get("bq") === "1",
     )
     expect(p.get("shape")).toBe("poster")
     expect(p.get("rs")).toBe("pill")
@@ -331,79 +395,168 @@ test.describe("Badge Verticale/Orizzontale: isolation + persistence", () => {
     const beforeBadge = JSON.stringify(beforeDebug.badge.computed.badge)
 
     await expect(dialog).toBeVisible()
-    const badgePanel = dialog.getByRole("tabpanel", { name: "Badge" })
-    await expect(badgePanel).toBeVisible()
 
-    // Format selector sits BEFORE the controls (single edit target, shared
-    // with Trasforma): geometry proof, not just visibility. Measured BEFORE
-    // expanding the macro-groups below: their clicks scroll the dialog and
-    // would invalidate viewport-relative boxes.
+    // Actual five-tab home: the dialog opens on Preset, never on Badge.
+    await expect(dialog.getByRole("tab", { name: "Preset", exact: true })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    )
+
+    // Single shared format selector sits ABOVE the controls (one edit target
+    // for every primary tab): geometry proof, not just visibility.
     const formatTarget = dialog.getByTestId("format-target-selector")
     await expect(formatTarget).toBeVisible()
+    await expect(formatTarget.getByText("Verticale", { exact: true })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    )
     const selBox = await formatTarget.boundingBox()
-    const panelBox = await badgePanel.boundingBox()
+    const controlsBox = await dialog.getByTestId("settings-controls").boundingBox()
     expect(selBox).not.toBeNull()
-    expect(panelBox).not.toBeNull()
-    expect(selBox!.y + selBox!.height).toBeLessThanOrEqual(panelBox!.y + 8)
+    expect(controlsBox).not.toBeNull()
+    expect(selBox!.y + selBox!.height).toBeLessThanOrEqual(controlsBox!.y + 8)
 
-    // T3 macro-groups: Overlay/Quality start collapsed; expand for rank/quality edits.
-    await badgePanel.getByTestId("badge-group-overlay-toggle").click()
-    await badgePanel.getByTestId("badge-group-quality-toggle").click()
+    // Staged backend baseline BEFORE any draft edit: portrait flats plus a
+    // landscape profile identical to the flats. Every draft step below must
+    // move the preview URL only — the backend stays here until explicit Save.
+    const baseline = await getDefaults(page)
+    expect(baseline.posterShape).toBe("poster")
+    expect(baseline.rankingBadgeStyle).toBe("pill")
+    expect(baseline.extraBadgeStyle).toBeNull()
+    expect(baseline.badgeQuality).toBe(true)
+    expect((baseline.landscape ?? {}) as Record<string, unknown>).toMatchObject({
+      rankingBadgeStyle: "pill",
+      extraBadgeStyle: null,
+      badgeQuality: true,
+    })
+
+    // Rank lives in Classifiche (unified Nastro/Numero/Badge/Fresh/Card over
+    // the same rs contract — never renamed to fit this spec). Five-tab Badge
+    // renders bare: no macro-group disclosures to expand, controls are direct.
+    await gotoTab(dialog, "Classifiche")
+    const presentation = dialog.getByTestId("ranking-presentation")
+    await expect(presentation).toBeVisible()
 
     // Orizzontale: same values (profile inherits flats), landscape shape.
+    // Settled-state pred (rs==pill && bq==1): the staged session opens on the
+    // pre-hydration outer and rebases asynchronously, so the first landscape
+    // emissions are factory transients (rs=default, xbs=follow-rank, bq=0) —
+    // same post-hydration wait as the portrait baseline above, never the
+    // first transient.
     p = await nextPreview(
       seen,
       async () => {
         await formatTarget.getByText("Orizzontale", { exact: true }).click()
       },
-      (u) => u.searchParams.get("shape") === "landscape",
+      (u) =>
+        u.searchParams.get("shape") === "landscape" &&
+        u.searchParams.get("rs") === "pill" &&
+        u.searchParams.get("bq") === "1",
     )
     expect(p.get("shape")).toBe("landscape")
     expect(p.get("rs")).toBe("pill")
     expect(p.get("xbs")).toBeNull()
 
-    // Landscape edit 1: rank appearance Numero -> rs=number (profile only).
-    const rankGroup = badgePanel.getByRole("radiogroup", { name: "Classifica" })
-    await expect(rankGroup).toBeVisible()
+    // Format-target switch never persists: delivery + both profiles unchanged.
+    let draft = await getDefaults(page)
+    expect(draft).toMatchObject({
+      posterShape: "poster",
+      rankingBadgeStyle: "pill",
+      extraBadgeStyle: null,
+      badgeQuality: true,
+    })
+
+    // Landscape edit 1 (Classifiche home): rank Numero -> rs=number.
+    // bq==1 pins the settled staged tuple (pre-hydration bq=0 transients
+    // with rs=number exist and must not match).
+    const numero = presentation.getByRole("radio", { name: "Numero" })
     p = await nextPreview(
       seen,
       async () => {
-        await rankGroup.getByRole("radio", { name: "Numero" }).click()
+        await numero.click()
       },
-      (u) => u.searchParams.get("rs") === "number",
+      (u) =>
+        u.searchParams.get("shape") === "landscape" &&
+        u.searchParams.get("rs") === "number" &&
+        u.searchParams.get("bq") === "1",
     )
     expect(p.get("shape")).toBe("landscape")
     expect(p.get("rs")).toBe("number")
+    await expect(numero).toHaveAttribute("aria-checked", "true")
 
-    // Landscape edit 2: info extra Angolo -> xbs=corner (profile only).
-    const extraCard = badgePanel
-      .getByText("Stile badge extra", { exact: true })
-      .locator("xpath=..")
+    // Side row (Sinistra/Destra) home is Classifiche with Numero active
+    // (never the Badge tab, never Trasforma geometry).
+    await expect(
+      dialog.getByRole("radiogroup", { name: "Posizione" }).filter({ visible: true }),
+    ).toBeVisible()
+
+    // Draft truth: preview moved to the landscape target only, backend still
+    // the pre-edit baseline (staged — no autosave).
+    draft = await getDefaults(page)
+    expect(draft).toMatchObject({
+      posterShape: "poster",
+      rankingBadgeStyle: "pill",
+      extraBadgeStyle: null,
+      badgeQuality: true,
+    })
+    expect((draft.landscape ?? {}) as Record<string, unknown>).toMatchObject({
+      rankingBadgeStyle: "pill",
+      badgeQuality: true,
+    })
+
+    // Landscape edit 2 (Badge home): extra Angolo -> xbs=corner.
+    await gotoTab(dialog, "Badge")
+    const extraWrap = dialog.getByTestId("badge-extra-style-wrap").filter({ visible: true })
+    const angolo = extraWrap.getByRole("button", { name: "Angolo" })
+    await expect(angolo).toBeVisible()
     p = await nextPreview(
       seen,
       async () => {
-        await extraCard.getByRole("button", { name: "Angolo" }).click()
+        await angolo.click()
       },
-      (u) => u.searchParams.get("xbs") === "corner",
+      (u) => u.searchParams.get("shape") === "landscape" && u.searchParams.get("rs") === "number" && u.searchParams.get("xbs") === "corner",
     )
     expect(p.get("shape")).toBe("landscape")
     expect(p.get("rs")).toBe("number")
     expect(p.get("xbs")).toBe("corner")
 
-    // Landscape edit 3: quality toggle off -> bq=0 (profile only).
+    // Draft truth again: preview moved, backend still baseline until Save.
+    draft = await getDefaults(page)
+    expect((draft.landscape ?? {}) as Record<string, unknown>).toMatchObject({
+      rankingBadgeStyle: "pill",
+      badgeQuality: true,
+    })
+
+    // Landscape edit 3 (Informazioni home): quality toggle off -> bq=0.
+    await gotoTab(dialog, "Informazioni")
+    const qualitySwitch = dialog
+      .getByRole("switch", { name: "Qualità streaming" })
+      .filter({ visible: true })
+    await expect(qualitySwitch).toBeVisible()
     p = await nextPreview(
       seen,
       async () => {
-        await badgePanel.getByRole("switch", { name: "Qualità streaming" }).click()
+        await qualitySwitch.click()
       },
-      (u) => u.searchParams.get("bq") === "0",
+      (u) =>
+        u.searchParams.get("shape") === "landscape" &&
+        u.searchParams.get("rs") === "number" &&
+        u.searchParams.get("xbs") === "corner" &&
+        u.searchParams.get("bq") === "0",
     )
     expect(p.get("shape")).toBe("landscape")
+    await expect(qualitySwitch).toHaveAttribute("aria-checked", "false")
 
-    // Side row (Sinistra/Destra) lives in defaults with Numero active.
-    await expect(badgePanel.getByRole("radiogroup", { name: "Posizione" })).toBeVisible()
+    // Draft truth again: preview moved, backend still baseline until Save.
+    draft = await getDefaults(page)
+    expect(draft).toMatchObject({ posterShape: "poster", badgeQuality: true })
+    expect((draft.landscape ?? {}) as Record<string, unknown>).toMatchObject({
+      badgeQuality: true,
+    })
 
-    // Backend truth: portrait flats + delivery untouched, landscape holds edits.
+    // Explicit Save persists: portrait flats + delivery untouched, landscape
+    // profile holds the three edits. waitDefaults verifies the stored result.
+    await explicitSave(page, dialog)
     await waitDefaults(page, (d) => {
       const land = (d.landscape ?? {}) as Record<string, unknown>
       return (
@@ -432,18 +585,17 @@ test.describe("Badge Verticale/Orizzontale: isolation + persistence", () => {
     expect(lastTrasforma!.get("rs")).toBe("number")
     expect(lastTrasforma!.get("xbs")).toBe("corner")
 
-    // Back to Badge: same landscape URL is already loaded, so no refetch is
-    // expected — assert the retained target + values in UI and the last
-    // preview transport instead of waiting for a new request.
-    await dialog.getByRole("tab", { name: "Badge", exact: true }).click()
-    const badgeBack = dialog.getByRole("tabpanel", { name: "Badge" })
-    await expect(badgeBack).toBeVisible()
+    // Back to Classifiche: same landscape URL is already loaded, so no
+    // refetch is expected — assert the retained target + values in UI and
+    // the last preview transport instead of waiting for a new request.
+    await gotoTab(dialog, "Classifiche")
+    await expect(dialog.getByTestId("ranking-presentation")).toBeVisible()
     await expect(formatTarget.getByText("Orizzontale", { exact: true })).toHaveAttribute(
       "aria-pressed",
       "true",
     )
     await expect(
-      badgeBack.getByRole("radiogroup", { name: "Classifica" }).getByRole("radio", {
+      dialog.getByTestId("ranking-presentation").getByRole("radio", {
         name: "Numero",
       }),
     ).toHaveAttribute("aria-checked", "true")
@@ -453,18 +605,48 @@ test.describe("Badge Verticale/Orizzontale: isolation + persistence", () => {
     expect(lastLand!.get("xbs")).toBe("corner")
     expect(lastLand!.get("bq")).toBe("0")
 
-    // Back to portrait: original values, no landscape leak.
+    // Badge home still shows the saved extra choice; Informazioni still shows
+    // quality off — same shared target, no refetch, no extra edit.
+    await gotoTab(dialog, "Badge")
+    await expect(
+      dialog.getByTestId("badge-extra-style-wrap").filter({ visible: true }),
+    ).toBeVisible()
+    await expect(formatTarget.getByText("Orizzontale", { exact: true })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    )
+    await gotoTab(dialog, "Informazioni")
+    await expect(
+      dialog
+        .getByRole("switch", { name: "Qualità streaming" })
+        .filter({ visible: true }),
+    ).toHaveAttribute("aria-checked", "false")
+
+    // Back to portrait: original values, no landscape leak. Settled-state
+    // pred (rs==pill && bq==1) skips the pre-hydration factory transients.
     p = await nextPreview(
       seen,
       async () => {
         await formatTarget.getByText("Verticale", { exact: true }).click()
       },
-      (u) => u.searchParams.get("shape") === "poster",
+      (u) =>
+        u.searchParams.get("shape") === "poster" &&
+        u.searchParams.get("rs") === "pill" &&
+        u.searchParams.get("bq") === "1",
     )
     expect(p.get("shape")).toBe("poster")
     expect(p.get("rs")).toBe("pill")
     expect(p.get("xbs")).toBeNull()
     expect(p.get("bq")).toBe("1")
+
+    // Target switch never writes: the saved state above is still the backend.
+    d = await getDefaults(page)
+    expect(d.posterShape).toBe("poster")
+    expect((d.landscape ?? {}) as Record<string, unknown>).toMatchObject({
+      rankingBadgeStyle: "number",
+      extraBadgeStyle: "corner",
+      badgeQuality: false,
+    })
 
     // Resolved-style proof AFTER: same own-rank resolution as BEFORE (the
     // landscape Angolo/corner profile never leaks into the portrait render;
@@ -482,15 +664,19 @@ test.describe("Badge Verticale/Orizzontale: isolation + persistence", () => {
     expect(afterDebug.badge.settings.rankingBadgeStyle).toBe(beforeRs)
     expect(JSON.stringify(afterDebug.badge.computed.badge)).toBe(beforeBadge)
 
-    // Reload: backend profile persists; Orizzontale replays it.
+    // Reload: backend profile persists. Reopen lands on Preset first; the
+    // shared target then replays the saved landscape profile, and each home
+    // tab shows its saved local style.
     await page.reload()
     const seen2: Seen = { urls: [] }
     collectRequests(page, seen2)
     await page.getByRole("button", { name: /Impostazioni/i }).click()
     const dialog2 = page.getByRole("dialog")
     await expect(dialog2).toBeVisible()
-    await dialog2.getByRole("tab", { name: "Badge", exact: true }).click()
-    await expect(dialog2.getByRole("tabpanel", { name: "Badge" })).toBeVisible()
+    await expect(dialog2.getByRole("tab", { name: "Preset", exact: true })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    )
     d = await getDefaults(page)
     expect(d.posterShape).toBe("poster")
     const land = (d.landscape ?? {}) as Record<string, unknown>
@@ -498,16 +684,35 @@ test.describe("Badge Verticale/Orizzontale: isolation + persistence", () => {
     expect(land.extraBadgeStyle).toBe("corner")
     expect(land.badgeQuality).toBe(false)
     const formatTarget2 = dialog2.getByTestId("format-target-selector")
+    // Full saved-tuple pred: only the persisted profile replays all four.
     p = await nextPreview(
       seen2,
       async () => {
         await formatTarget2.getByText("Orizzontale", { exact: true }).click()
       },
-      (u) => u.searchParams.get("shape") === "landscape",
+      (u) =>
+        u.searchParams.get("shape") === "landscape" &&
+        u.searchParams.get("rs") === "number" &&
+        u.searchParams.get("xbs") === "corner" &&
+        u.searchParams.get("bq") === "0",
     )
     expect(p.get("rs")).toBe("number")
     expect(p.get("xbs")).toBe("corner")
     expect(p.get("bq")).toBe("0")
+    await gotoTab(dialog2, "Classifiche")
+    await expect(
+      dialog2.getByTestId("ranking-presentation").getByRole("radio", { name: "Numero" }),
+    ).toHaveAttribute("aria-checked", "true")
+    await gotoTab(dialog2, "Badge")
+    await expect(
+      dialog2.getByTestId("badge-extra-style-wrap").filter({ visible: true }).getByRole("button", { name: "Angolo" }),
+    ).toBeVisible()
+    await gotoTab(dialog2, "Informazioni")
+    await expect(
+      dialog2
+        .getByRole("switch", { name: "Qualità streaming" })
+        .filter({ visible: true }),
+    ).toHaveAttribute("aria-checked", "false")
   })
 
   test("mobile: Orizzontale Numero keeps portrait, Verticale restores flats", async ({ page }) => {
@@ -527,47 +732,81 @@ test.describe("Badge Verticale/Orizzontale: isolation + persistence", () => {
         await page.getByRole("button", { name: /Impostazioni/i }).click()
         await expect(panel).toBeVisible()
       },
-      (u) => u.searchParams.get("shape") === "poster" && u.searchParams.get("rs") === "pill",
+      (u) => u.searchParams.get("shape") === "poster" && u.searchParams.get("rs") === "pill" && u.searchParams.get("bq") === "1",
     )
     expect(p.get("rs")).toBe("pill")
     expect(p.get("xbs")).toBeNull()
 
     await expect(panel).toBeVisible()
-    // Mobile nav is a select; Badge is the entry tab.
-    const category = page.locator("select:visible").first()
-    if (await category.count()) {
-      await category.selectOption("badge").catch(() => {})
-    }
+    // Mobile nav is the responsive select (five primary options plus the
+    // secondary optgroup); the dialog opens on Preset, never on Badge.
+    const category = panel.locator("#mobile-settings-category")
+    await expect(category).toBeVisible()
+    expect(await category.inputValue()).toBe("preset")
+    // Rank home is Classifiche (same unified rs contract as desktop).
+    await category.selectOption("rankings")
+    const presentation = panel.getByTestId("ranking-presentation")
+    await expect(presentation).toBeVisible()
+
+    // Staged baseline: nothing persists until the footer Save.
+    const baseline = await getDefaults(page)
+    expect(baseline.posterShape).toBe("poster")
+    expect(baseline.rankingBadgeStyle).toBe("pill")
 
     const formatTarget = panel.getByTestId("format-target-selector")
     await expect(formatTarget).toBeVisible()
+    // Settled-state pred (same staged-hydration race as desktop).
     p = await nextPreview(
       seen,
       async () => {
         await formatTarget.getByText("Orizzontale", { exact: true }).click()
       },
-      (u) => u.searchParams.get("shape") === "landscape",
+      (u) =>
+        u.searchParams.get("shape") === "landscape" &&
+        u.searchParams.get("rs") === "pill" &&
+        u.searchParams.get("bq") === "1",
     )
     expect(p.get("shape")).toBe("landscape")
 
-    const rankGroup = panel.getByRole("radiogroup", { name: "Classifica" })
-    // T3 macro-groups: Overlay starts collapsed; expand for rank edits.
-    await panel.getByTestId("badge-group-overlay-toggle").click()
+    // Target switch never writes: backend still the staged baseline.
+    let mNow = await getDefaults(page)
+    expect(mNow).toMatchObject({ posterShape: "poster", rankingBadgeStyle: "pill" })
+
+    // Numero in Classifiche (Nastro/Numero/Badge/Fresh/Card over rs).
+    const numero = presentation.getByRole("radio", { name: "Numero" })
     p = await nextPreview(
       seen,
       async () => {
-        await rankGroup.getByRole("radio", { name: "Numero" }).click()
+        await numero.click()
       },
-      (u) => u.searchParams.get("rs") === "number",
+      (u) =>
+        u.searchParams.get("shape") === "landscape" &&
+        u.searchParams.get("rs") === "number" &&
+        u.searchParams.get("bq") === "1",
     )
     expect(p.get("shape")).toBe("landscape")
+    await expect(numero).toHaveAttribute("aria-checked", "true")
+
+    // Draft truth: preview moved, backend still baseline until Save.
+    mNow = await getDefaults(page)
+    expect(mNow).toMatchObject({ posterShape: "poster", rankingBadgeStyle: "pill" })
+
+    // Explicit Save persists the landscape Numero; portrait + delivery stay.
+    await explicitSave(page, panel)
+    await waitDefaults(page, (d) => {
+      const land = (d.landscape ?? {}) as Record<string, unknown>
+      return land.rankingBadgeStyle === "number"
+    })
 
     p = await nextPreview(
       seen,
       async () => {
         await formatTarget.getByText("Verticale", { exact: true }).click()
       },
-      (u) => u.searchParams.get("shape") === "poster",
+      (u) =>
+        u.searchParams.get("shape") === "poster" &&
+        u.searchParams.get("rs") === "pill" &&
+        u.searchParams.get("bq") === "1",
     )
     expect(p.get("shape")).toBe("poster")
     expect(p.get("rs")).toBe("pill")
@@ -737,5 +976,194 @@ test.describe("poster API — rs number / xbs corner semantics", () => {
     )
     expect(off.ok()).toBeTruthy()
     expect(Buffer.compare(buf, await off.body())).toBe(0)
+  })
+})
+
+test.describe("Per-title late load preserves user drafts (deferred title data)", () => {
+  /**
+   * Holds the title-load XHRs (details + images: the causal inputs of
+   * loadCurrentItemData) so the post-load continuation lands deterministically
+   * AFTER the user edit instead of racing it. Search, rank, awards and poster
+   * PNG traffic flow untouched. Release is idempotent and belongs in a
+   * finally: a failed assertion must never leave the page hanging.
+   */
+  async function installTitleDataGate(page: Page) {
+    const held: Route[] = []
+    let released = false
+    const hold = async (route: Route) => {
+      if (released) await route.continue()
+      else held.push(route)
+    }
+    await page.route("**/api/tmdb/*/details*", hold)
+    await page.route("**/api/tmdb/*/images*", hold)
+    return {
+      heldUrls: () => held.map((r) => r.request().url()),
+      release: async () => {
+        released = true
+        await Promise.all(held.splice(0).map((r) => r.continue()))
+      },
+    }
+  }
+
+  async function openAvatar(page: Page, profile: string, seen: Seen) {
+    await seed(page, profile, "mock-tmdb-key-0000000000")
+    await page.setViewportSize({ width: 1280, height: 900 })
+    await putDefaults(page, {
+      posterShape: "poster",
+      rankingBadgeStyle: "default",
+      ribbonEnabled: true,
+      extraBadgeStyle: null,
+    })
+    collectRequests(page, seen)
+    const search = page.getByPlaceholder(/cerca/i)
+    await expect(search).toBeVisible({ timeout: 30_000 })
+    await search.fill("avatar")
+    await search.press("Enter")
+    await expect(page.getByText(/Avatar/i).first()).toBeVisible({ timeout: 20_000 })
+  }
+
+  /**
+   * Gate reached: the title OPEN fired its own details request (carries rsrc,
+   * unlike the hover prefetch on the same endpoints) and its images request,
+   * and both are held. Heading visible alone is not enough: the open is sync
+   * but the XHRs may still be queued behind it.
+   */
+  async function awaitGate(page: Page, gate: { heldUrls: () => string[] }) {
+    await expect(page.getByRole("heading", { name: "Anteprima" })).toBeVisible({ timeout: 10_000 })
+    await expect
+      .poll(
+        () => {
+          const urls = gate.heldUrls()
+          const openDetails = urls.some((u) => u.includes("/details") && u.includes("rsrc="))
+          const images = urls.some((u) => u.includes("/images"))
+          return openDetails && images ? "held" : null
+        },
+        { timeout: 15_000 },
+      )
+      .toBe("held")
+  }
+
+  /**
+   * Load-completion signal: artwork published by the post-load continuation
+   * (the loaded poster tile appears as the poster param of a fresh preview
+   * URL). Rank/awards arrivals cannot produce this param, so waiting for it
+   * proves the continuation itself landed — including any clobber on the
+   * unfixed code — before the next user edit.
+   */
+  async function awaitLoadedArtwork(seen: Seen, from: number) {
+    let out: URLSearchParams | null = null
+    await expect
+      .poll(
+        () => {
+          out = findLastParams(
+            seen.urls,
+            from,
+            (u) => u.searchParams.get("demosamples") !== "1",
+            (u) => u.searchParams.get("poster") === POSTER_PATH,
+          )
+          return out ? "ok" : null
+        },
+        { timeout: 30_000 },
+      )
+      .toBe("ok")
+    return out as unknown as URLSearchParams
+  }
+
+  test("deferred load: Numero draft survives the late continuation, Angolo lands on rs=number", async ({
+    page,
+  }) => {
+    const seen: Seen = { urls: [] }
+    await openAvatar(page, `${DEMO_PROFILE}-pertitle-lateload`, seen)
+    const gate = await installTitleDataGate(page)
+    try {
+      await page.getByText(/Avatar/i).first().click()
+      await awaitGate(page, gate)
+
+      const badgeTab = page.getByRole("tab", { name: "Badge" })
+      await badgeTab.click()
+      await expect(badgeTab).toHaveAttribute("aria-selected", "true")
+      const editor = page.locator("main").first()
+      const rankGroup = editor.getByRole("radiogroup", { name: "Classifica" })
+      await expect(rankGroup).toBeVisible()
+      // Side stays defaults-only while loading too: no Posizione per-title.
+      await expect(editor.getByRole("radiogroup", { name: "Posizione" })).toHaveCount(0)
+      // The user edits WHILE the load is still in flight: controls stay
+      // enabled, input never waits for readiness.
+      await rankGroup.getByRole("radio", { name: "Numero" }).click()
+      await expect(rankGroup.getByRole("radio", { name: "Numero" })).toBeChecked()
+
+      // Release AFTER the Numero click: the late continuation must preserve it.
+      const from = seen.urls.length
+      await gate.release()
+      const loaded = await awaitLoadedArtwork(seen, from)
+      expect(loaded.get("poster")).toBe(POSTER_PATH)
+
+      const extraCard = editor
+        .getByText("Stile badge extra", { exact: true })
+        .locator("xpath=..")
+      const p = await nextPreview(
+        seen,
+        async () => {
+          await extraCard.getByRole("button", { name: "Angolo" }).click()
+        },
+        (u) => u.searchParams.get("xbs") === "corner",
+        (u) => u.searchParams.get("demosamples") !== "1",
+      )
+      // Semantic assertions: on the unfixed code the late wipe reset the rank
+      // to the stored default, so rs reads "default" here — a value failure,
+      // never a timeout.
+      expect(p.get("rs")).toBe("number")
+      expect(p.get("xbs")).toBe("corner")
+      expect(p.getAll("ribbon")).toEqual(["1"])
+      await expect(rankGroup.getByRole("radio", { name: "Numero" })).toBeChecked()
+    } finally {
+      await gate.release()
+    }
+  })
+
+  test("early release: normal init still lands Numero + Angolo", async ({ page }) => {
+    const seen: Seen = { urls: [] }
+    await openAvatar(page, `${DEMO_PROFILE}-pertitle-earlyrelease`, seen)
+    const gate = await installTitleDataGate(page)
+    try {
+      await page.getByText(/Avatar/i).first().click()
+      await awaitGate(page, gate)
+
+      // Release BEFORE any edit and wait for the load to settle: pure normal
+      // init through the same gating machinery (proves the gate itself is
+      // neutral when no edit races the load).
+      const from = seen.urls.length
+      await gate.release()
+      const loaded = await awaitLoadedArtwork(seen, from)
+      expect(loaded.get("poster")).toBe(POSTER_PATH)
+
+      const badgeTab = page.getByRole("tab", { name: "Badge" })
+      await badgeTab.click()
+      await expect(badgeTab).toHaveAttribute("aria-selected", "true")
+      const editor = page.locator("main").first()
+      const rankGroup = editor.getByRole("radiogroup", { name: "Classifica" })
+      await expect(rankGroup).toBeVisible()
+      await expect(editor.getByRole("radiogroup", { name: "Posizione" })).toHaveCount(0)
+      await rankGroup.getByRole("radio", { name: "Numero" }).click()
+      await expect(rankGroup.getByRole("radio", { name: "Numero" })).toBeChecked()
+
+      const extraCard = editor
+        .getByText("Stile badge extra", { exact: true })
+        .locator("xpath=..")
+      const p = await nextPreview(
+        seen,
+        async () => {
+          await extraCard.getByRole("button", { name: "Angolo" }).click()
+        },
+        (u) => u.searchParams.get("rs") === "number" && u.searchParams.get("xbs") === "corner",
+        (u) => u.searchParams.get("demosamples") !== "1",
+      )
+      await expect(rankGroup.getByRole("radio", { name: "Numero" })).toBeChecked()
+      expect(p.get("rs")).toBe("number")
+      expect(p.get("xbs")).toBe("corner")
+      expect(p.getAll("ribbon")).toEqual(["1"])
+    } finally {
+      await gate.release()
+    }
   })
 })

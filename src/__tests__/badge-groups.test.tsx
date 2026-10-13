@@ -37,7 +37,13 @@ function toggle(id: string): HTMLElement {
   return screen.getByTestId(`badge-group-${id}-toggle`)
 }
 
+function openAdvanced() {
+  const t = screen.getByTestId("badge-advanced-toggle")
+  if (t.getAttribute("aria-expanded") !== "true") fireEvent.click(t)
+}
+
 function openGroup(id: string) {
+  openAdvanced()
   const t = toggle(id)
   if (t.getAttribute("aria-expanded") !== "true") fireEvent.click(t)
 }
@@ -72,6 +78,7 @@ describe("macro-group layout", () => {
   it("group toggles expand/collapse with 44px touch targets", async () => {
     renderBadge()
     await act(async () => {})
+    openAdvanced()
     const t = toggle("overlay")
     expect(t.className).toContain("min-h-[44px]")
     fireEvent.click(t)
@@ -118,7 +125,7 @@ describe("real toggles inside disclosures", () => {
 })
 
 describe("families stay on the child cards", () => {
-  it("overlay keeps rank + info, style keeps auto/genre/info, base info/ratings, quality quality", async () => {
+  it("overlay keeps rank + info, style keeps genre/extra, base info/ratings, quality quality", async () => {
     renderBadge()
     await act(async () => {})
     const fams = (id: string) =>
@@ -129,7 +136,13 @@ describe("families stay on the child cards", () => {
     expect(fams("overlay")).toContain("rank")
     expect(fams("overlay")).toContain("info")
     expect(fams("overlay")).toContain("quality")
-    expect(fams("style")).toEqual(expect.arrayContaining(["auto", "genre", "info"]))
+    // Preset-first: the builtin preset card (auto family) sits above the
+    // groups; the style group keeps its genre card plus the standalone extra
+    // style card, which reports the dedicated `extra` family (never the
+    // generic `info`) so the preview shows the extra-bucket sample.
+    expect(fams("style")).toEqual(expect.arrayContaining(["genre", "extra"]))
+    expect(fams("style")).not.toContain("info")
+    expect(fams("style")).not.toContain("auto")
     expect(fams("base")).toEqual(expect.arrayContaining(["info", "ratings"]))
     expect(fams("quality")).not.toContain("rank")
     for (const f of fams("quality")) expect(f).toBe("quality")

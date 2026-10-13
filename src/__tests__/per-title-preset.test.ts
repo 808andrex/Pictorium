@@ -4,13 +4,23 @@
  * the current title's live editor state for the shape in editing.
  *
  * - Typed allowlist: no `default*`/landscape/artwork/global output.
- * - Portrait = mapped flats via PRESET_FLAT_TO_LANDSCAPE; landscape =
- *   resolveEffectiveLandscape (profile wins, null-inherit falls to flat).
+ * - Portrait = mapped flats via PRESET_FLAT_TO_LANDSCAPE plus the owned
+ *   appearance flats (layout/scope/extra-style, canonically normalized);
+ *   landscape = resolveEffectiveLandscape over the normalized snapshot
+ *   (profile wins, null-inherit falls to flat, legacy extra owns the
+ *   follow-own-rank marker).
  * - Legacy extra axes clear to null (never materialized); explicit wins.
  * - Null network follow = inherit; fixed landscape coords never copy
  *   portrait absolutes.
- * - extraBadgeStyle audit: portrait never writes it (landscape-only style
- *   must not leak); landscape only from an explicit effective profile.
+ * - extraBadgeStyle audit: portrait writes the snapshot's own flat style
+ *   verbatim (legacy null stays null — follow own rank — never the live
+ *   title's style); landscape writes the effective profile style, legacy
+ *   owning the follow-own-rank marker instead of preserving live.
+ * - posterLayout/posterFreshScope audit: both shapes write the snapshot's
+ *   own values verbatim (ready six resolve Standard, Fresh fresh+ranked,
+ *   personal its stored recipe); legacy snapshots without the keys resolve
+ *   the canonical factory values — never the live title. Age stays
+ *   global-only (no mapping keys, never projected).
  */
 import { describe, expect, it } from "vitest"
 import {
@@ -29,6 +39,7 @@ const ALLOWLIST: ReadonlySet<string> = new Set<string>([
   "badgeGenre", "badgeYear", "badgeRating", "badgeQuality",
   "customRatings", "separateRatings", "separateRatingsStyle",
   "badgeStyle", "rankingBadgeStyle", "extraBadgeStyle",
+  "posterLayout", "posterFreshScope",
   "badgeFont", "qualityBadgeStyle", "videoFormats",
   "networkLogo", "networkLogoPosition", "networkLogoFollowTitle",
   "preRelease", "ribbonEnabled",
@@ -251,9 +262,21 @@ describe("extraBadgeStyle audit", () => {
     } as unknown as VisualPresetValues)
   }
 
-  it("portrait never writes extraBadgeStyle (landscape-only style not retained)", () => {
+  it("portrait writes the snapshot's own flat style (legacy null, never live)", () => {
+    // Apple carries no flat extra style (schema default null = follow own
+    // rank): the portrait title owns null even when the nested landscape
+    // profile defines "vetro" (which must not leak across shapes).
     const { bare } = projectPerTitleVisualPreset(styledPreset(), "poster")
-    expect("extraBadgeStyle" in bare).toBe(false)
+    expect(bare.extraBadgeStyle).toBeNull()
+  })
+
+  it("portrait writes an explicit flat style verbatim", () => {
+    const values = captureVisualPreset({
+      ...APPLE_VISUAL_DEFAULTS,
+      defaultExtraBadgeStyle: "bordo",
+    } as unknown as VisualPresetValues)
+    const { bare } = projectPerTitleVisualPreset(values, "poster")
+    expect(bare.extraBadgeStyle).toBe("bordo")
   })
 
   it("landscape writes the effective profile style", () => {
@@ -261,9 +284,56 @@ describe("extraBadgeStyle audit", () => {
     expect(bare.extraBadgeStyle).toBe("vetro")
   })
 
-  it("landscape without a profile style preserves the title (key omitted)", () => {
+  it("landscape without a profile style owns follow-rank (never preserves live)", () => {
+    // Legacy snapshot (no profile style, legacy flat): the edited landscape
+    // owns the explicit follow-own-rank marker — the canonical fallback,
+    // consistent with the global personal normalize — instead of inheriting
+    // the live title's tuned style.
     const { bare } = projectPerTitleVisualPreset(APPLE_VISUAL_DEFAULTS, "landscape")
-    expect("extraBadgeStyle" in bare).toBe(false)
+    expect(bare.extraBadgeStyle).toBe("follow-rank")
+  })
+})
+
+describe("posterLayout/posterFreshScope audit", () => {
+  it("portrait writes the snapshot's own layout/scope verbatim", () => {
+    const apple = projectPerTitleVisualPreset(APPLE_VISUAL_DEFAULTS, "poster")
+    expect(apple.bare.posterLayout).toBe("standard")
+    expect(apple.bare.posterFreshScope).toBe("ranked")
+  })
+
+  it("legacy snapshots without the keys resolve canonical (never live)", () => {
+    const raw = { ...APPLE_VISUAL_DEFAULTS, landscape: { ...APPLE_VISUAL_DEFAULTS.landscape } } as unknown as Record<string, unknown>
+    delete raw.defaultPosterLayout
+    delete raw.defaultPosterFreshScope
+    delete raw.defaultExtraBadgeStyle
+    const land = { ...((raw.landscape ?? {}) as Record<string, unknown>) }
+    delete land.posterLayout
+    delete land.posterFreshScope
+    delete land.extraBadgeStyle
+    raw.landscape = land
+    const portrait = projectPerTitleVisualPreset(raw as unknown as VisualPresetValues, "poster")
+    expect(portrait.bare.posterLayout).toBe("standard")
+    expect(portrait.bare.posterFreshScope).toBe("ranked")
+    expect(portrait.bare.extraBadgeStyle).toBeNull()
+    const landscape = projectPerTitleVisualPreset(raw as unknown as VisualPresetValues, "landscape")
+    expect(landscape.bare.posterLayout).toBe("standard")
+    expect(landscape.bare.posterFreshScope).toBe("ranked")
+    expect(landscape.bare.extraBadgeStyle).toBe("follow-rank")
+  })
+
+  it("never projects age keys (global-only, no mapping contract)", () => {
+    const values = captureVisualPreset({
+      ...APPLE_VISUAL_DEFAULTS,
+      defaultAgeBadge: true,
+      defaultAgeCountry: "US",
+      defaultAgeBadgeStyle: "knockout",
+    } as unknown as VisualPresetValues)
+    for (const shape of ["poster", "landscape"] as const) {
+      const { bare, landscapeBlur } = projectPerTitleVisualPreset(values, shape)
+      for (const key of [...Object.keys(bare), ...Object.keys(landscapeBlur)]) {
+        expect(key.toLowerCase()).not.toContain("age")
+      }
+    }
   })
 })
 

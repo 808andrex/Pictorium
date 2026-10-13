@@ -2,6 +2,7 @@
 
 import { isSupportedUiLang } from "./regions"
 import { sanitizeCustomPresets } from "./gradient-presets"
+import { sanitizeCatalogShapes } from "./catalog-shape"
 import {
   DEVICE_KEY_KINDS,
   DEVICE_KEY_NAMES,
@@ -58,6 +59,7 @@ const RAW_CAPS: Record<string, number> = {
   pictorium_home_disabled_catalogs: 8_192,
   pictorium_catalog_order: 16_384,
   pictorium_catalog_renames: 16_384,
+  pictorium_catalog_shapes: 16_384,
   pictorium_ranking_source_movie: 128,
   pictorium_ranking_source_series: 128,
   pictorium_collections: 65_536,
@@ -131,13 +133,19 @@ export function collectLocalBackup(storage: MinimalStorage, uuid: string | null)
       ["homeDisabled", "pictorium_home_disabled_catalogs", Array.isArray],
       ["order", "pictorium_catalog_order", Array.isArray],
       ["renames", "pictorium_catalog_renames", (v) => typeof v === "object" && v !== null && !Array.isArray(v)],
+      ["shapes", "pictorium_catalog_shapes", (v) => typeof v === "object" && v !== null && !Array.isArray(v)],
     ]
     for (const [name, key, ok] of defs) {
       const raw = readRaw(storage, key)
       if (!raw) continue
       try {
         const v: unknown = JSON.parse(raw)
-        if (ok(v)) catalogs[name] = v
+        if (!ok(v)) continue
+        // Per-catalog shapes are strict: only poster|landscape values survive
+        // (malformed entries are skipped, like renames validation below).
+        if (name === "shapes") {
+          catalogs[name] = sanitizeCatalogShapes(v)
+        } else catalogs[name] = v
       } catch { /* voce saltata */ }
     }
     if (Object.keys(catalogs).length > 0) out.catalogs = catalogs
@@ -232,12 +240,30 @@ export function applyLocalBackup(
       ["homeDisabled", "pictorium_home_disabled_catalogs", Array.isArray],
       ["order", "pictorium_catalog_order", Array.isArray],
       ["renames", "pictorium_catalog_renames", (v) => typeof v === "object" && v !== null && !Array.isArray(v)],
+      ["shapes", "pictorium_catalog_shapes", (v) => typeof v === "object" && v !== null && !Array.isArray(v)],
     ]
     for (const [name, key, ok] of defs) {
       const v = cats[name]
       if (v === undefined) continue
-      if (ok(v)) write(`catalogs.${name}`, key, JSON.stringify(v), RAW_CAPS[key])
-      else skipped.push(`catalogs.${name}`)
+      if (!ok(v)) {
+        skipped.push(`catalogs.${name}`)
+        continue
+      }
+      // Strict shapes import: malformed/prototype/unknown-enum entries are
+      // skipped (sanitized). A genuinely empty map clears (like renames);
+      // an all-malformed map never wipes the current one.
+      if (name === "shapes") {
+        const rawKeys = Object.keys(v as Record<string, unknown>)
+        if (rawKeys.length === 0) {
+          write(`catalogs.${name}`, key, JSON.stringify({}), RAW_CAPS[key])
+          continue
+        }
+        const clean = sanitizeCatalogShapes(v)
+        if (Object.keys(clean).length > 0) write(`catalogs.${name}`, key, JSON.stringify(clean), RAW_CAPS[key])
+        else skipped.push(`catalogs.${name}`)
+        continue
+      }
+      write(`catalogs.${name}`, key, JSON.stringify(v), RAW_CAPS[key])
     }
   } else if (src.catalogs !== undefined) skipped.push("catalogs")
   if (Array.isArray(src.collections)) {

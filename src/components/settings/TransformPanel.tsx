@@ -17,8 +17,353 @@ import { GradientPresetRow } from "@/components/GradientPresetRow"
 import { LandscapeDefaultsSection } from "@/components/LandscapeDefaultsSection"
 import { useShapeBadgeDefaults } from "@/components/settings/useShapeDefaults"
 import type { DefaultsPreviewFamily } from "@/lib/poster-url"
+import type { PosterElementId } from "@/components/settings/PosterElementNavigation"
 import { ArrowLeftRight, ArrowUpDown, Circle, Cloud, Image as ImageIcon, Minus, Ruler, Search, Sparkles, Star, Trophy, Tv } from "lucide-react"
 import { getBadgeOffsetRange } from "@/lib/badge-offset-ranges"
+import { isCardSkin } from "@/lib/card-layout-skins"
+import { isPosterFreshScope } from "@/lib/types"
+import { AvailabilityGate, isExtraStyleActive, isGenreStyleActive, isQualityStyleActive, isRankStyleActive, orderActiveFirst, type EffectiveBadgeFlags } from "@/components/settings/SettingsElementAvailability"
+
+/** Compact inactive placeholder for geometry mode: the group stays
+ *  discoverable with a short hint naming the tab that owns its switch.
+ *  Never an opacity-dimmed container. */
+function TransformInactive({ name, tab }: { name: string; tab: string }) {
+  const { t } = useT()
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-1.5 shadow-sm animate-fade-in">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between gap-2 cursor-pointer"
+      >
+        <span className="text-zinc-300 font-medium text-xs">{name}</span>
+        <span className="text-[10px] text-zinc-500">{open ? "\u2212" : "+"}</span>
+      </button>
+      {open && (
+        <p className="text-[11px] text-zinc-400 italic leading-snug">{t("ui.activateInTabHint", { name, tab })}</p>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Portrait effective geometry (five-tab settings): gated geometry groups in
+ * active-first DOM order with retained disabled controls. Title logo and
+ * background stay independent (always active); no visibility/style/layout
+ * pickers live here. Raw setting values, resets, ranges, units and Card
+ * locks mirror the legacy standalone cards below (single callbacks, no
+ * duplicated implementations on screen — this branch mounts exclusively).
+ */
+function PortraitEffectiveGeometry({ editVal, editTxt, setEditVal, setEditTxt, element, onPreviewFamilyChange, followOn, followOffDisabled, freezing, onFollowChange, defOffRangeX, defOffRangeY, defTopXBase, defBarXOff, isCardAll, isCardRanked, cardNote, fallbackNote }: {
+  editVal: string | null
+  editTxt: string
+  setEditVal: (v: string | null) => void
+  setEditTxt: (v: string) => void
+  element?: PosterElementId | null
+  onPreviewFamilyChange?: (f: DefaultsPreviewFamily) => void
+  followOn: boolean
+  followOffDisabled: boolean
+  freezing: boolean
+  onFollowChange: (v: boolean) => void
+  defOffRangeX: { min: number; max: number; boundsMin: number; boundsMax: number }
+  defOffRangeY: { min: number; max: number; boundsMin: number; boundsMax: number }
+  defTopXBase: number
+  defBarXOff: boolean
+  isCardAll: boolean
+  isCardRanked: boolean
+  cardNote?: string
+  fallbackNote?: string
+}) {
+  const { t } = useT()
+  const ed = usePosterEditor()
+  const famAttrs = (family: DefaultsPreviewFamily) => ({
+    "data-preview-family": family,
+    onFocusCapture: () => onPreviewFamilyChange?.(family),
+    onPointerDownCapture: () => onPreviewFamilyChange?.(family),
+  })
+  const hideFor = (...els: PosterElementId[]): boolean | undefined =>
+    element ? !els.includes(element) : undefined
+  const flags: EffectiveBadgeFlags = {
+    globalBadges: ed.defaultGlobalBadges,
+    badgeGenre: ed.defaultBadgeGenre,
+    badgeYear: ed.defaultBadgeYear,
+    badgeRating: ed.defaultBadgeRating,
+    separateRatings: ed.defaultSeparateRatings,
+    separateRatingsStyle: ed.defaultSeparateRatingsStyle,
+    rankingBadges: ed.defaultRankingBadges,
+    sashOrder: ed.defaultSashOrder,
+    badgeQuality: ed.defaultBadgeQuality,
+    networkLogo: ed.defaultNetworkLogo,
+    preRelease: ed.defaultPreRelease,
+  }
+  const rankActive = isRankStyleActive(flags)
+  const extraActive = isExtraStyleActive(flags)
+  const metaActive = isGenreStyleActive(flags)
+  const qualityActive = isQualityStyleActive(flags)
+  const sepActive = !!(ed.defaultGlobalBadges && ed.defaultBadgeRating && ed.defaultSeparateRatings)
+  const netActive = !!ed.defaultNetworkLogo
+  const tabHint = t("ui.settingsTabInformation")
+  const rankTabHint = t("ui.settingsTabRankings")
+  const slider = (icon: React.ReactNode, label: string, value: number, min: number, max: number, boundsMin: number, boundsMax: number, onChange: (v: number) => void, onDoubleClick: () => void, editingKey: string, suffix: string, step?: number) => (
+    <SliderRow icon={icon} label={label} value={value} min={min} max={max} boundsMin={boundsMin} boundsMax={boundsMax} step={step} onChange={onChange} onDoubleClick={onDoubleClick} editingValue={editVal} editText={editTxt} setEditingValue={setEditVal} setEditText={setEditTxt} editingKey={editingKey} suffix={suffix} />
+  )
+  const cardNotes = (rankedOnly?: boolean) => (
+    <>
+      {isCardAll && (
+        <p className="text-[10px] text-muted italic leading-tight px-1">{t("ui.posterLayoutCardControlsNote")}</p>
+      )}
+      {isCardRanked && (rankedOnly || true) && (
+        <p className="text-[10px] text-muted italic leading-tight px-1">{t("ui.posterLayoutCardFallbackNote")}</p>
+      )}
+    </>
+  )
+  void cardNote
+  void fallbackNote
+  const flatFresh = ed.defaultPosterLayout === "fresh"
+  const flatFreshAll = flatFresh && ed.defaultPosterFreshScope === "all"
+  const logoMax = flatFresh ? 200 : 100
+  const logoShown = ed.defaultLogoScale ?? (flatFreshAll ? 100 : 75)
+  const logoCard = (
+    <div {...famAttrs("logo")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-1.5 shadow-sm animate-fade-in">
+      <div className="flex items-center justify-between px-1">
+        <span className="font-semibold text-zinc-200 flex items-center gap-1.5">
+          <ImageIcon className="w-3.5 h-3.5 text-accent-orange" />
+          {t("ui.logoSection")}
+          {ed.defaultLogoScale == null && (
+            <span className="text-[10px] font-medium text-muted">· {t("ui.auto")}</span>
+          )}
+        </span>
+        <button type="button" aria-label={t("ui.reset")}
+                onClick={() => { ed.setDefaultLogoScale(null); ed.setDefaultLogoOffsetX(null); ed.setDefaultLogoOffsetY(null) }}
+                className="text-xs text-muted hover:text-accent transition-colors px-2 py-0.5 rounded-md border border-border/50 hover:border-accent/30">
+          {t("ui.reset")}
+        </button>
+      </div>
+      {slider(<Search className="w-3.5 h-3.5" />, t("ui.scale"), logoShown, 10, logoMax, 10, logoMax, (v) => { ed.setDefaultLogoScale(v) }, () => { ed.setDefaultLogoScale(null) }, "dlogoScale", "%")}
+      <div title={isCardAll ? t("ui.posterLayoutCardControlsNote") : (isCardRanked ? t("ui.posterLayoutCardFallbackNote") : undefined)} aria-disabled={isCardAll || undefined}>
+        <fieldset disabled={isCardAll} className="contents">
+          {slider(<ArrowLeftRight className="w-3.5 h-3.5" />, "X", ed.defaultLogoOffsetX ?? 0, defOffRangeX.min, defOffRangeX.max, defOffRangeX.boundsMin, defOffRangeX.boundsMax, (v) => { ed.setDefaultLogoOffsetX(v) }, () => { ed.setDefaultLogoOffsetX(null) }, "dlogoOX", "px", 1)}
+          {slider(<ArrowUpDown className="w-3.5 h-3.5" />, "Y", ed.defaultLogoOffsetY ?? 0, defOffRangeY.min, defOffRangeY.max, defOffRangeY.boundsMin, defOffRangeY.boundsMax, (v) => { ed.setDefaultLogoOffsetY(v) }, () => { ed.setDefaultLogoOffsetY(null) }, "dlogoOY", "px", 1)}
+        </fieldset>
+      </div>
+      {cardNotes()}
+    </div>
+  )
+  // Position card (Auto alignment only): the title-logo alignment selector
+  // is removed — Auto always (portrait center, landscape left by server
+  // contract). Only the network-position override lives here, and only while
+  // the network logo is enabled (no empty Position card when off).
+  const positionCard = netActive ? (
+    <div className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-2.5 shadow-sm animate-fade-in">
+      <span className="text-zinc-200 font-semibold text-xs">{t("ui.position")}</span>
+      <div className="space-y-1.5" title={t("ui.networkLogoPosition")} data-testid="transform-netpos-group">
+        <span className="text-[11px] text-muted font-medium block">{t("ui.networkLogoPosition")}</span>
+          <div className="flex gap-1">
+            {(["auto", "top"] as const).map((pos) => (
+              <button key={pos} type="button" onClick={() => ed.setDefaultNetworkLogoPosition(pos)} aria-pressed={ed.defaultNetworkLogoPosition === pos} className={`flex-1 py-1 rounded-lg text-[11px] font-semibold transition-all duration-150 cursor-pointer ${ed.defaultNetworkLogoPosition === pos ? "bg-white/20 text-foreground shadow-sm" : "bg-white/5 text-muted hover:bg-white/10 hover:text-zinc-200"}`}>
+                {pos === "auto" ? t("ui.auto") : t("ui.networkLogoPositionTop")}
+              </button>
+            ))}
+          </div>
+      </div>
+    </div>
+  ) : null
+  const rankCard = (
+    <div {...famAttrs("rank")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-2.5 shadow-sm animate-fade-in">
+      <div className="flex items-center justify-between">
+        <span className="text-zinc-300 font-medium flex items-center gap-1.5">
+          <Trophy className="w-3.5 h-3.5 text-amber-500" />
+          {t("ui.rankFamily")}
+        </span>
+        <button type="button" aria-label={t("ui.reset")} onClick={() => { ed.setDefaultTopBadgeScale(100); ed.setDefaultTopBadgeOffsetX(0); ed.setDefaultTopBadgeOffsetY(0) }} className="text-xs text-muted hover:text-accent transition-colors px-2 py-0.5 rounded-md border border-border/50 hover:border-accent/30">
+          {t("ui.reset")}
+        </button>
+      </div>
+      <div className="space-y-1.5 pt-1" title={isCardAll ? t("ui.posterLayoutCardControlsNote") : (isCardRanked ? t("ui.posterLayoutCardFallbackNote") : undefined)}>
+        <fieldset disabled={isCardAll} className="contents">
+          {slider(<Search className="w-3.5 h-3.5" />, t("ui.scale"), ed.defaultTopBadgeScale, 50, 150, 10, 200, (v) => { ed.setDefaultTopBadgeScale(v) }, () => { ed.setDefaultTopBadgeScale(100) }, "tbs", "%")}
+          {slider(<ArrowLeftRight className="w-3.5 h-3.5" />, "X", ed.defaultTopBadgeOffsetX + defTopXBase, defOffRangeX.min + defTopXBase, defOffRangeX.max + defTopXBase, defOffRangeX.boundsMin + defTopXBase, defOffRangeX.boundsMax + defTopXBase, (v) => { ed.setDefaultTopBadgeOffsetX(v - defTopXBase) }, () => { ed.setDefaultTopBadgeOffsetX(0) }, "tbx", "px", 1)}
+          {slider(<ArrowUpDown className="w-3.5 h-3.5" />, "Y", ed.defaultTopBadgeOffsetY, defOffRangeY.min, defOffRangeY.max, defOffRangeY.boundsMin, defOffRangeY.boundsMax, (v) => { ed.setDefaultTopBadgeOffsetY(v) }, () => { ed.setDefaultTopBadgeOffsetY(0) }, "tby", "px", 1)}
+        </fieldset>
+      </div>
+      {cardNotes()}
+    </div>
+  )
+  const extraCard = (
+    <div {...famAttrs("info")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-2.5 shadow-sm animate-fade-in">
+      <div className="flex items-center justify-between">
+        <span className="text-zinc-300 font-medium flex items-center gap-1.5">
+          <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+          {t("ui.sash_extra")}
+        </span>
+        <button type="button" aria-label={t("ui.reset")} onClick={() => { ed.setDefaultExtraBadgeScale(null); ed.setDefaultExtraBadgeOffsetX(null); ed.setDefaultExtraBadgeOffsetY(null) }} className="text-xs text-muted hover:text-accent transition-colors px-2 py-0.5 rounded-md border border-border/50 hover:border-accent/30">
+          {t("ui.reset")}
+        </button>
+      </div>
+      <div className="space-y-1.5 pt-1">
+        {slider(<Search className="w-3.5 h-3.5" />, t("ui.scale"), ed.defaultExtraBadgeScale ?? ed.defaultTopBadgeScale, 50, 150, 10, 200, (v) => { ed.setDefaultExtraBadgeScale(v) }, () => { ed.setDefaultExtraBadgeScale(null) }, "exs", "%")}
+        {slider(<ArrowLeftRight className="w-3.5 h-3.5" />, "X", ed.defaultExtraBadgeOffsetX ?? ed.defaultTopBadgeOffsetX, defOffRangeX.min, defOffRangeX.max, defOffRangeX.boundsMin, defOffRangeX.boundsMax, (v) => { ed.setDefaultExtraBadgeOffsetX(v) }, () => { ed.setDefaultExtraBadgeOffsetX(null) }, "exx", "px", 1)}
+        {slider(<ArrowUpDown className="w-3.5 h-3.5" />, "Y", ed.defaultExtraBadgeOffsetY ?? ed.defaultTopBadgeOffsetY, defOffRangeY.min, defOffRangeY.max, defOffRangeY.boundsMin, defOffRangeY.boundsMax, (v) => { ed.setDefaultExtraBadgeOffsetY(v) }, () => { ed.setDefaultExtraBadgeOffsetY(null) }, "exy", "px", 1)}
+      </div>
+    </div>
+  )
+  const metaCard = (
+    <div {...famAttrs("genre")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-2.5 shadow-sm animate-fade-in">
+      <div className="flex items-center justify-between">
+        <span className="text-zinc-300 font-medium flex items-center gap-1.5">
+          <Star className="w-3.5 h-3.5 text-amber-400" />
+          {t("ui.genreRatingBadge")}
+        </span>
+        <button type="button" aria-label={t("ui.reset")} onClick={() => { ed.setDefaultGenreBadgeScale(100); ed.setDefaultGenreBadgeOffsetX(0); ed.setDefaultGenreBadgeOffsetY(0) }} className="text-xs text-muted hover:text-accent transition-colors px-2 py-0.5 rounded-md border border-border/50 hover:border-accent/30">
+          {t("ui.reset")}
+        </button>
+      </div>
+      <div className="space-y-1.5 pt-1">
+        {slider(<Search className="w-3.5 h-3.5" />, t("ui.scale"), ed.defaultGenreBadgeScale, 50, 150, 10, 200, (v) => { ed.setDefaultGenreBadgeScale(v) }, () => { ed.setDefaultGenreBadgeScale(100) }, "gbs", "%")}
+        <div title={isCardAll ? t("ui.posterLayoutCardControlsNote") : (isCardRanked ? t("ui.posterLayoutCardFallbackNote") : undefined)} aria-disabled={isCardAll || undefined}>
+          <fieldset disabled={isCardAll} className="contents">
+            {slider(<ArrowLeftRight className="w-3.5 h-3.5" />, "X", ed.defaultGenreBadgeOffsetX, defOffRangeX.min, defOffRangeX.max, defOffRangeX.boundsMin, defOffRangeX.boundsMax, (v) => { ed.setDefaultGenreBadgeOffsetX(v) }, () => { ed.setDefaultGenreBadgeOffsetX(0) }, "gbx", "px", 1)}
+            {slider(<ArrowUpDown className="w-3.5 h-3.5" />, "Y", ed.defaultGenreBadgeOffsetY, defOffRangeY.min, defOffRangeY.max, defOffRangeY.boundsMin, defOffRangeY.boundsMax, (v) => { ed.setDefaultGenreBadgeOffsetY(v) }, () => { ed.setDefaultGenreBadgeOffsetY(0) }, "gby", "px", 1)}
+          </fieldset>
+        </div>
+        {cardNotes()}
+      </div>
+    </div>
+  )
+  const qualityCard = (
+    <div {...famAttrs("quality")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-2.5 shadow-sm animate-fade-in">
+      <div className="flex items-center justify-between">
+        <span className="text-zinc-300 font-medium flex items-center gap-1.5">
+          <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+          {t("ui.badgeQuality")}
+        </span>
+        <button type="button" aria-label={t("ui.reset")} onClick={() => { ed.setDefaultQualityBadgeScale(100); ed.setDefaultQualityBadgeOffsetX(DEFAULT_QUALITY_BADGE_OFFSET_X); ed.setDefaultQualityBadgeOffsetY(DEFAULT_QUALITY_BADGE_OFFSET_Y) }} className="text-xs text-muted hover:text-accent transition-colors px-2 py-0.5 rounded-md border border-border/50 hover:border-accent/30">
+          {t("ui.reset")}
+        </button>
+      </div>
+      <div className="space-y-1.5 pt-1">
+        {slider(<Search className="w-3.5 h-3.5" />, t("ui.scale"), ed.defaultQualityBadgeScale, 50, 150, 10, 200, (v) => { ed.setDefaultQualityBadgeScale(v) }, () => { ed.setDefaultQualityBadgeScale(100) }, "qbs", "%")}
+        {slider(<ArrowLeftRight className="w-3.5 h-3.5" />, "X", ed.defaultQualityBadgeOffsetX, defOffRangeX.min, defOffRangeX.max, defOffRangeX.boundsMin, defOffRangeX.boundsMax, (v) => { ed.setDefaultQualityBadgeOffsetX(v) }, () => { ed.setDefaultQualityBadgeOffsetX(DEFAULT_QUALITY_BADGE_OFFSET_X) }, "qbx", "px", 1)}
+        {slider(<ArrowUpDown className="w-3.5 h-3.5" />, "Y", ed.defaultQualityBadgeOffsetY, defOffRangeY.min, defOffRangeY.max, defOffRangeY.boundsMin, defOffRangeY.boundsMax, (v) => { ed.setDefaultQualityBadgeOffsetY(v) }, () => { ed.setDefaultQualityBadgeOffsetY(DEFAULT_QUALITY_BADGE_OFFSET_Y) }, "qby", "px", 1)}
+      </div>
+    </div>
+  )
+  const separateCard = (
+    <div {...famAttrs("ratings")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-2.5 shadow-sm animate-fade-in">
+      <div className="flex items-center justify-between">
+        <span className="text-zinc-300 font-medium flex items-center gap-1.5">
+          <Star className="w-3.5 h-3.5 text-amber-400" />
+          {t("ui.separateRatings")}
+        </span>
+        <button type="button" aria-label={t("ui.reset")} onClick={() => { ed.setDefaultSeparateBadgeScale(getSeparateBadgeDefaultScale(ed.defaultSeparateRatingsStyle)); ed.setDefaultSeparateBadgeOffsetX(0); ed.setDefaultSeparateBadgeOffsetY(0) }} className="text-xs text-muted hover:text-accent transition-colors px-2 py-0.5 rounded-md border border-border/50 hover:border-accent/30">
+          {t("ui.reset")}
+        </button>
+      </div>
+      <div className="space-y-1.5 pt-1">
+        {slider(<Search className="w-3.5 h-3.5" />, t("ui.scale"), separateBadgeScaleToUI(ed.defaultSeparateBadgeScale), 50, 150, SEPARATE_BADGE_SCALE_UI_MIN, SEPARATE_BADGE_SCALE_UI_MAX, (v) => { ed.setDefaultSeparateBadgeScale(uiToSeparateBadgeScale(v)) }, () => { ed.setDefaultSeparateBadgeScale(getSeparateBadgeDefaultScale(ed.defaultSeparateRatingsStyle)) }, "seps", "%")}
+        <div title={defBarXOff ? t("ui.separateRatingsBarXDisabledHint") : undefined}>
+          <fieldset disabled={defBarXOff} className="contents">
+            {slider(<ArrowLeftRight className="w-3.5 h-3.5" />, "X", ed.defaultSeparateBadgeOffsetX, defOffRangeX.min, defOffRangeX.max, defOffRangeX.boundsMin, defOffRangeX.boundsMax, (v) => { if (!defBarXOff) ed.setDefaultSeparateBadgeOffsetX(v) }, () => { ed.setDefaultSeparateBadgeOffsetX(0) }, "sepsox", "px", 1)}
+          </fieldset>
+        </div>
+        {slider(<ArrowUpDown className="w-3.5 h-3.5" />, "Y", ed.defaultSeparateBadgeOffsetY, defOffRangeY.min, defOffRangeY.max, defOffRangeY.boundsMin, defOffRangeY.boundsMax, (v) => { ed.setDefaultSeparateBadgeOffsetY(v) }, () => { ed.setDefaultSeparateBadgeOffsetY(0) }, "sepsoy", "px", 1)}
+      </div>
+    </div>
+  )
+  const networkCard = (
+    <div {...famAttrs("logo")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-2.5 shadow-sm animate-fade-in">
+      <div className="flex items-center justify-between">
+        <span className="text-zinc-300 font-medium flex items-center gap-1.5">
+          <Tv className="w-3.5 h-3.5 text-sky-400" />
+          {t("ui.networkLogo")}
+        </span>
+        <button type="button" aria-label={t("ui.reset")} onClick={() => { ed.setDefaultNetworkLogoFollowTitle(true); ed.setDefaultNetworkLogoScale(100); ed.setDefaultNetworkLogoOffsetX(0); ed.setDefaultNetworkLogoOffsetY(0) }} className="text-xs text-muted hover:text-accent transition-colors px-2 py-0.5 rounded-md border border-border/50 hover:border-accent/30">
+          {t("ui.reset")}
+        </button>
+      </div>
+      <div className="flex items-center justify-between px-1 gap-2" title={isCardAll ? t("ui.posterLayoutCardControlsNote") : (isCardRanked ? t("ui.posterLayoutCardFallbackNote") : undefined)}>
+        <span className="text-zinc-300">{t("ui.followTitleLogo")}</span>
+        <Toggle value={followOn} onChange={onFollowChange} label={t("ui.followTitleLogo")} disabled={isCardAll || freezing || (followOn && followOffDisabled)} />
+      </div>
+      <div className="space-y-1.5 pt-1">
+        {slider(<Search className="w-3.5 h-3.5" />, t("ui.scale"), ed.defaultNetworkLogoScale, 50, 150, 10, 200, (v) => { ed.setDefaultNetworkLogoScale(v) }, () => { ed.setDefaultNetworkLogoScale(100) }, "nls", "%")}
+        <div title={isCardAll ? t("ui.posterLayoutCardControlsNote") : (isCardRanked ? t("ui.posterLayoutCardFallbackNote") : undefined)} aria-disabled={isCardAll || undefined}>
+          <fieldset disabled={isCardAll} className="contents">
+            {slider(<ArrowLeftRight className="w-3.5 h-3.5" />, "X", ed.defaultNetworkLogoOffsetX, defOffRangeX.min, defOffRangeX.max, defOffRangeX.boundsMin, defOffRangeX.boundsMax, (v) => { ed.setDefaultNetworkLogoOffsetX(v) }, () => { ed.setDefaultNetworkLogoOffsetX(0) }, "nlx", "px", 1)}
+            {slider(<ArrowUpDown className="w-3.5 h-3.5" />, "Y", ed.defaultNetworkLogoOffsetY, defOffRangeY.min, defOffRangeY.max, defOffRangeY.boundsMin, defOffRangeY.boundsMax, (v) => { ed.setDefaultNetworkLogoOffsetY(v) }, () => { ed.setDefaultNetworkLogoOffsetY(0) }, "nly", "px", 1)}
+          </fieldset>
+        </div>
+        {cardNotes()}
+      </div>
+    </div>
+  )
+  const gradientCard = (
+    <div {...famAttrs("gradient")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-2.5 shadow-sm animate-fade-in">
+      <div className="flex items-center justify-between">
+        <span className="text-zinc-200 font-semibold flex items-center gap-1.5">
+          <Cloud className="w-3.5 h-3.5 text-cyan-400" />
+          {t("ui.blurSection")}
+        </span>
+        <div className="flex items-center gap-2">
+          {ed.defaultBlurEnabled && (
+            <button type="button" aria-label={t("ui.reset")} onClick={() => { ed.setDefaultGradientHeight(NATURAL_GRADIENT_DEFAULTS.gradientHeight); ed.setDefaultBlurIntensity(NATURAL_GRADIENT_DEFAULTS.blurIntensity); ed.setDefaultBlurFade(NATURAL_GRADIENT_DEFAULTS.blurFade); ed.setDefaultBlurDarkness(NATURAL_GRADIENT_DEFAULTS.blurDarkness); ed.setDefaultTintStrength(NATURAL_GRADIENT_DEFAULTS.tintStrength) }} className="text-xs text-muted hover:text-accent transition-colors px-2 py-0.5 rounded-md border border-border/50 hover:border-accent/30 cursor-pointer">
+              {t("ui.reset")}
+            </button>
+          )}
+          <Toggle value={ed.defaultBlurEnabled} onChange={(v) => ed.setDefaultBlurEnabled(v)} label={t("ui.blurSection")} />
+        </div>
+      </div>
+      {ed.defaultBlurEnabled ? (
+        <>
+          <GradientPresetRow current={{ gradientHeight: ed.defaultGradientHeight, blurIntensity: ed.defaultBlurIntensity, blurFade: ed.defaultBlurFade, blurDarkness: ed.defaultBlurDarkness, tintStrength: ed.defaultTintStrength, blurEnabled: ed.defaultBlurEnabled }} onApply={(v: GradientPresetValues) => { ed.setDefaultBlurEnabled(true); ed.setDefaultGradientHeight(v.gradientHeight); ed.setDefaultBlurIntensity(v.blurIntensity); ed.setDefaultBlurFade(v.blurFade); ed.setDefaultBlurDarkness(v.blurDarkness); ed.setDefaultTintStrength(v.tintStrength) }} naturalLabel={t("ui.gradientPresetNatural")} colorLabel={t("ui.gradientPresetColor")} neroLabel="Nero" addTitle={t("ui.gradientPresetAdd")} namePlaceholder={t("ui.gradientPresetName")} deleteLabel={t("ui.gradientPresetDelete")} />
+          <div className="space-y-1.5 pt-1 animate-fade-in">
+            {slider(<Ruler className="w-3.5 h-3.5" />, t("ui.height"), ed.defaultGradientHeight, 5, 100, 5, 100, (v) => { ed.setDefaultGradientHeight(v) }, () => { ed.setDefaultGradientHeight(30) }, "gh", "%")}
+            {slider(<Cloud className="w-3.5 h-3.5" />, t("ui.intensity"), ed.defaultBlurIntensity, 1, 100, 1, 100, (v) => { ed.setDefaultBlurIntensity(v) }, () => { ed.setDefaultBlurIntensity(NATURAL_GRADIENT_DEFAULTS.blurIntensity) }, "bi", "px")}
+            {slider(<Minus className="w-3.5 h-3.5" />, t("ui.fade"), ed.defaultBlurFade, 0, 100, 0, 100, (v) => { ed.setDefaultBlurFade(v) }, () => { ed.setDefaultBlurFade(NATURAL_GRADIENT_DEFAULTS.blurFade) }, "bf", "%")}
+            {slider(<Circle className="w-3.5 h-3.5" />, t("ui.darkness"), ed.defaultBlurDarkness, 0, 100, 0, 100, (v) => { ed.setDefaultBlurDarkness(v) }, () => { ed.setDefaultBlurDarkness(30) }, "bd", "%")}
+            {slider(<Cloud className="w-3.5 h-3.5" />, t("ui.tintStrength"), ed.defaultTintStrength, 0, 100, 0, 100, (v) => { ed.setDefaultTintStrength(v) }, () => { ed.setDefaultTintStrength(20) }, "tint", "%")}
+            {slider(<Circle className="w-3.5 h-3.5" />, t("ui.topShade"), ed.defaultTopShade, 0, 100, 0, 100, (v) => { ed.setDefaultTopShade(v) }, () => { ed.setDefaultTopShade(80) }, "tsdef", "%")}
+          </div>
+        </>
+      ) : (
+        <p className="text-[11px] text-zinc-400 italic">{t("ui.blurDisabled")}</p>
+      )}
+    </div>
+  )
+  const gated: { key: string; active: boolean; hidden: boolean | undefined; name: string; hintTab: string; testId: string; node: React.ReactNode }[] = [
+    { key: "rank", active: rankActive, hidden: hideFor("rank"), name: t("ui.rankFamily"), hintTab: rankTabHint, testId: "transform-geo-rank", node: rankCard },
+    { key: "extra", active: extraActive, hidden: hideFor("info"), name: t("ui.sash_extra"), hintTab: rankTabHint, testId: "transform-geo-extra", node: extraCard },
+    { key: "meta", active: metaActive, hidden: hideFor("genre"), name: t("ui.genreRatingBadge"), hintTab: tabHint, testId: "transform-geo-meta", node: metaCard },
+    { key: "quality", active: qualityActive, hidden: hideFor("quality"), name: t("ui.badgeQuality"), hintTab: tabHint, testId: "transform-geo-quality", node: qualityCard },
+    { key: "separate", active: sepActive, hidden: hideFor("ratings", "sources"), name: t("ui.separateRatings"), hintTab: tabHint, testId: "transform-geo-separate", node: separateCard },
+    { key: "network", active: netActive, hidden: hideFor("logo"), name: t("ui.networkLogo"), hintTab: tabHint, testId: "transform-geo-network", node: networkCard },
+  ]
+  // Inactive elements stay completely hidden (user request supersedes the
+  // legacy disabled-gate disclosure): enabling in Information/Rankings
+  // immediately exposes the applicable geometry; staged values live in the
+  // editor context so hiding never resets them.
+  const gatedActive = gated.filter((g) => g.active)
+  const ordered = orderActiveFirst(gatedActive.map((g) => ({ active: g.active, value: g })))
+  return (
+    <>
+      <div hidden={hideFor("logo")} data-testid="transform-geo-logo">{logoCard}</div>
+      {positionCard && <div data-testid="transform-geo-position">{positionCard}</div>}
+      {ordered.map((g) => (
+        <div key={g.key} hidden={g.hidden}>
+          <AvailabilityGate active name={g.name} hint="" testId={g.testId}>
+            {g.node}
+          </AvailabilityGate>
+        </div>
+      ))}
+      <div hidden={hideFor("background")} data-testid="transform-geo-gradient">{gradientCard}</div>
+      <button type="button" onClick={() => { ed.setDefaultTopBadgeScale(100); ed.setDefaultTopBadgeOffsetX(0); ed.setDefaultTopBadgeOffsetY(0); ed.setDefaultExtraBadgeScale(null); ed.setDefaultExtraBadgeOffsetX(null); ed.setDefaultExtraBadgeOffsetY(null); ed.setDefaultGenreBadgeScale(100); ed.setDefaultGenreBadgeOffsetX(0); ed.setDefaultGenreBadgeOffsetY(0); ed.setDefaultQualityBadgeScale(100); ed.setDefaultQualityBadgeOffsetX(DEFAULT_QUALITY_BADGE_OFFSET_X); ed.setDefaultQualityBadgeOffsetY(DEFAULT_QUALITY_BADGE_OFFSET_Y); ed.setDefaultNetworkLogoFollowTitle(true); ed.setDefaultNetworkLogoScale(100); ed.setDefaultNetworkLogoOffsetX(0); ed.setDefaultNetworkLogoOffsetY(0); ed.setDefaultBlurEnabled(true); ed.setDefaultGradientHeight(NATURAL_GRADIENT_DEFAULTS.gradientHeight); ed.setDefaultBlurIntensity(NATURAL_GRADIENT_DEFAULTS.blurIntensity); ed.setDefaultBlurFade(NATURAL_GRADIENT_DEFAULTS.blurFade); ed.setDefaultBlurDarkness(NATURAL_GRADIENT_DEFAULTS.blurDarkness); ed.setDefaultTintStrength(NATURAL_GRADIENT_DEFAULTS.tintStrength); ed.setDefaultTopShade(80) }} className="w-full py-1.5 rounded-lg text-[11px] font-semibold text-muted hover:text-zinc-200 bg-white/5 hover:bg-white/10 border border-white/10 transition-colors cursor-pointer">
+        {t("ui.reset")} · {t("ui.posterShapePortrait")}
+      </button>
+    </>
+  )
+}
 
 /** Trasforma defaults tab (mirrors the editor Transform tab). The portrait /
  *  landscape target is owned by SettingsPanel and arrives as a controlled
@@ -26,7 +371,7 @@ import { getBadgeOffsetRange } from "@/lib/badge-offset-ranges"
  *  the existing `land ?? flat` profile), never persisted defaults. The inner
  *  switch renders only when uncontrolled (standalone reuse); hidden when
  *  controlled so duplicate selectors cannot diverge. */
-export function TransformPanel({ active, previewShape, onPreviewShapeChange, onPreviewFamilyChange, demoMedia, previewFamily }: {
+export function TransformPanel({ active, previewShape, onPreviewShapeChange, onPreviewFamilyChange, demoMedia, previewFamily, element, geometryOnly }: {
   active: boolean
   /** Edit-target switch (lifted to SettingsPanel): guides preview + section
    *  only, never the persisted `defaultPosterShape`. Absent = local state
@@ -41,6 +386,19 @@ export function TransformPanel({ active, previewShape, onPreviewShapeChange, onP
   demoMedia?: DefaultsPreviewDemoMedia | null
   /** Family being edited (SettingsPanel): same sample as the preview. */
   previewFamily?: DefaultsPreviewFamily | null
+  /** Unified workspace element filter (SettingsPanel): shows only the
+   *  geometry groups for the selected element (mounted + hidden, never
+   *  unmounted). Absent = legacy full behavior (standalone reuse/tests). */
+  element?: PosterElementId | null
+  /**
+   * Geometry-only presentation (five-tab settings): the separate-ratings
+   * style picker moves to its Badge appearance home (never duplicated here),
+   * a Position card hosts the network-position control moved from the Badge
+   * tab (title-logo alignment is Auto-only, no selector), and gated-off
+   * groups render a compact inactive placeholder with a short activate hint
+   * instead of vanishing. Absent = legacy standalone behavior unchanged.
+   */
+  geometryOnly?: boolean
 }) {
   const { t, lang } = useT()
   const ed = usePosterEditor()
@@ -78,6 +436,19 @@ export function TransformPanel({ active, previewShape, onPreviewShapeChange, onP
   // dynamic logoBounds in TransformControls/context — never this helper.)
   const defOffRangeX = getBadgeOffsetRange("poster", "x")
   const defOffRangeY = getBadgeOffsetRange("poster", "y")
+  // Card truth (service card compositor + per-title guards are authority):
+  // portrait defaults use the flat layout AND the flat scope. Geometry
+  // locks apply ONLY when a Card skin is selected with effective scope
+  // "all"; ranked/absent/invalid scope leaves the Standard fallback
+  // positioning live (ranked titles render Card fixed, unranked fall back
+  // to Standard). No rendered-title inference, no default mutation.
+  const flatScope = isPosterFreshScope(ed.defaultPosterFreshScope)
+    ? ed.defaultPosterFreshScope
+    : "ranked"
+  const isCardAllDefaults = isCardSkin(ed.defaultPosterLayout) && flatScope === "all"
+  const isCardRankedDefaults = isCardSkin(ed.defaultPosterLayout) && !isCardAllDefaults
+  const cardControlsNote = isCardAllDefaults ? t("ui.posterLayoutCardControlsNote") : undefined
+  const cardFallbackNote = isCardRankedDefaults ? t("ui.posterLayoutCardFallbackNote") : undefined
   // Preview-family scope (U2): same helper as the Badge tab — explicit press
   // or keyboard focus reports only (never hover: no flicker/fetch storms),
   // no focus moves, no unmounts.
@@ -86,6 +457,11 @@ export function TransformPanel({ active, previewShape, onPreviewShapeChange, onP
     onFocusCapture: () => onPreviewFamilyChange?.(family),
     onPointerDownCapture: () => onPreviewFamilyChange?.(family),
   })
+  // Unified workspace filter: null = show everything (legacy). Ratings and
+  // sources share the separate-ratings geometry; the network card follows
+  // the logo element with the title-logo card.
+  const hideFor = (...els: PosterElementId[]): boolean | undefined =>
+    element ? !els.includes(element) : undefined
   // Global network follow ("Follow the title logo", default ON): same freeze
   // as the per-title card, but on the exact defaults-preview URL being
   // displayed (same builder, same sample, same shape) + netgeo=1. OFF locks
@@ -172,6 +548,7 @@ export function TransformPanel({ active, previewShape, onPreviewShapeChange, onP
     <div
       role="tabpanel"
       aria-label={t("ui.transform")}
+      hidden={!active}
       className={`space-y-3.5 text-xs ${active ? "block animate-tab-fade-in" : "hidden"}`}
     >
       {/* Inner switch for uncontrolled use only: SettingsPanel renders the
@@ -205,7 +582,11 @@ export function TransformPanel({ active, previewShape, onPreviewShapeChange, onP
           demoMedia={demoMedia}
           previewFamily={previewFamily}
           controlsVisible={active}
+          element={element}
+          geometryOnly={geometryOnly}
         />
+      ) : geometryOnly ? (
+        <PortraitEffectiveGeometry editVal={editVal} editTxt={editTxt} setEditVal={setEditVal} setEditTxt={setEditTxt} element={element} onPreviewFamilyChange={onPreviewFamilyChange} followOn={portraitFollowOn} followOffDisabled={followOffDisabled} freezing={netFreezing} onFollowChange={handleGlobalFollowChange} defOffRangeX={defOffRangeX} defOffRangeY={defOffRangeY} defTopXBase={defTopXBase} defBarXOff={defBarXOff} isCardAll={isCardAllDefaults} isCardRanked={isCardRankedDefaults} cardNote={cardControlsNote} fallbackNote={cardFallbackNote} />
       ) : (
       <>
       {/* Logo Predefinito (null = auto-fit per aspect, storico; esplicito fino a
@@ -213,7 +594,7 @@ export function TransformPanel({ active, previewShape, onPreviewShapeChange, onP
           segue il layout default EFFETTIVO del Verticale (flat): Fresh 10..200,
           Standard 10..100 invariato. L'auto mostrato segue lo scope effettivo:
           Fresh-all = 100, altrimenti 75 (fallback Standard storico, mai baked). */}
-      <div {...famAttrs("logo")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-1.5 shadow-sm animate-fade-in">
+      <div {...famAttrs("logo")} hidden={hideFor("logo")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-1.5 shadow-sm animate-fade-in">
         <div className="flex items-center justify-between px-1">
           <span className="font-semibold text-zinc-200 flex items-center gap-1.5">
             <ImageIcon className="w-3.5 h-3.5 text-accent-orange" />
@@ -253,6 +634,8 @@ export function TransformPanel({ active, previewShape, onPreviewShapeChange, onP
         />
           )
         })()}
+        <div title={cardControlsNote ?? cardFallbackNote} aria-disabled={isCardAllDefaults || undefined}>
+        <fieldset disabled={isCardAllDefaults} className="contents">
         <SliderRow
           icon={<ArrowLeftRight className="w-3.5 h-3.5" />}
           label="X"
@@ -289,10 +672,54 @@ export function TransformPanel({ active, previewShape, onPreviewShapeChange, onP
           editingKey="dlogoOY"
           suffix="px"
         />
+        </fieldset>
+        </div>
+        {isCardAllDefaults && (
+          <p className="text-[10px] text-muted italic leading-tight px-1">{t("ui.posterLayoutCardControlsNote")}</p>
+        )}
+        {isCardRankedDefaults && (
+          <p className="text-[10px] text-muted italic leading-tight px-1">{t("ui.posterLayoutCardFallbackNote")}</p>
+        )}
       </div>
+      {/* Network position home (moved from the Badge tab): title-logo
+          alignment is Auto-only (no selector). Portrait flat here, landscape
+          override in the landscape section. */}
+      {geometryOnly && (
+      <div className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-2.5 shadow-sm animate-fade-in">
+        <span className="text-zinc-200 font-semibold text-xs">{t("ui.position")}</span>
+        <div className="space-y-1.5" title={t("ui.networkLogoPosition")}>
+          <span className="text-[11px] text-muted font-medium block">{t("ui.networkLogoPosition")}</span>
+          {geometryOnly && !ed.defaultNetworkLogo && (
+            <p data-testid="transform-netpos-inactive" className="text-[11px] text-zinc-400 italic leading-snug">{t("ui.activateInTabHint", { name: t("ui.networkLogo"), tab: t("ui.settingsTabInformation") })}</p>
+          )}
+          <fieldset disabled={geometryOnly && !ed.defaultNetworkLogo} className="contents">
+          <div className="flex gap-1">
+            {(["auto", "top"] as const).map((pos) => (
+              <button
+                key={pos}
+                type="button"
+                onClick={() => ed.setDefaultNetworkLogoPosition(pos)}
+                aria-pressed={ed.defaultNetworkLogoPosition === pos}
+                className={`flex-1 py-1 rounded-lg text-[11px] font-semibold transition-all duration-150 cursor-pointer ${
+                  ed.defaultNetworkLogoPosition === pos
+                    ? "bg-white/20 text-foreground shadow-sm"
+                    : "bg-white/5 text-muted hover:bg-white/10 hover:text-zinc-200"
+                }`}
+              >
+                {pos === "auto" ? t("ui.auto") : t("ui.networkLogoPositionTop")}
+              </button>
+            ))}
+          </div>
+          </fieldset>
+        </div>
+      </div>
+      )}
+      {!ed.defaultRankingBadges && geometryOnly && (
+        <TransformInactive name={t("ui.rankFamily")} tab={t("ui.settingsTabRankings")} />
+      )}
       {/* Badge Classifica Predefinito */}
       {ed.defaultRankingBadges && (
-      <div {...famAttrs("rank")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-2.5 shadow-sm animate-fade-in">
+      <div {...famAttrs("rank")} hidden={hideFor("rank")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-2.5 shadow-sm animate-fade-in">
         <div className="flex items-center justify-between">
           <span className="text-zinc-300 font-medium flex items-center gap-1.5">
             <Trophy className="w-3.5 h-3.5 text-amber-500" />
@@ -309,7 +736,8 @@ export function TransformPanel({ active, previewShape, onPreviewShapeChange, onP
           </button>
         </div>
 
-        <div className="space-y-1.5 pt-1">
+        <div className="space-y-1.5 pt-1" title={cardControlsNote ?? cardFallbackNote}>
+        <fieldset disabled={isCardAllDefaults} className="contents">
           <SliderRow
             icon={<Search className="w-3.5 h-3.5" />}
             label={t("ui.scale")}
@@ -375,13 +803,23 @@ export function TransformPanel({ active, previewShape, onPreviewShapeChange, onP
             editingKey="tby"
             suffix="px"
           />
+        </fieldset>
         </div>
+        {isCardAllDefaults && (
+          <p className="text-[10px] text-muted italic leading-tight px-1">{t("ui.posterLayoutCardControlsNote")}</p>
+        )}
+        {isCardRankedDefaults && (
+          <p className="text-[10px] text-muted italic leading-tight px-1">{t("ui.posterLayoutCardFallbackNote")}</p>
+        )}
       </div>
       )}
 
+      {!ed.defaultRankingBadges && geometryOnly && (
+        <TransformInactive name={t("ui.sash_extra")} tab={t("ui.settingsTabRankings")} />
+      )}
       {/* Badge Extra Predefinito (indipendente dalla classifica; reset = segui) */}
       {ed.defaultRankingBadges && (
-      <div {...famAttrs("info")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-2.5 shadow-sm animate-fade-in">
+      <div {...famAttrs("info")} hidden={hideFor("info")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-2.5 shadow-sm animate-fade-in">
         <div className="flex items-center justify-between">
           <span className="text-zinc-300 font-medium flex items-center gap-1.5">
             <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
@@ -468,9 +906,12 @@ export function TransformPanel({ active, previewShape, onPreviewShapeChange, onP
       </div>
       )}
 
+      {!ed.defaultGlobalBadges && geometryOnly && (
+        <TransformInactive name={t("ui.genreRatingBadge")} tab={t("ui.settingsTabInformation")} />
+      )}
       {/* Badge Genere Predefinito */}
       {ed.defaultGlobalBadges && (
-      <div {...famAttrs("genre")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-2.5 shadow-sm animate-fade-in">
+      <div {...famAttrs("genre")} hidden={hideFor("genre")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-2.5 shadow-sm animate-fade-in">
         <div className="flex items-center justify-between">
           <span className="text-zinc-300 font-medium flex items-center gap-1.5">
             <Star className="w-3.5 h-3.5 text-amber-400" />
@@ -509,6 +950,8 @@ export function TransformPanel({ active, previewShape, onPreviewShapeChange, onP
             editingKey="gbs"
             suffix="%"
           />
+          <div title={cardControlsNote ?? cardFallbackNote} aria-disabled={isCardAllDefaults || undefined}>
+          <fieldset disabled={isCardAllDefaults} className="contents">
           <SliderRow
             icon={<ArrowLeftRight className="w-3.5 h-3.5" />}
             label="X"
@@ -553,13 +996,24 @@ export function TransformPanel({ active, previewShape, onPreviewShapeChange, onP
             editingKey="gby"
             suffix="px"
           />
+          </fieldset>
+          </div>
+          {isCardAllDefaults && (
+            <p className="text-[10px] text-muted italic leading-tight px-1">{t("ui.posterLayoutCardControlsNote")}</p>
+          )}
+          {isCardRankedDefaults && (
+            <p className="text-[10px] text-muted italic leading-tight px-1">{t("ui.posterLayoutCardFallbackNote")}</p>
+          )}
         </div>
       </div>
       )}
 
+      {!ed.defaultBadgeQuality && geometryOnly && (
+        <TransformInactive name={t("ui.badgeQuality")} tab={t("ui.settingsTabInformation")} />
+      )}
       {/* Badge Qualità Predefinito */}
       {ed.defaultBadgeQuality && (
-      <div {...famAttrs("quality")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-2.5 shadow-sm animate-fade-in">
+      <div {...famAttrs("quality")} hidden={hideFor("quality")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-2.5 shadow-sm animate-fade-in">
         <div className="flex items-center justify-between">
           <span className="text-zinc-300 font-medium flex items-center gap-1.5">
             <Sparkles className="w-3.5 h-3.5 text-purple-400" />
@@ -646,9 +1100,12 @@ export function TransformPanel({ active, previewShape, onPreviewShapeChange, onP
       </div>
       )}
 
+      {!(ed.defaultGlobalBadges && ed.defaultBadgeRating && ed.defaultSeparateRatings) && geometryOnly && (
+        <TransformInactive name={t("ui.separateRatings")} tab={t("ui.settingsTabInformation")} />
+      )}
       {/* Rating Separati Predefiniti (scala relativa UI + offset gruppo) */}
       {ed.defaultGlobalBadges && ed.defaultBadgeRating && ed.defaultSeparateRatings && (
-      <div {...famAttrs("ratings")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-2.5 shadow-sm animate-fade-in">
+      <div {...famAttrs("ratings")} hidden={hideFor("ratings", "sources")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-2.5 shadow-sm animate-fade-in">
         <div className="flex items-center justify-between">
           <span className="text-zinc-300 font-medium flex items-center gap-1.5">
             <Star className="w-3.5 h-3.5 text-amber-400" />
@@ -737,6 +1194,11 @@ export function TransformPanel({ active, previewShape, onPreviewShapeChange, onP
           />
         </div>
 
+        {/* Separate style picker lives in Badge content (appearance home)
+            in unified element mode — geometry only here. Standalone keeps
+            the picker (legacy behavior unchanged). Five-tab geometry mode
+            never duplicates it here. */}
+        {!element && !geometryOnly && (
         <div className="space-y-1.5 pt-1" title={t("ui.separateRatingsHint")}>
           <span className="text-[11px] text-muted font-medium block">{t("ui.separateRatingsStyle")}</span>
           <div className="grid grid-cols-3 gap-1">
@@ -776,12 +1238,16 @@ export function TransformPanel({ active, previewShape, onPreviewShapeChange, onP
             <p className="text-[10px] text-muted italic leading-tight">{t("ui.separateRatingsBottomHint")}</p>
           )}
         </div>
+        )}
       </div>
       )}
 
+      {!ed.defaultNetworkLogo && geometryOnly && (
+        <TransformInactive name={t("ui.networkLogo")} tab={t("ui.settingsTabInformation")} />
+      )}
       {/* Logo Network Predefinito */}
       {ed.defaultNetworkLogo && (
-      <div {...famAttrs("logo")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-2.5 shadow-sm animate-fade-in">
+      <div {...famAttrs("logo")} hidden={hideFor("logo")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-2.5 shadow-sm animate-fade-in">
         <div className="flex items-center justify-between">
           <span className="text-zinc-300 font-medium flex items-center gap-1.5">
             <Tv className="w-3.5 h-3.5 text-sky-400" />
@@ -798,13 +1264,13 @@ export function TransformPanel({ active, previewShape, onPreviewShapeChange, onP
             {t("ui.reset")}
           </button>
         </div>
-        <div className="flex items-center justify-between px-1 gap-2">
+        <div className="flex items-center justify-between px-1 gap-2" title={cardControlsNote ?? cardFallbackNote}>
           <span className="text-zinc-300">{t("ui.followTitleLogo")}</span>
           <Toggle
             value={portraitFollowOn}
             onChange={handleGlobalFollowChange}
             label={t("ui.followTitleLogo")}
-            disabled={netFreezing || (portraitFollowOn && followOffDisabled)}
+            disabled={isCardAllDefaults || netFreezing || (portraitFollowOn && followOffDisabled)}
           />
         </div>
 
@@ -830,6 +1296,8 @@ export function TransformPanel({ active, previewShape, onPreviewShapeChange, onP
             editingKey="nls"
             suffix="%"
           />
+          <div title={cardControlsNote ?? cardFallbackNote} aria-disabled={isCardAllDefaults || undefined}>
+          <fieldset disabled={isCardAllDefaults} className="contents">
           <SliderRow
             icon={<ArrowLeftRight className="w-3.5 h-3.5" />}
             label="X"
@@ -874,12 +1342,20 @@ export function TransformPanel({ active, previewShape, onPreviewShapeChange, onP
             editingKey="nly"
             suffix="px"
           />
+          </fieldset>
+          </div>
+          {isCardAllDefaults && (
+            <p className="text-[10px] text-muted italic leading-tight px-1">{t("ui.posterLayoutCardControlsNote")}</p>
+          )}
+          {isCardRankedDefaults && (
+            <p className="text-[10px] text-muted italic leading-tight px-1">{t("ui.posterLayoutCardFallbackNote")}</p>
+          )}
         </div>
       </div>
       )}
 
       {/* Sfumatura & Blur Predefiniti */}
-      <div {...famAttrs("gradient")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-2.5 shadow-sm animate-fade-in">
+      <div {...famAttrs("gradient")} hidden={hideFor("background")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-2.5 shadow-sm animate-fade-in">
         <div className="flex items-center justify-between">
           <span className="text-zinc-200 font-semibold flex items-center gap-1.5">
             <Cloud className="w-3.5 h-3.5 text-cyan-400" />
@@ -1046,7 +1522,7 @@ export function TransformPanel({ active, previewShape, onPreviewShapeChange, onP
                 ed.setDefaultTopShade(v)
               }}
               onDoubleClick={() => {
-                ed.setDefaultTopShade(50)
+                ed.setDefaultTopShade(80)
               }}
               editingValue={editVal}
               editText={editTxt}
@@ -1088,7 +1564,7 @@ export function TransformPanel({ active, previewShape, onPreviewShapeChange, onP
           ed.setDefaultBlurFade(NATURAL_GRADIENT_DEFAULTS.blurFade)
           ed.setDefaultBlurDarkness(NATURAL_GRADIENT_DEFAULTS.blurDarkness)
           ed.setDefaultTintStrength(NATURAL_GRADIENT_DEFAULTS.tintStrength)
-          ed.setDefaultTopShade(50)
+          ed.setDefaultTopShade(80)
         }}
         className="w-full py-1.5 rounded-lg text-[11px] font-semibold text-muted hover:text-zinc-200 bg-white/5 hover:bg-white/10 border border-white/10 transition-colors cursor-pointer"
       >

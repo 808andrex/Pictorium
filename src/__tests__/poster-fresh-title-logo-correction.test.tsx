@@ -468,9 +468,25 @@ describe("c1 editor provenance + UI 150/200 + save/reload (actual provider)", ()
     })
     expect(ctx().logoScale).toBe(150)
     expect(ctx().logoScaleExplicit).toBe(true)
-    // …mentre null resta auto (Fresh scope-all = 100 auto, non baked).
-    // Il preset legge il per-titolo corrente (non i default): si porta il
-    // titolo su fresh/all espliciti di layout/scope (la scala resta auto).
+    // Explicit null stays auto: an explicit Fresh/all recipe resolves to 100 auto, never baked.
+    await act(async () => {
+      ctx().applyPerTitleVisualPreset(
+        { defaultPosterLayout: "fresh", defaultPosterFreshScope: "all", defaultLogoScale: null } as never,
+        { width: 220, height: 100 },
+      )
+    })
+    expect(ctx().posterLayout).toBe("fresh")
+    expect(ctx().posterFreshScope).toBe("all")
+    expect(ctx().logoScale).toBe(100)
+    expect(ctx().logoScaleExplicit).toBe(false)
+  })
+
+  it("bare null preset never inherits live Fresh/all: factory standard/ranked applies (aspect 63 auto)", async () => {
+    const { Probe, ctx } = probe()
+    renderWithCtx(createElement("div", null, createElement(Probe)))
+    await act(async () => {})
+    // Live title sits on explicit Fresh/all, but the bare preset owns no
+    // layout/scope keys, so the factory fallback (standard/ranked) applies.
     await act(async () => {
       ctx().setPosterLayout("fresh")
       ctx().setPosterFreshScope("all")
@@ -478,7 +494,9 @@ describe("c1 editor provenance + UI 150/200 + save/reload (actual provider)", ()
     await act(async () => {
       ctx().applyPerTitleVisualPreset({ defaultLogoScale: null } as never, { width: 220, height: 100 })
     })
-    expect(ctx().logoScale).toBe(100)
+    expect(ctx().posterLayout).toBe("standard")
+    expect(ctx().posterFreshScope).toBe("ranked")
+    expect(ctx().logoScale).toBe(63)
     expect(ctx().logoScaleExplicit).toBe(false)
   })
 
@@ -488,16 +506,16 @@ describe("c1 editor provenance + UI 150/200 + save/reload (actual provider)", ()
       createElement("div", null, createElement(BadgeControls), createElement(Probe)),
       { selected: { id: 11, media_type: "movie", title: "Probe", poster_path: "/p.jpg" } as never, metaInfo: { genres: [], voteAverage: 0 } as never },
     )
-    const layoutGroup = (): HTMLElement => screen.getByRole("radiogroup", { name: "ui.posterLayout" })
+    const layoutGroup = (): HTMLElement => within(screen.getByTestId("ranking-presentation")).getByRole("radiogroup", { name: "ui.rankFamily" })
     await act(async () => {
       ctx().setLogoScale(75)
     })
     expect(ctx().logoScaleExplicit).toBe(true)
-    fireEvent.click(within(layoutGroup()).getByRole("radio", { name: "ui.posterLayoutFresh" }))
+    fireEvent.click(within(layoutGroup()).getByRole("radio", { name: "ui.posterLayoutGroupedFresh" }))
     expect(ctx().posterLayout).toBe("fresh")
     expect(ctx().logoScale).toBe(75)
     expect(ctx().logoScaleExplicit).toBe(true)
-    fireEvent.click(within(layoutGroup()).getByRole("radio", { name: "ui.posterLayoutStandard" }))
+    fireEvent.click(within(layoutGroup()).getByRole("radio", { name: "ui.ribbon" }))
     expect(ctx().posterLayout).toBe("standard")
     expect(ctx().logoScale).toBe(75)
     expect(ctx().logoScaleExplicit).toBe(true)
@@ -511,7 +529,7 @@ describe("c1 editor provenance + UI 150/200 + save/reload (actual provider)", ()
     await act(async () => {
       ctx().setPosterLayout("fresh")
     })
-    fireEvent.click(within(layoutGroup()).getByRole("radio", { name: "ui.posterLayoutStandard" }))
+    fireEvent.click(within(layoutGroup()).getByRole("radio", { name: "ui.ribbon" }))
     expect(ctx().posterLayout).toBe("standard")
     expect(ctx().logoScaleExplicit).toBe(false)
   })

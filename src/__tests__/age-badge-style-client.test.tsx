@@ -241,6 +241,8 @@ describe("BadgeDefaultsSection age style selector", () => {
       return null
     }
     renderWithCtx(createElement("div", null, createElement(BadgeDefaultsSection, { active: true, shape }), createElement(Probe)))
+    const adv = screen.getByTestId("badge-advanced-toggle")
+    if (adv.getAttribute("aria-expanded") !== "true") fireEvent.click(adv)
     const t = screen.getByTestId("badge-group-quality-toggle")
     if (t.getAttribute("aria-expanded") !== "true") fireEvent.click(t)
     return { ctx: () => ctx as PosterEditorCtx }

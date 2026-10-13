@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useRef, useEffect, useCallback, type CSSProperties } from "react"
+import { useState, useEffect, useCallback, type CSSProperties } from "react"
 import dynamic from "next/dynamic"
 import { usePSelector } from "@/lib/context"
 import { useT } from "@/lib/contexts/TranslationContext"
@@ -53,14 +53,11 @@ export function AppShell() {
   const ed = usePosterEditor()
   const setShowLangPicker = usePSelector((v) => v.setShowLangPicker)
   const [proxyOpen, setProxyOpen] = useState(false)
-  const [closingSettings, setClosingSettings] = useState(false)
-  const closingSettingsRef = useRef<ReturnType<typeof setTimeout>>(null)
-  const mobileSettingsDialogRef = useRef<HTMLDivElement>(null)
-  const mobilePrevActiveRef = useRef<HTMLElement | null>(null)
 
-  const closeSettings = () => {
-    setClosingSettings(true)
-    closingSettingsRef.current = setTimeout(() => { setSettingsOpen(false); setClosingSettings(false) }, 150)
+  /** Every settings close path runs through the panel session guard: the
+   *  shell never unmounts the panel directly (no silent draft loss). */
+  const requestSettingsClose = () => {
+    window.dispatchEvent(new CustomEvent("pictorium:settings-close-request"))
   }
 
   const [hasPinConfigured, setHasPinConfigured] = useState<boolean | null>(null)
@@ -105,75 +102,6 @@ export function AppShell() {
     setIsUnlocked(true)
   }
 
-  // Il pannello impostazioni completo si chiude con Esc
-  useEffect(() => {
-    const fn = (e: KeyboardEvent) => { if (e.key === "Escape") setSettingsOpen(false) }
-    addEventListener("keydown", fn)
-    return () => removeEventListener("keydown", fn)
-  }, [setSettingsOpen])
-
-  useEffect(() => {
-    return () => {
-      if (closingSettingsRef.current) clearTimeout(closingSettingsRef.current)
-    }
-  }, [])
-
-  // Blocca lo scroll del body quando le impostazioni mobili sono aperte
-  useEffect(() => {
-    if (!settingsOpen) return
-    const isMobile = typeof window !== "undefined" && window.innerWidth < 768
-    if (!isMobile) return
-    document.body.style.overflow = "hidden"
-    return () => { document.body.style.overflow = "" }
-  }, [settingsOpen])
-
-  // Focus trap e ripristino focus per il dialogo impostazioni mobile
-  useEffect(() => {
-    if (!settingsOpen || closingSettings) return
-    const isMobile = typeof window !== "undefined" && window.innerWidth < 768
-    if (!isMobile) return
-
-    mobilePrevActiveRef.current = document.activeElement as HTMLElement | null
-
-    const dialog = mobileSettingsDialogRef.current
-    if (!dialog) return
-
-    // Focus iniziale sul pulsante "Indietro" o primo elemento interattivo
-    const backBtn = dialog.querySelector<HTMLElement>('button[aria-label]')
-    backBtn?.focus()
-
-    const handleTab = (e: KeyboardEvent) => {
-      if (e.key !== "Tab") return
-      const focusable = Array.from(
-        dialog.querySelectorAll<HTMLElement>(
-          'button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
-        )
-      ).filter((el) => {
-        if (el.style.display === "none" || el.style.visibility === "hidden" || el.getAttribute("aria-hidden") === "true") return false
-        return true
-      })
-
-      if (focusable.length === 0) return
-      const first = focusable[0]
-      const last = focusable[focusable.length - 1]
-
-      if (e.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) {
-        e.preventDefault()
-        last.focus()
-      } else if (!e.shiftKey && (document.activeElement === last || !dialog.contains(document.activeElement))) {
-        e.preventDefault()
-        first.focus()
-      }
-    }
-
-    window.addEventListener("keydown", handleTab)
-    return () => {
-      window.removeEventListener("keydown", handleTab)
-      if (mobilePrevActiveRef.current && typeof mobilePrevActiveRef.current.focus === "function") {
-        mobilePrevActiveRef.current.focus()
-      }
-    }
-  }, [settingsOpen, closingSettings])
 
   const [installOpen, setInstallOpen] = useState(false)
 
@@ -363,7 +291,7 @@ export function AppShell() {
             type="button"
             aria-label={t("ui.settingsTitle") || t("ui.settingsGlobal")}
             title={t("ui.settingsGlobal")}
-            onClick={(e) => { e.stopPropagation(); if (toolbarLocked) return; setSettingsOpen((o) => !o) }}
+            onClick={(e) => { e.stopPropagation(); if (toolbarLocked) return; if (settingsOpen) requestSettingsClose(); else setSettingsOpen(true) }}
             disabled={toolbarLocked}
             aria-disabled={toolbarLocked || undefined}
             className={`p-2 rounded-xl hover:text-white hover:bg-white/[0.08] active:scale-90 transition-all duration-150 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
@@ -517,7 +445,7 @@ export function AppShell() {
           {/* Impostazioni */}
           <button
             type="button"
-            onClick={() => { if (toolbarLocked) return; setSettingsOpen(true) }}
+            onClick={() => { if (toolbarLocked) return; if (settingsOpen) requestSettingsClose(); else setSettingsOpen(true) }}
             disabled={toolbarLocked}
             aria-disabled={toolbarLocked || undefined}
             className={`flex flex-col items-center justify-center gap-1 py-1 px-1 rounded-xl transition-all duration-150 active:scale-90 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
@@ -534,54 +462,16 @@ export function AppShell() {
         </div>
       </nav>
 
-      {/* Desktop Settings Modal */}
-      <div className="hidden md:block">
-        {settingsOpen && (
-          <SettingsPanel
-            setSettingsOpen={setSettingsOpen}
-            exportData={exportData}
-            importData={importData}
-            onOpenInstall={() => setInstallOpen(true)}
-          />
-        )}
-      </div>
-
-      {(settingsOpen || closingSettings) && (
-        <div
-          ref={mobileSettingsDialogRef}
-          role="dialog"
-          aria-modal="true"
-          aria-label={t("ui.settingsGlobalTitle") || t("ui.settingsTitle")}
-          className={`fixed inset-0 z-[70] bg-background md:hidden flex flex-col ${closingSettings ? "animate-fade-out" : "animate-fade-scale-in"}`}
-        >
-          <div className="fixed inset-0 z-[-1]" onClick={() => closeSettings()} />
-          <div className="sticky top-0 z-20 bg-surface/95 backdrop-blur-2xl flex items-center justify-between px-4 py-3 border-b border-white/10 shadow-lg shadow-black/20 shrink-0">
-            <h2 className="text-sm font-bold text-zinc-100 flex items-center gap-2">
-              <Settings className="w-4 h-4 text-accent-orange" />
-              <span>{t("ui.settingsGlobalTitle") || t("ui.settingsTitle")}</span>
-            </h2>
-            <button
-              type="button"
-              aria-label={t("ui.back")}
-              onClick={() => closeSettings()}
-              className="px-4 py-2.5 rounded-xl bg-white/[0.08] border border-white/10 text-xs sm:text-sm font-semibold text-zinc-200 hover:text-white active:scale-95 transition-all duration-150 press-scale min-h-[44px] min-w-[44px] inline-flex items-center justify-center touch-manipulation cursor-pointer"
-            >
-              {t("ui.back")}
-            </button>
-          </div>
-          <div className="flex-1 flex flex-col min-h-0 overflow-hidden max-w-lg mx-auto w-full">
-            <SettingsPanel
-              mobile
-              setSettingsOpen={setSettingsOpen}
-              exportData={exportData}
-              importData={importData}
-              onOpenInstall={() => {
-                closeSettings()
-                setInstallOpen(true)
-              }}
-            />
-          </div>
-        </div>
+      {/* Single responsive settings owner (no CSS-hidden twins): the panel
+          owns the shared draft session, so tab/format state survives resize.
+          Install opens through the panel dirty-guard (pending action). */}
+      {settingsOpen && (
+        <SettingsPanel
+          setSettingsOpen={setSettingsOpen}
+          exportData={exportData}
+          importData={importData}
+          onOpenInstall={() => setInstallOpen(true)}
+        />
       )}
     </div>
     {!showLangPicker && <OnboardingTour />}

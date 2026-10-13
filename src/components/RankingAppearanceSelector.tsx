@@ -2,8 +2,13 @@
 
 import { useT } from "@/lib/contexts/TranslationContext"
 import type { ExtraBadgeStyle, RankingBadgeStyle } from "@/lib/badge-styles"
+import { LayoutThumb } from "@/components/PosterLayoutSelector"
+import type { CardSkin } from "@/lib/card-layout-skins"
 
 export type RankingAppearance = "nastro" | "numero" | "badge"
+
+/** Settings-only unified choice (Classifiche): classic looks + Fresh/Card over existing fields. */
+export type RankingPresentation = RankingAppearance | "fresh" | "card"
 
 /** Badge variants for the Badge appearance (`standard` = centered default plate). */
 export const RANK_BADGE_VARIANTS = ["pill", "colored", "bordo", "vetro", "corner", "standard"] as const
@@ -110,6 +115,21 @@ export function legacyExtraStyleForRank(rs: string | null | undefined): ExtraBad
 }
 
 const APPEARANCE_LABELS = { nastro: "ui.ribbon", numero: "ui.number", badge: "ui.badgeSection" } as const
+/** Settings-only unified primary choices: classic looks + Fresh/Card (existing brief labels). */
+const PRESENTATION_LABELS: Record<RankingPresentation, string> = {
+  nastro: "ui.ribbon",
+  numero: "ui.number",
+  badge: "ui.badgeSection",
+  fresh: "ui.posterLayoutGroupedFresh",
+  card: "ui.posterLayoutGroupedCard",
+}
+/** Card skin subgroup (settings-only, shown only when Card is selected). */
+const CARD_SKIN_LABELS: Record<CardSkin, string> = {
+  "provider-glass": "ui.posterLayoutSkinProvider",
+  nuvio: "ui.posterLayoutSkinBlack",
+  stremio: "ui.posterLayoutSkinViolet",
+}
+const CARD_SKINS: readonly CardSkin[] = ["provider-glass", "nuvio", "stremio"]
 const RIBBON_VARIANT_LABELS: Record<RankRibbonVariant, string> = {
   standard: "ui.qbsStandard",
   colored: "ui.colored",
@@ -128,6 +148,9 @@ const VARIANT_LABELS: Record<RankBadgeVariant, string> = {
  * `side`/`onSide` are optional: omit them where the side is not persistable
  * (per-title editing — side stays global) and the side row stays hidden.
  * Defaults panels keep passing both.
+ *
+ * Optional unified presentation: `presentation` + `onPresentation` render one
+ * exclusive 5-choice group; absent = legacy 3-choice behavior.
  */
 export function RankingAppearanceSelector({
   appearance,
@@ -138,6 +161,10 @@ export function RankingAppearanceSelector({
   onVariant,
   onRibbonVariant,
   onSide,
+  presentation,
+  onPresentation,
+  cardSkin,
+  onCardSkin,
 }: {
   appearance: RankingAppearance
   variant: RankBadgeVariant
@@ -147,29 +174,72 @@ export function RankingAppearanceSelector({
   onVariant: (v: RankBadgeVariant) => void
   onRibbonVariant: (v: RankRibbonVariant) => void
   onSide?: (s: "left" | "right") => void
+  presentation?: RankingPresentation
+  onPresentation?: (p: RankingPresentation) => void
+  cardSkin?: CardSkin | string | null | undefined
+  onCardSkin?: (s: CardSkin) => void
 }) {
   const { t } = useT()
+  const unified = onPresentation !== undefined && presentation !== undefined
+  // Variant/side rows follow the effective look (presentation when unified).
+  const look: RankingAppearance | "fresh" | "card" = unified ? presentation : appearance
+  const primary = (unified ? PRESENTATION_LABELS : APPEARANCE_LABELS) as Record<string, string>
+  const onPrimary = (a: string) => {
+    if (unified) onPresentation(a as RankingPresentation)
+    else onAppearance(a as RankingAppearance)
+  }
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-1.5" {...(unified ? { "data-testid": "ranking-presentation" } : {})}>
       <div className="flex gap-1" role="radiogroup" aria-label={t("ui.rankFamily")}>
-        {(Object.keys(APPEARANCE_LABELS) as RankingAppearance[]).map((a) => (
+        {(Object.keys(primary) as (keyof typeof primary)[]).map((a) => {
+          const checked = unified ? presentation === a : appearance === a
+          return (
           <button
             key={a}
             type="button"
             role="radio"
-            aria-checked={appearance === a}
-            onClick={() => onAppearance(a)}
+            aria-checked={checked}
+            onClick={() => onPrimary(a)}
             className={`flex-1 py-1 px-1 rounded-lg text-[11px] font-semibold transition-all duration-150 cursor-pointer ${
-              appearance === a
+              checked
                 ? "bg-white/20 text-white shadow-sm"
                 : "bg-white/5 text-muted hover:bg-white/10 hover:text-zinc-200"
             }`}
           >
-            {t(APPEARANCE_LABELS[a])}
+            {t(primary[a])}
           </button>
-        ))}
+          )
+        })}
       </div>
-      {appearance === "nastro" && (
+      {look === "card" && onCardSkin && (
+        <div
+          className="grid grid-cols-3 gap-1"
+          role="radiogroup"
+          aria-label={t("ui.posterLayoutGroupedCard")}
+          data-testid="poster-layout-skins"
+        >
+          {CARD_SKINS.map((skin) => (
+            <button
+              key={skin}
+              type="button"
+              role="radio"
+              aria-checked={cardSkin === skin}
+              onClick={() => onCardSkin(skin)}
+              className={`flex flex-col gap-1 p-1.5 rounded-lg transition-all duration-150 cursor-pointer min-w-0 ${
+                cardSkin === skin
+                  ? "bg-white/20 text-white shadow-sm ring-1 ring-white/30"
+                  : "bg-white/5 text-muted hover:bg-white/10 hover:text-zinc-200"
+              }`}
+            >
+              <LayoutThumb layout={skin} />
+              <span className="text-[10px] font-semibold leading-tight text-center truncate">
+                {t(CARD_SKIN_LABELS[skin])}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+      {look === "nastro" && (
         <div className="flex gap-1" role="radiogroup" aria-label={t("ui.ribbon")}>
           {RANK_RIBBON_VARIANTS.map((v) => (
             <button
@@ -189,7 +259,7 @@ export function RankingAppearanceSelector({
           ))}
         </div>
       )}
-      {appearance === "badge" && (
+      {look === "badge" && (
         <div className="flex gap-1" role="radiogroup" aria-label={t("ui.styleRankingDefault")}>
           {RANK_BADGE_VARIANTS.map((v) => (
             <button
@@ -209,7 +279,7 @@ export function RankingAppearanceSelector({
           ))}
         </div>
       )}
-      {appearance !== "badge" && onSide && (
+      {(unified ? (look === "nastro" || look === "numero") : appearance !== "badge") && onSide && (
         <div className="flex items-center justify-between gap-3 pt-1 pl-5 animate-fade-in">
           <span className="text-zinc-400 font-medium text-[11px]">
             {t("ui.position")}

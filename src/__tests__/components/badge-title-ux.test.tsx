@@ -95,14 +95,22 @@ describe("master top badge + rank/title-info split", () => {
     expect(ctx().rankingBadges).toBe(true)
   })
 
-  it("old ribbon toggle + ranking/extra style selector are gone; shared selector owns the rank", async () => {
+  it("old ribbon toggle + ranking/extra style selector are gone; unified presentation owns the rank", async () => {
     renderTitle({})
     await act(async () => {})
     expect(screen.queryByRole("switch", { name: "ui.ribbon" })).toBeNull()
     expect(screen.queryByText("ui.styleRankingExtra")).toBeNull()
-    // Shared appearance: three choices + variant row, no side row here.
+    // Unified presentation: five exclusive choices (no separate layout
+    // card), variant rows follow the presentation, no side row here.
+    expect(screen.queryByTestId("poster-layout-card")).toBeNull()
     const group = appearanceGroup()
-    expect(within(group).getAllByRole("radio")).toHaveLength(3)
+    expect(within(group).getAllByRole("radio")).toHaveLength(5)
+    for (const name of ["ui.ribbon", "ui.number", "ui.badgeSection", "ui.posterLayoutGroupedFresh", "ui.posterLayoutGroupedCard"]) {
+      expect(within(group).getByRole("radio", { name })).toBeInTheDocument()
+    }
+    expect(within(group).getAllByRole("radio").filter((o) => o.getAttribute("aria-checked") === "true")).toHaveLength(1)
+    expect(screen.queryByTestId("poster-layout-skins")).toBeNull()
+    expect(screen.queryByRole("radiogroup", { name: "ui.position" })).toBeNull()
     expect(screen.getByText("ui.rankFamily")).toBeInTheDocument()
     expect(screen.getByText("ui.titleInfoFamily")).toBeInTheDocument()
     expect(screen.getByText("ui.extraBadgeStyle")).toBeInTheDocument()

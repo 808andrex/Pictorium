@@ -7,10 +7,10 @@
 
 import type { PictoriumUserConfig } from "./config-token"
 import { effectiveMappingForShape, isPosterLayout, isPosterFreshScope, DEFAULT_POSTER_LAYOUT, DEFAULT_POSTER_FRESH_SCOPE, type Mapping, type NetworkLogoPosition, type PosterLayout, type PosterFreshScope, type PosterShape } from "./types"
-import { effectiveDefaultsForShape } from "./server-defaults"
+import { effectiveDefaultsForShape } from "./server-defaults-shape"
 import type { ServerDefaults } from "./server-defaults"
 import { resolveLabelFor } from "./i18n"
-import { resolveRatingSources } from "./ratings"
+import { resolveRatingSources } from "./rating-weights"
 import { parseMinQuality, type StreamQuality } from "./quality-tiers"
 import { parseSashOrder, normalizeSashOrder, DEFAULT_SASH_ORDER, type SashBucket } from "./badge-priority"
 import {
@@ -325,9 +325,9 @@ export interface PosterRenderConfig {
   /** Intensità tinta di scena 0-100 (default 20). */
   tintStrength: number
   /**
-   * Ombra lineare superiore 0-100 (default 50). Catena completa come la tinta:
+   * Ombra lineare superiore 0-100 (default 80). Catena completa come la tinta:
    * query `ts` > mapping per-titolo > config token > server defaults
-   * (`PICTORIUM_TOP_SHADE`) > 50. Solo flat (vale per entrambi i canvas).
+   * (`PICTORIUM_TOP_SHADE`) > 80. Solo flat (vale per entrambi i canvas).
    */
   topShade: number
   badgesEnabled: boolean
@@ -689,17 +689,17 @@ export function resolvePosterRenderConfig(input: PosterRenderConfigInput): Poste
                 : 20)))
 
   // Ombra superiore 0-100 — catena completa (query > mapping.landscape >
-  // mapping flat > config > defaults(.landscape) > 50). Stessi clamp anti-DoS.
+  // mapping flat > config > defaults(.landscape) > 80). Stessi clamp anti-DoS.
   const rawTs = q.get("ts") ? Number(q.get("ts")) : NaN
   const topShade = q.get("ts") !== null
-    ? (Number.isFinite(rawTs) ? clamp(Math.round(rawTs), 0, 100) : 50)
+    ? (Number.isFinite(rawTs) ? clamp(Math.round(rawTs), 0, 100) : 80)
     : (m?.topShade != null && Number.isFinite(m.topShade)
         ? clamp(Math.round(m.topShade), 0, 100)
         : (configOverride?.topShade != null && Number.isFinite(configOverride.topShade)
             ? clamp(Math.round(configOverride.topShade), 0, 100)
             : (esd.topShade != null && Number.isFinite(esd.topShade)
                 ? clamp(Math.round(esd.topShade), 0, 100)
-                : 50)))
+                : 80)))
 
   const qBadges = q.get("badges")
   const qRanking = q.get("ranking")

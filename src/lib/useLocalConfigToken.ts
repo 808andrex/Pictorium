@@ -9,6 +9,7 @@ export interface LocalConfigTokenInput {
   readonly customCatalogs: readonly CustomCatalogConfig[]
   readonly rankingSourceMovie: string
   readonly rankingSourceSeries: string
+  readonly catalogShapes?: Readonly<Record<string, string>>
 }
 
 /**
@@ -66,6 +67,9 @@ export function useLocalConfigToken(input: LocalConfigTokenInput): LocalConfigTo
         customCatalogs: input.customCatalogs,
         rankingSourceMovie: input.rankingSourceMovie,
         rankingSourceSeries: input.rankingSourceSeries,
+        ...(input.catalogShapes && Object.keys(input.catalogShapes).length > 0
+          ? { catalogShapes: input.catalogShapes }
+          : {}),
       })
       if (cancelled) return
       if (minted) {
@@ -88,7 +92,7 @@ export function useLocalConfigToken(input: LocalConfigTokenInput): LocalConfigTo
     return () => {
       cancelled = true
     }
-  }, [input.customCatalogs, input.rankingSourceMovie, input.rankingSourceSeries])
+  }, [input.customCatalogs, input.rankingSourceMovie, input.rankingSourceSeries, input.catalogShapes])
 
   return { token, status }
 }

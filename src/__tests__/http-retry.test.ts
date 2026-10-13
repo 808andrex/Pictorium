@@ -1,10 +1,43 @@
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { ApiError, http } from "@/lib/http"
+import {
+  __resetUnlockedUsersForTests,
+  __resetUserCredentialsForTests,
+  getStoredUserToken,
+  setStoredUserPassword,
+  setStoredUserToken,
+} from "@/lib/user-token"
+
+const UUID_A = "11111111-1111-4111-8111-111111111111"
+const UUID_B = "22222222-2222-4222-8222-222222222222"
+
+function stubMapStorage() {
+  const store = new Map<string, string>()
+  vi.stubGlobal("localStorage", {
+    getItem: (k: string) => (store.has(k) ? store.get(k)! : null),
+    setItem: (k: string, v: string) => {
+      store.set(k, String(v))
+    },
+    removeItem: (k: string) => {
+      store.delete(k)
+    },
+  })
+}
 
 describe("http retry", () => {
   beforeEach(() => {
     vi.resetAllMocks()
-    vi.stubGlobal("localStorage", { getItem: () => null, setItem: vi.fn() })
+    stubMapStorage()
+    __resetUserCredentialsForTests()
+    __resetUnlockedUsersForTests()
+    window.history.pushState({}, "", "/")
+  })
+
+  afterEach(() => {
+    __resetUserCredentialsForTests()
+    __resetUnlockedUsersForTests()
+    window.history.pushState({}, "", "/")
+    vi.unstubAllGlobals()
   })
 
   it("401 credenziali: un solo tentativo, niente retry sprecati", async () => {
@@ -107,5 +140,52 @@ describe("http retry", () => {
     caller.abort(new Error("caller cancelled"))
     await expect(pending).rejects.toThrow("caller cancelled")
     expect(spy).toHaveBeenCalledTimes(1)
+  })
+
+  it("password retry stays pinned to the request namespace (never B password to A)", async () => {
+    // Request scoped to A while the browser now sits on B: no retry, no
+    // cross-namespace credential leak, no token clearing.
+    window.history.pushState({}, "", `/u/${UUID_B}`)
+    setStoredUserToken(UUID_A, "token-A")
+    setStoredUserPassword(UUID_A, "pw-A")
+    setStoredUserToken(UUID_B, "token-B")
+    setStoredUserPassword(UUID_B, "pw-B")
+    const seen: Array<{ url: unknown; init?: RequestInit }> = []
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: unknown, init?: RequestInit) => {
+        seen.push({ url, init })
+        return new Response("{}", { status: 401 })
+      }),
+    )
+    await expect(http(`/api/defaults?u=${UUID_A}`, { retries: 0 })).rejects.toBeInstanceOf(ApiError)
+    expect(seen).toHaveLength(1)
+    expect(getStoredUserToken(UUID_A)).toBe("token-A")
+    expect(getStoredUserToken(UUID_B)).toBe("token-B")
+  })
+
+  it("password retry uses the pinned scope uuid and clears only its token", async () => {
+    window.history.pushState({}, "", `/u/${UUID_A}`)
+    setStoredUserToken(UUID_A, "stale-A")
+    setStoredUserPassword(UUID_A, "pw-A")
+    setStoredUserToken(UUID_B, "token-B")
+    setStoredUserPassword(UUID_B, "pw-B")
+    const seen: Array<{ url: unknown; init?: RequestInit }> = []
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: unknown, init?: RequestInit) => {
+        seen.push({ url, init })
+        if (seen.length === 1) return new Response("{}", { status: 401 })
+        return new Response(JSON.stringify({ ok: true }), { status: 200 })
+      }),
+    )
+    await expect(http(`/api/defaults?u=${UUID_A}`, { retries: 0 })).resolves.toEqual({ ok: true })
+    expect(seen).toHaveLength(2)
+    const retryHeaders = seen[1].init?.headers as Record<string, string>
+    expect(retryHeaders["x-user-password"]).toBe("pw-A")
+    expect("x-user-token" in retryHeaders).toBe(false)
+    expect(JSON.stringify(retryHeaders)).not.toContain("pw-B")
+    expect(getStoredUserToken(UUID_A)).toBeNull()
+    expect(getStoredUserToken(UUID_B)).toBe("token-B")
   })
 })

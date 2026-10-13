@@ -32,6 +32,31 @@ test.describe("Badge style icon preview (vetro) themes", () => {
     return openSettingsBadgeTab(page)
   }
 
+  async function exitSettingsResolvingDirty(page: Page) {
+    // Staged contract: a dirty draft never closes silently — Escape opens the
+    // exit-confirm modal; a clean draft closes directly. The Vetro selection
+    // above is part of the test intent, so a dirty draft persists via the
+    // modal's explicit "Salva e chiudi" (real accessible UI, no DOM forcing).
+    // Either path proves the modal resolved and settings closed before the
+    // caller touches Tema.
+    await expect(page.getByTestId("settings-save")).toBeVisible()
+    const settingsDialog = page.getByRole("dialog", { name: /Configura tutti i poster/i })
+    const modal = page.getByTestId("settings-dirty-dialog")
+    if (await page.getByTestId("settings-save").isEnabled()) {
+      await page.keyboard.press("Escape")
+      await expect(modal).toBeVisible()
+      await expect(page.getByTestId("settings-dirty-save")).toContainText("Salva e chiudi")
+      await expect(page.getByTestId("settings-dirty-continue")).toContainText("Continua a modificare")
+      await expect(page.getByTestId("settings-dirty-discard")).toContainText("Esci senza salvare")
+      await page.getByTestId("settings-dirty-save").click()
+      await expect(modal).toBeHidden()
+    } else {
+      await page.keyboard.press("Escape")
+      await expect(modal).toBeHidden()
+    }
+    await expect(settingsDialog).toBeHidden()
+  }
+
   async function readVetro(page: Page, controls: Locator) {
     // Griglia genere (la sezione ranking ha anch'essa un'opzione Vetro).
     const genreSection = controls.getByText("Stile badge", { exact: true }).locator("..")
@@ -68,7 +93,7 @@ test.describe("Badge style icon preview (vetro) themes", () => {
     await s.btn.screenshot({ path: "test-results/vetro-light-selected.png", animations: "disabled" })
 
     // Repeat: dark e di nuovo light via toggle UI reale (stati di mount diversi).
-    await page.keyboard.press("Escape")
+    await exitSettingsResolvingDirty(page)
     await page.getByRole("button", { name: "Tema", exact: true }).click()
     await page.getByRole("radio", { name: "Scuro", exact: true }).click()
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark")
@@ -78,7 +103,7 @@ test.describe("Badge style icon preview (vetro) themes", () => {
     expect(d.iconColor).toBe("rgb(255, 255, 255)")
     await d.btn.screenshot({ path: "test-results/vetro-dark.png", animations: "disabled" })
 
-    await page.keyboard.press("Escape")
+    await exitSettingsResolvingDirty(page)
     await page.getByRole("button", { name: "Tema", exact: true }).click()
     await page.getByRole("radio", { name: "Chiaro", exact: true }).click()
     await expect(page.locator("html")).toHaveAttribute("data-theme", "light")
@@ -186,7 +211,7 @@ test.describe("Badge style icon preview (vetro) themes", () => {
     await btn.screenshot({ path: "test-results/vetro-hover-light-classonly.png", animations: "disabled" })
 
     // Dark via toggle UI reale: hover non altera wrapper/icona.
-    await page.keyboard.press("Escape")
+    await exitSettingsResolvingDirty(page)
     await page.getByRole("button", { name: "Tema", exact: true }).click()
     await page.getByRole("radio", { name: "Scuro", exact: true }).click()
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark")

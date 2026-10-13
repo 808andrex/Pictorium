@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test"
-import { putDefaultsWithRetry } from "./defaults-retry"
+import { putDefaultsWithRetry, withDefaultsRetry } from "./defaults-retry"
 import sharp from "sharp"
 import { cornerAnchoredLeft } from "../src/lib/poster-service"
 import { NUMBER_BADGE_BASE_OFFSET_X } from "../src/lib/badge-styles"
@@ -44,7 +44,12 @@ function isDefaultsPreviewUrl(u: URL): boolean {
 }
 
 function collectRequests(page: Page, seen: Seen) {
+  // Dialog stream only (resourceType xhr): the settings dialog also mounts
+  // the preset-gallery thumbnails (plain <img> on the same preview path —
+  // 7 image rows per open in-trace). URL-only matching mixes the streams;
+  // the dialog XHR blob is the arranged-state owner.
   page.on("request", (req) => {
+    if (req.resourceType() !== "xhr") return
     if (isPosterRequest(req.url())) seen.urls.push(req.url())
   })
 }
@@ -98,6 +103,33 @@ async function nextPreview(
   return out as unknown as URLSearchParams
 }
 
+/**
+ * Baseline gate over the WHOLE recorded stream (from 0, latest match wins).
+ * The dialog preview fires once at open and never refetches without an edit
+ * (staged session, no autosave): a from-now poll with a noop action waits for
+ * a request that will never come (proven 30s timeout on an already-correct
+ * arranged rs=pill XHR). This asserts the arranged state that already fired —
+ * use only BEFORE any edit (after edits stale rows would win; nextPreview
+ * from-n is the post-edit gate).
+ */
+async function waitPreview(
+  seen: Seen,
+  pred: (u: URL) => boolean = () => true,
+  match: (u: URL) => boolean = (u) => u.searchParams.get("demosamples") === "1",
+) {
+  let out: URLSearchParams | null = null
+  await expect
+    .poll(
+      () => {
+        out = findLastParams(seen.urls, 0, match, pred)
+        return out ? "ok" : null
+      },
+      { timeout: 30_000 },
+    )
+    .not.toBeNull()
+  return out as unknown as URLSearchParams
+}
+
 async function seed(page: Page, profile: string, tmdbKey = "") {
   await page.addInitScript(
     ({ p, key }: { p: string; key: string }) => {
@@ -124,11 +156,25 @@ async function putDefaults(page: Page, payload: Record<string, unknown>) {
 }
 
 async function getDefaults(page: Page): Promise<Record<string, unknown>> {
-  return page.evaluate(async () => {
-    const r = await fetch("/api/defaults")
-    if (!r.ok) throw new Error(`get defaults: ${r.status}`)
-    return (await r.json()) as Record<string, unknown>
-  })
+  // Teardown/settle GETs share the `defaults` rate-limit bucket with PUTs:
+  // under serial-sweep load a 429 here is runtime-expected, not an app bug.
+  // Retry bounded with the server Retry-After (same rule as the PUT helper);
+  // any other status — or an exhausted budget — still throws, never a
+  // silent pass, so the restore verification below stays strict.
+  const attempt = await withDefaultsRetry(
+    () =>
+      page.evaluate(async () => {
+        const r = await fetch("/api/defaults")
+        return {
+          ok: r.ok,
+          status: r.status,
+          body: await r.text(),
+          retryAfter: r.headers.get("Retry-After"),
+        }
+      }),
+    { label: "get defaults" },
+  )
+  return JSON.parse(attempt.body) as Record<string, unknown>
 }
 
 /**
@@ -204,8 +250,18 @@ test.afterEach(async ({ page }) => {
   )
 })
 
+async function saveStaged(page: Page) {
+  // Staged-session era: UI edits never PUT by themselves. The single global
+  // Save persists the draft; the synced status proves the server flush that
+  // waitDefaults polls for below.
+  await page.getByTestId("settings-save").click()
+  await expect(page.getByTestId("settings-save-status")).toContainText(/Sincronizzato/i, {
+    timeout: 15_000,
+  })
+}
+
 async function waitDefaults(page: Page, pred: (d: Record<string, unknown>) => boolean) {
-  // 500ms poll interval: the condition follows a debounced server autosave,
+  // 500ms poll interval: the condition follows the explicit Save PUT above,
   // and tight polling trips the defaults rate limiter (30 burst, 3/sec).
   await expect
     .poll(
@@ -268,6 +324,8 @@ test.describe("U4 U1 ribbon Standard/Colorato (defaults)", () => {
     await page.getByRole("button", { name: /Impostazioni/i }).click()
     const dialog = page.getByRole("dialog")
     await expect(dialog).toBeVisible()
+    // Default tab is Preset: the rank appearance lives on Classifiche.
+    await dialog.getByRole("tab", { name: "Classifiche", exact: true }).click()
     const badgePanel = dialog.getByRole("tabpanel", { name: "Badge" })
     await expect(badgePanel).toBeVisible()
 
@@ -277,16 +335,14 @@ test.describe("U4 U1 ribbon Standard/Colorato (defaults)", () => {
     // Portrait baseline: pill + ribbon on. The predicate includes rs=pill:
     // on a fresh page the first preview can fire pre-hydration with factory
     // rs=default under load; the settled URL must carry the RESET pill.
-    let p = await nextPreview(
-      seen,
-      async () => {},
-      (u) => u.searchParams.get("shape") === "poster" && u.searchParams.get("rs") === "pill",
-    )
+    // From-0 gate (not from-now): the open burst already fired exactly once
+    // and never refetches without an edit — a noop from-now poll would wait
+    // 30s for a request that never comes.
+    let p = await waitPreview(seen, (u) => u.searchParams.get("shape") === "poster" && u.searchParams.get("rs") === "pill")
     expect(p.get("ribbon")).toBe("1")
 
-    // Side row is defaults-only and visible with a ribbon appearance ahead.
-    // T3 macro-groups: Overlay starts collapsed; expand for rank edits.
-    await badgePanel.getByTestId("badge-group-overlay-toggle").click()
+    // Side row is defaults-only and visible with a ribbon appearance ahead
+    // (macro-groups are always open in settings: no disclosure toggle).
     const rankGroup = badgePanel.getByRole("radiogroup", { name: "Classifica" })
     await expect(rankGroup).toBeVisible()
 
@@ -315,6 +371,7 @@ test.describe("U4 U1 ribbon Standard/Colorato (defaults)", () => {
     await expect(badgePanel.getByRole("radiogroup", { name: "Posizione" })).toBeVisible()
 
     // Backend truth: flats hold Colore, landscape profile untouched.
+    await saveStaged(page)
     await waitDefaults(page, (d) => d.rankingBadgeStyle === "colored")
     const d = await getDefaults(page)
     expect(d.posterShape).toBe("poster")
@@ -441,17 +498,16 @@ test.describe("U4 U2 contextual preview (defaults)", () => {
     await page.getByRole("button", { name: /Impostazioni/i }).click()
     const dialog = page.getByRole("dialog")
     await expect(dialog).toBeVisible()
+    // Default tab is Preset: the extra style editor lives on Badge.
+    await dialog.getByRole("tab", { name: "Badge", exact: true }).click()
     const badgePanel = dialog.getByRole("tabpanel", { name: "Badge" })
     await expect(badgePanel).toBeVisible()
     const chip = dialog.getByTestId("defaults-preview-editing")
     await expect(chip).toBeVisible()
 
-    // Auto baseline: effective saved sash, no forced extra.
-    let p = await nextPreview(
-      seen,
-      async () => {},
-      (u) => u.searchParams.get("sash") === "upcoming,rank,new,award,extra",
-    )
+    // Auto baseline: effective saved sash, no forced extra. From-0 gate: the
+    // open burst already fired once and never refetches without an edit.
+    let p = await waitPreview(seen, (u) => u.searchParams.get("sash") === "upcoming,rank,new,award,extra")
     expect(p.get("extra")).toBeNull()
     await expect(chip).toContainText("Verticale")
     await expect(chip).toContainText("Anteprima completa")
@@ -467,6 +523,7 @@ test.describe("U4 U2 contextual preview (defaults)", () => {
       },
       (u) => u.searchParams.get("xbs") === "vetro",
     )
+    await saveStaged(page)
     await waitDefaults(page, (d) => d.extraBadgeStyle === "vetro")
 
     // Hover alone never switches the family: return to auto first (the Vetro
@@ -482,8 +539,9 @@ test.describe("U4 U2 contextual preview (defaults)", () => {
       (u) => u.searchParams.get("sash") === "upcoming,rank,new,award,extra" && u.searchParams.get("extra") === null,
     )
     const hoverFrom = seen.urls.length
-    // T3 macro-groups: Overlay starts collapsed; expand for the sash switches below.
-    await badgePanel.getByTestId("badge-group-overlay-toggle").click()
+    // Sash buckets live on Informazioni (macro-groups are always open in
+    // settings: no disclosure toggle).
+    await dialog.getByRole("tab", { name: "Informazioni", exact: true }).click()
     const infoTitle = badgePanel.getByText("Informazioni sul titolo", { exact: true })
     await infoTitle.hover()
     await page.waitForTimeout(900)
@@ -530,7 +588,8 @@ test.describe("U4 U2 contextual preview (defaults)", () => {
     // sash=rank with no extra at all.
     expect(p.get("sash")).toBe("upcoming,rank,new,award,extra")
 
-    // Rank family narrows with no simultaneous extra.
+    // Rank family narrows with no simultaneous extra (Classifiche tab).
+    await dialog.getByRole("tab", { name: "Classifiche", exact: true }).click()
     const rankSwitch = badgePanel.getByRole("switch", { name: "Classifiche" })
     p = await nextPreview(
       seen,
@@ -591,7 +650,10 @@ test.describe("U4 U2 contextual preview (defaults)", () => {
       },
       (u) => u.searchParams.get("sash") === "" && u.searchParams.get("extra") === null,
     )
+    await saveStaged(page)
     await waitDefaults(page, (d) => Array.isArray(d.sashOrder) && (d.sashOrder as unknown[]).length === 0)
+    // Back to Informazioni: the Extra bucket focus must emit no sample now.
+    await dialog.getByRole("tab", { name: "Informazioni", exact: true }).click()
     await extraSwitch.focus()
     await page.waitForTimeout(900)
     const lastEmpty = findLastParams(seen.urls, 0, isDefaultsPreviewUrl, () => true)
@@ -743,12 +805,13 @@ test.describe("U4 U3 number baseline (transport + slider)", () => {
     await page.getByRole("button", { name: /Impostazioni/i }).click()
     const dialog = page.getByRole("dialog")
     await expect(dialog).toBeVisible()
+    // Default tab is Preset: the rank appearance lives on Classifiche.
+    await dialog.getByRole("tab", { name: "Classifiche", exact: true }).click()
     const badgePanel = dialog.getByRole("tabpanel", { name: "Badge" })
     await expect(badgePanel).toBeVisible()
 
-    // Select Numero (saved write): preview carries rs=number, tox stays raw 0.
-    // T3 macro-groups: Overlay starts collapsed; expand for rank edits.
-    await badgePanel.getByTestId("badge-group-overlay-toggle").click()
+    // Select Numero (saved write): preview carries rs=number, tox stays raw 0
+    // (macro-groups are always open in settings: no disclosure toggle).
     const rankGroup = badgePanel.getByRole("radiogroup", { name: "Classifica" })
     const p = await nextPreview(
       seen,
@@ -758,6 +821,7 @@ test.describe("U4 U3 number baseline (transport + slider)", () => {
       (u) => u.searchParams.get("rs") === "number",
     )
     expect(p.get("tox")).toBe("0")
+    await saveStaged(page)
     await waitDefaults(page, (d) => d.rankingBadgeStyle === "number")
 
     // Trasforma tab: the default X slider reads the effective -20 with the
@@ -777,18 +841,20 @@ test.describe("U4 U3 number baseline (transport + slider)", () => {
     await expect(editor).toBeVisible()
     await editor.fill("-10")
     await editor.press("Enter")
+    await saveStaged(page)
     await waitDefaults(page, (d) => d.topBadgeOffsetX === 10)
     await expect(xSlider).toHaveValue("-10")
 
-    // Other styles read the raw value (baseline 0): back to Badge, select a
-    // centered Badge variant — the stored +10 shows unshifted.
-    await dialog.getByRole("tab", { name: "Badge", exact: true }).click()
+    // Other styles read the raw value (baseline 0): back to Classifiche,
+    // select a centered Badge variant — the stored +10 shows unshifted.
+    await dialog.getByRole("tab", { name: "Classifiche", exact: true }).click()
     const badgeBack = dialog.getByRole("tabpanel", { name: "Badge" })
     await expect(badgeBack).toBeVisible()
     await badgeBack
       .getByRole("radiogroup", { name: "Classifica" })
       .getByRole("radio", { name: "Badge" })
       .click()
+    await saveStaged(page)
     await waitDefaults(page, (d) => d.rankingBadgeStyle === "pill")
     await dialog.getByRole("tab", { name: "Trasforma", exact: true }).click()
     const trasforma2 = dialog.getByRole("tabpanel", { name: "Trasforma" })

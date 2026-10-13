@@ -39,15 +39,30 @@ function tryGeometryUrl(raw: string): URL | null {
 
 interface Seen {
   urls: string[]
+  /** resourceType effettivo per ogni riga di urls (parallelo, stessa push). */
+  kinds: string[]
+  /** Request image sullo stesso path preview (gallery/thumbnail); l'overlap
+   * di URL con urls è legittimo e consentito. */
+  imageUrls: string[]
   geometryUrls: string[]
 }
 
-/** Log di tutte le request preview demo (anche quelle già partite). */
+/** Log di tutte le request preview demo (anche quelle già partite).
+ * Il discriminator anti-contaminazione è il resourceType effettivo della
+ * request (XHR = dialog preview blob; image = thumbnail gallery/preset;
+ * fetch = metadati geometria/API), NON l'unicità URL: main e gallery possono
+ * legittimamente chiedere la stessa URL. Le righe predicate (urls) restano
+ * solo-XHR; le image sono catturate a parte per la regressione. */
 function collectPreviewRequests(page: Page, seen: Seen) {
   page.on("request", (req) => {
     const raw = req.url()
     if (tryDemoUrl(raw)) {
-      seen.urls.push(raw)
+      if (req.resourceType() === "xhr") {
+        seen.urls.push(raw)
+        seen.kinds.push(req.resourceType())
+      } else if (req.resourceType() === "image") {
+        seen.imageUrls.push(raw)
+      }
       return
     }
     if (tryGeometryUrl(raw)) seen.geometryUrls.push(raw)
@@ -144,10 +159,13 @@ test.describe("Trasforma Verticale/Orizzontale preview-only", () => {
     await seed(page)
     await page.setViewportSize({ width: 1280, height: 900 })
     await resetServerDefaults(page)
-    const seen: Seen = { urls: [], geometryUrls: [] }
+    const seen: Seen = { urls: [], kinds: [], imageUrls: [], geometryUrls: [] }
     collectPreviewRequests(page, seen)
 
     // Apro Impostazioni (tab Badge): la preview parte subito dai default.
+    // Mark delle image pre-apertura: la regressione sotto prova le image
+    // gallery emesse dall'apertura stessa.
+    const galleryMark = seen.imageUrls.length
     await page.getByRole("button", { name: /Impostazioni/i }).click()
     const dialog = page.getByRole("dialog")
     await expect(dialog).toBeVisible()
@@ -182,12 +200,40 @@ test.describe("Trasforma Verticale/Orizzontale preview-only", () => {
     p = await waitPreview(seen)
     expect(p.get("shape")).toBe("poster")
 
+    // Regressione contaminazione: il discriminator è il resourceType
+    // effettivo registrato per ogni request, non l'unicità URL (main e
+    // gallery possono legittimamente chiedere la stessa URL). Ogni riga
+    // preview è XHR (solo stream dialog); le image sullo stesso path sono
+    // osservate a parte dopo l'apertura; la gallery resta montata e
+    // renderizzata normalmente.
+    const gallery = dialog.locator('img[src*="/api/poster/"]')
+    await expect.poll(() => gallery.count(), { timeout: 30_000 }).toBeGreaterThan(0)
+    await expect
+      .poll(
+        async () =>
+          gallery.evaluateAll((imgs: HTMLImageElement[]) => imgs.filter((im) => im.naturalWidth > 0).length),
+        { timeout: 30_000 },
+      )
+      .toBeGreaterThan(0)
+    expect(seen.urls.length).toBeGreaterThan(0)
+    expect(seen.kinds.length).toBe(seen.urls.length)
+    expect(seen.kinds.every((k) => k === "xhr")).toBe(true)
+    expect(seen.imageUrls.length).toBeGreaterThan(galleryMark)
+
     // Landscape via the single top selector (before the controls): profiled landscape request.
+    // The predicate requires the ACTUAL dialog XHR of the new generation
+    // (shape=landscape): a pending pre-click portrait XHR settling late must
+    // never win as "first new" (stale settle is rejected by the production
+    // guards; only the landscape row proves the render followed the edit).
     const formatTarget = dialog.getByTestId("format-target-selector")
     await expect(formatTarget).toBeVisible()
-    p = await nextPreview(seen, async () => {
-      await formatTarget.getByText("Orizzontale", { exact: true }).click()
-    })
+    p = await nextPreview(
+      seen,
+      async () => {
+        await formatTarget.getByText("Orizzontale", { exact: true }).click()
+      },
+      (u) => u.searchParams.get("shape") === "landscape",
+    )
     expect(p.get("shape")).toBe("landscape")
     expect(p.get("gradHeight")).toBe("20")
     expect(p.get("tscale")).toBe("120")
@@ -216,10 +262,15 @@ test.describe("Trasforma Verticale/Orizzontale preview-only", () => {
     p = await nextPreview(seen, async () => {}, (u) => u.searchParams.get("tscale") === "125")
     expect(p.get("tscale")).toBe("125")
 
-    // Back to Portrait from the single selector: original flats, no mixing.
-    p = await nextPreview(seen, async () => {
-      await formatTarget.getByText("Verticale", { exact: true }).click()
-    })
+    // Back to Portrait from the single selector: original flats, no mixing
+    // (same generation rule: only a poster-shape XHR row counts).
+    p = await nextPreview(
+      seen,
+      async () => {
+        await formatTarget.getByText("Verticale", { exact: true }).click()
+      },
+      (u) => u.searchParams.get("shape") === "poster",
+    )
     expect(p.get("shape")).toBe("poster")
     expect(p.get("gradHeight")).toBe("30")
     expect(p.get("tscale")).toBe("100")
@@ -239,7 +290,7 @@ test.describe("Trasforma Verticale/Orizzontale preview-only", () => {
     await seed(page)
     await page.setViewportSize({ width: 390, height: 844 })
     await resetServerDefaults(page)
-    const seen: Seen = { urls: [], geometryUrls: [] }
+    const seen: Seen = { urls: [], kinds: [], imageUrls: [], geometryUrls: [] }
     collectPreviewRequests(page, seen)
 
     await page.getByRole("button", { name: /Impostazioni/i }).click()
@@ -249,13 +300,23 @@ test.describe("Trasforma Verticale/Orizzontale preview-only", () => {
     let p = await waitPreview(seen)
     expect(p.get("shape")).toBe("poster")
 
-    await category.selectOption("trasforma")
+    await category.selectOption("transform")
     const panel = page.getByRole("tabpanel", { name: "Trasforma" }).filter({ visible: true }).first()
     await expect(panel).toBeVisible()
 
-    p = await nextPreview(seen, async () => {
-      await page.locator(".settings-panel:visible").getByTestId("format-target-selector").getByText("Orizzontale", { exact: true }).click()
-    })
+    // After the switch the test requires the ACTUAL dialog XHR of the new
+    // generation (shape=landscape): open→click routinely completes inside
+    // the 200ms dialog debounce, so a first-any match would latch the
+    // settling pre-click portrait XHR. Post-click thumbnails are landscape
+    // (PresetsPanel follows editTargetShape) and image-typed, hence already
+    // excluded; the shape predicate is the request-complete gate.
+    p = await nextPreview(
+      seen,
+      async () => {
+        await page.locator(".settings-panel:visible").getByTestId("format-target-selector").getByText("Orizzontale", { exact: true }).click()
+      },
+      (u) => u.searchParams.get("shape") === "landscape",
+    )
     expect(p.get("shape")).toBe("landscape")
     expect(p.get("gradHeight")).toBe("20")
     expect(p.get("qox")).toBe("7")
@@ -272,9 +333,13 @@ test.describe("Trasforma Verticale/Orizzontale preview-only", () => {
     expect(p.get("shape")).toBe("landscape")
     expect(p.get("gradHeight")).toBe("25")
 
-    p = await nextPreview(seen, async () => {
-      await page.locator(".settings-panel:visible").getByTestId("format-target-selector").getByText("Verticale", { exact: true }).click()
-    })
+    p = await nextPreview(
+      seen,
+      async () => {
+        await page.locator(".settings-panel:visible").getByTestId("format-target-selector").getByText("Verticale", { exact: true }).click()
+      },
+      (u) => u.searchParams.get("shape") === "poster",
+    )
     expect(p.get("shape")).toBe("poster")
     expect(p.get("gradHeight")).toBe("30")
     // Regressione: il vincitore è un vero render preview (mai metadata

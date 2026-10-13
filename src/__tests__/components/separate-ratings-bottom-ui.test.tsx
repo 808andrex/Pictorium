@@ -174,9 +174,17 @@ describe("BadgeDefaultsSection Orizzontale: barra disabilitata (edit target)", (
     defaultPosterShape: "landscape",
   }
 
+  function openRatings() {
+    const adv = screen.getByTestId("badge-advanced-toggle")
+    if (adv.getAttribute("aria-expanded") !== "true") fireEvent.click(adv)
+    const t = screen.getByTestId("badge-group-base-toggle")
+    if (t.getAttribute("aria-expanded") !== "true") fireEvent.click(t)
+  }
+
   it("con target Orizzontale + barra: barra disabilitata, pills attiva", () => {
     seedDefaults(DEFAULTS_LANDSCAPE_BAR)
     renderWithCtx(<BadgeDefaultsSection active shape="landscape" />)
+    openRatings()
     const bar = screen.getByRole("button", { name: "ui.separateRatingsBottomBar" })
     const pills = screen.getByRole("button", { name: "ui.separateRatingsBottomPills" })
     expect(bar).toBeDisabled()
@@ -188,6 +196,7 @@ describe("BadgeDefaultsSection Orizzontale: barra disabilitata (edit target)", (
   it("con target Verticale la barra resta abilitata e selezionata", () => {
     seedDefaults({ ...DEFAULTS_LANDSCAPE_BAR, defaultPosterShape: "poster" })
     renderWithCtx(<BadgeDefaultsSection active shape="portrait" />)
+    openRatings()
     const bar = screen.getByRole("button", { name: "ui.separateRatingsBottomBar" })
     expect(bar).not.toBeDisabled()
     expect(bar).toHaveAttribute("aria-pressed", "true")
@@ -197,6 +206,7 @@ describe("BadgeDefaultsSection Orizzontale: barra disabilitata (edit target)", (
   it("senza shape il target default è portrait (retrocompatibilità)", () => {
     seedDefaults(DEFAULTS_LANDSCAPE_BAR)
     renderWithCtx(<BadgeDefaultsSection active />)
+    openRatings()
     const bar = screen.getByRole("button", { name: "ui.separateRatingsBottomBar" })
     expect(bar).not.toBeDisabled()
     expect(bar).toHaveAttribute("aria-pressed", "true")

@@ -216,6 +216,16 @@ const defaultsSchema = z.object({
   homeDisabledCatalogIds: z.array(z.string().max(80)).optional(),
   catalogOrder: z.array(z.string().max(80)).optional(),
   catalogRenames: z.record(z.string().max(80), z.string().max(100)).optional(),
+  // Per-catalog card format (TaskB): persisted values ONLY poster|landscape;
+  // absent/deleted key = follow the global posterShape. Unknown enums fail
+  // the PUT (never silently defaulted); prototype keys are rejected and the
+  // map is capped like the other catalog records.
+  catalogShapes: z.record(z.string().max(80), z.enum(["poster", "landscape"])).optional().refine((v) => {
+    if (!v) return true
+    const keys = Object.keys(v)
+    if (keys.length > 200) return false
+    return !keys.some((k) => k === "__proto__" || k === "constructor" || k === "prototype")
+  }, { message: "catalogShapes must have at most 200 entries and no prototype keys" }),
 })
 
 function isPlainLandscapeRecord(v: unknown): v is Record<string, unknown> {

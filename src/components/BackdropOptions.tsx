@@ -8,7 +8,9 @@ import { usePSelector } from "@/lib/context"
 import { usePosterEditor } from "@/lib/contexts/PosterEditorContext"
 import { useT } from "@/lib/contexts/TranslationContext"
 import { usePosterFit } from "@/lib/usePosterFit"
-import { ArrowUpDown, Check, ChevronDown, Clock, EyeOff, RotateCcw, Sparkles } from "lucide-react"
+import { useTvdbArtworks } from "@/lib/useTvdbArtworks"
+import { RatingSourceIcon } from "@/components/RatingSourceIcon"
+import { ArrowUpDown, Check, ChevronDown, Clock, EyeOff, Loader2, RotateCcw, Sparkles } from "lucide-react"
 
 /** Sfondi visibili prima del "carica altri" (come i poster: paging, non scroll infinito). */
 const VISIBLE_BACKDROP_COUNT = 10
@@ -234,7 +236,14 @@ export function BackdropOptions({ backdrops, backdropActivePath, selectBackdrop,
     else selectBackdrop(img)
   }
 
-  if (backdrops.length === 0) {
+  // Sorgente provider (TMDB | TVDB): solo a titolo selezionato; TVDB lazy
+  // all'apertura, fetch condivisa con le altre gallery (vedi useTvdbArtworks).
+  // I tile TVDB riusano `handleSelect` (stessa semantica manuale toggle) ma
+  // restano fuori da best-fit/rotazione/esclusioni (solo path TMDB).
+  const [source, setSource] = useState<"tmdb" | "tvdb">("tmdb")
+  const tvdb = useTvdbArtworks(source === "tvdb" && !!selected, "backdrops")
+
+  if (backdrops.length === 0 && !selected) {
     return (
       <p className="text-center py-12 text-muted text-xs">
         {loading ? t("ui.loading") : t("ui.noBackdrops")}
@@ -244,6 +253,85 @@ export function BackdropOptions({ backdrops, backdropActivePath, selectBackdrop,
 
   return (
     <div>
+      {selected && (
+        <div className="flex gap-1 mb-3 overflow-x-auto scrollbar-none">
+          <button type="button"
+            aria-label={t("ui.tmdb")}
+            onClick={() => setSource("tmdb")}
+            className={`tab-chip h-7 px-2.5 rounded-lg text-[11px] font-semibold border transition-all shrink-0 ${source === "tmdb" ? "tab-chip-active bg-accent-orange/15 text-accent-orange border-accent-orange/35" : "bg-white/5 text-muted border-white/10 hover:text-zinc-200 hover:bg-white/10"}`}
+          >
+            {t("ui.tmdb")}
+            <span className="ml-1 text-[10px] opacity-60">{backdrops.length}</span>
+          </button>
+          <button type="button"
+            aria-label={t("ui.tvdbTitle")}
+            onClick={() => setSource("tvdb")}
+            className={`tab-chip h-7 px-2.5 rounded-lg text-[11px] font-semibold border transition-all shrink-0 ${source === "tvdb" ? "tab-chip-active bg-accent-orange/15 text-accent-orange border-accent-orange/35" : "bg-white/5 text-muted border-white/10 hover:text-zinc-200 hover:bg-white/10"}`}
+          >
+            {t("ui.tvdbTitle")}
+            <span className="ml-1 text-[10px] opacity-60">{tvdb.items.length}</span>
+          </button>
+        </div>
+      )}
+      {source === "tvdb" && selected ? (
+        <div data-testid="tvdb-backdrops-panel">
+          {(tvdb.status === "idle" || tvdb.status === "loading") && (
+            <p className="flex items-center justify-center gap-1.5 py-12 text-[11px] text-zinc-500" role="status">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden="true" />
+              {t("ui.tvdbLoading")}
+            </p>
+          )}
+          {tvdb.status === "empty" && (
+            <p className="py-12 text-center text-[11px] text-zinc-500">{t("ui.tvdbEmptyBackdrops")}</p>
+          )}
+          {tvdb.status === "not_configured" && (
+            <p className="py-12 px-2 text-center text-[11px] text-zinc-500 leading-relaxed">{t("ui.tvdbNotConfigured")}</p>
+          )}
+          {tvdb.status === "unavailable" && (
+            <div className="py-8 text-center">
+              <p className="text-[11px] text-zinc-500">{t("ui.tvdbUnavailable")}</p>
+              <button
+                type="button"
+                onClick={() => tvdb.reload()}
+                className="mt-2 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-[11px] font-semibold text-zinc-300 hover:text-white hover:bg-white/10 transition-all"
+              >
+                {t("ui.retry")}
+              </button>
+            </div>
+          )}
+          {tvdb.status === "ready" && (
+            <div className="grid grid-cols-2 gap-2">
+              {tvdb.items.map((img, idx) => {
+                const m = tvdb.meta[idx]
+                const lang = m?.language ?? null
+                const langLabel = !lang ? t("ui.fanartLangUnknown") : lang.toUpperCase()
+                return (
+                  <div key={img.file_path} className="relative group rounded-xl overflow-hidden">
+                    <PosterBtn
+                      staggerIndex={idx}
+                      img={img}
+                      landscape
+                      imgSize="w300"
+                      active={backdropActivePath === img.file_path}
+                      onSelect={handleSelect}
+                      title={`${t("ui.tvdbTitle")} · ${langLabel}`}
+                    />
+                    <span className="absolute top-1 left-1 z-20 flex items-center gap-1 rounded-md bg-black/60 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-200 backdrop-blur-md border border-white/10 pointer-events-none">
+                      <RatingSourceIcon id="tvdb" className="w-3 h-3" />
+                      {t("ui.tvdbTitle")}
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      ) : backdrops.length === 0 ? (
+        <p className="text-center py-12 text-muted text-xs">
+          {loading ? t("ui.loading") : t("ui.noBackdrops")}
+        </p>
+      ) : (
+        <>
       <div className="space-y-2 mb-2 px-1">
         {isBestSelected && (
           <div className="editor-pill">
@@ -378,6 +466,8 @@ export function BackdropOptions({ backdrops, backdropActivePath, selectBackdrop,
             {t("ui.restore")}
           </button>
         </div>
+      )}
+        </>
       )}
     </div>
   )

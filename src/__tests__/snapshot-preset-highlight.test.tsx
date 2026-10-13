@@ -1,8 +1,9 @@
 /**
  * Snapshot preset highlight (BetterPoster/RPDB) per edit target:
  * - portrait: mapped flats + applied globals, ignores the other-format profile and delivery;
- * - landscape: preset-covered effective + applied globals, ignores delivery
- *   and preserved keys absent from the preset (e.g. extraBadgeStyle);
+ * - landscape: preset-covered effective + applied globals, ignores delivery;
+ *   the standalone extra style is owned by every ready look (reset to
+ *   follow-own-rank, never inherited) — see ready-preset-independence;
  * - no last-click flag: only real editor visual values.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest"
@@ -79,7 +80,8 @@ describe.each(CASES)("snapshot highlight $label", ({ label }) => {
     const on = presetButton(label)
     expect(isHighlighted(on)).toBe(true)
     expect(hasCheck(on)).toBe(true)
-    // Apply preserves the other format and delivery.
+    // Apply preserves the other format and delivery: the portrait edit never
+    // touches the landscape profile (other shape frozen, "vetro" intact).
     expect(ctx().defaultPosterShape).toBe("landscape")
     expect(ctx().landscape.badgeStyle).toBe("pill")
     expect(ctx().landscape.extraBadgeStyle).toBe("vetro")
@@ -118,7 +120,7 @@ describe.each(CASES)("snapshot highlight $label", ({ label }) => {
     expect(isHighlighted(presetButton(label))).toBe(false)
   })
 
-  it("landscape: highlights after click with custom flats + delivery + preserved extra, off on applied visual/globals, stays on other format/delivery/extra", async () => {
+  it("landscape: highlights after click with custom flats + delivery + owned extra, off on applied visual/globals, stays on other format/delivery/extra", async () => {
     localStorage.setItem("badgeDefaults", JSON.stringify({
       defaultBadgeStyle: "pill",
       defaultPosterShape: "poster",
@@ -136,8 +138,9 @@ describe.each(CASES)("snapshot highlight $label", ({ label }) => {
     const on = presetButton(label)
     expect(isHighlighted(on)).toBe(true)
     expect(hasCheck(on)).toBe(true)
-    // Preserved key absent from the preset does not block the highlight.
-    expect(ctx().landscape.extraBadgeStyle).toBe("vetro")
+    // Ready independence: the edited profile owns the extra style
+    // (follow-own-rank) instead of inheriting the tuned seed.
+    expect(ctx().landscape.extraBadgeStyle).toBe("follow-rank")
     // Flats and delivery never follow a landscape preset.
     expect(ctx().defaultBadgeStyle).toBe("pill")
     expect(ctx().defaultPosterShape).toBe("poster")
@@ -152,8 +155,8 @@ describe.each(CASES)("snapshot highlight $label", ({ label }) => {
     // Back on with a second real click.
     fireEvent.click(presetButton(label))
     expect(isHighlighted(presetButton(label))).toBe(true)
-    // The preserved extra survives re-apply.
-    expect(ctx().landscape.extraBadgeStyle).toBe("vetro")
+    // The reset extra survives re-apply (idempotent follow-own-rank).
+    expect(ctx().landscape.extraBadgeStyle).toBe("follow-rank")
 
     // Other format, delivery and extra stay on in landscape.
     await act(async () => {

@@ -227,7 +227,7 @@ const DEFAULT_STREMIO_POSTER_PARAMS = {
   blurFade: 50,
   blurDarkness: 30,
   tintStrength: 20,
-  topShade: 50,
+  topShade: 80,
   blurEnabled: true,
   networkLogo: true,
   topBadgeScale: 100,
@@ -442,7 +442,7 @@ export function buildStremioPosterSearchParams(input: StremioPosterParamsInput):
     params.set("tint", String(input.tintStrength ?? DEFAULT_STREMIO_POSTER_PARAMS.tintStrength))
     params.set("bf", String(input.blurFade ?? DEFAULT_STREMIO_POSTER_PARAMS.blurFade))
     params.set("bd", String(input.blurDarkness ?? DEFAULT_STREMIO_POSTER_PARAMS.blurDarkness))
-    // Ombra superiore solo quando diversa dal default: a 50 l'URL resta
+    // Ombra superiore solo quando diversa dal default: a 80 l'URL resta
     // identico al passato (la risolve il server).
     const ts = input.topShade ?? DEFAULT_STREMIO_POSTER_PARAMS.topShade
     if (ts !== DEFAULT_STREMIO_POSTER_PARAMS.topShade) params.set("ts", String(ts))

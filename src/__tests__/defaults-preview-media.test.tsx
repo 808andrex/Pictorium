@@ -227,12 +227,14 @@ describe("SettingsPanel persisted preview title", () => {
   it("shows the persisted tv title after reopen without crashing", async () => {
     writePreviewDemoMedia("user-1", TV_CASA)
     const { unmount } = renderWithCtx(<SettingsPanel {...panelProps} />, { currentUserId: "user-1" })
-    await screen.findByTestId("settings-preview")
+    // Primary draft page owns the single projected preview (parent preview
+    // grid serves the advanced tab only).
+    await screen.findByTestId("defaults-preview-media")
     expect(screen.getAllByText("La casa di carta").length).toBeGreaterThan(0)
     unmount()
     // Reopen (remount): the title is still there (reload persistence).
     renderWithCtx(<SettingsPanel {...panelProps} />, { currentUserId: "user-1" })
-    await screen.findByTestId("settings-preview")
+    await screen.findByTestId("defaults-preview-media")
     await waitFor(() => {
       expect(screen.getAllByText("La casa di carta").length).toBeGreaterThan(0)
     })
@@ -242,7 +244,7 @@ describe("SettingsPanel persisted preview title", () => {
     window.localStorage.setItem("previewDemoMedia:user-9", "{broken")
     writePreviewDemoMedia("user-8", MOVIE_AVATAR)
     renderWithCtx(<SettingsPanel {...panelProps} />, { currentUserId: "user-9" })
-    await screen.findByTestId("settings-preview")
+    await screen.findByTestId("defaults-preview-media")
     // Corrupt entry: no Avatar demo image assertion possible without a
     // loaded poster, but the panel renders and the search stays usable.
     expect(screen.getByTestId("defaults-preview-title-search")).toBeInTheDocument()

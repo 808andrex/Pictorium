@@ -826,7 +826,7 @@ export function TransformControls() {
               boundsMin={0}
               boundsMax={100}
               onChange={(v) => setGradVals({ topShade: v })}
-              onDoubleClick={() => setGradVals({ topShade: 50 })}
+              onDoubleClick={() => setGradVals({ topShade: 80 })}
               editingValue={editingValue}
               editText={editText}
               setEditingValue={setEditingValue}

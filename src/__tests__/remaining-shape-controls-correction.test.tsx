@@ -13,10 +13,10 @@
  *   open preview, no-title template, defaults preview and Stremio URLs, so a
  *   portrait extra edit can never resurrect across shapes. Absent stays
  *   flat-following (legacy URLs byte-identical).
- * - `logoAlign` is per-shape: landscape profile override wins, null/absent
- *   follows the flat, flat null = landscape-left auto; portraits ALWAYS
- *   render centered (server contract) and the portrait Left option is a
- *   demonstrated no-op (disabled in UI).
+ * - `logoAlign` renders Auto in settings (no selector in either shape):
+ *   landscape profile override wins server-side, null/absent follows the
+ *   flat, flat null = landscape-left auto; portraits ALWAYS render centered
+ *   (server contract).
  * - Per-title saved mapping precedence is unchanged (explicit mapping extra
  *   still wins over the owned profile marker).
  * - Shared `config` token transport precedence is UNCHANGED (query > mapping
@@ -27,7 +27,7 @@
  *   fallback (null from the resolver).
  */
 import { useEffect } from "react"
-import { render, act, screen, within } from "@testing-library/react"
+import { render, act, fireEvent, screen } from "@testing-library/react"
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { PictoriumRoot, useP } from "@/lib/context"
 import type { PictoriumCtx } from "@/lib/context"
@@ -110,6 +110,7 @@ function installFetchMock() {
           })
         })
       }
+      if (u.includes("/api/defaults/presets")) return okJson({ presets: [] })
       return okJson({})
     }),
   )
@@ -476,20 +477,35 @@ describe("precedence is unchanged: query > mapping > token > owned profile", () 
   })
 })
 
-describe("portrait Left is a demonstrated no-op (disabled, shape-compatible controls kept)", () => {
-  it("portrait disables Left; landscape keeps it enabled", async () => {
+describe("logo alignment is Auto-only (no selector in either shape)", () => {
+  async function renderBadgeShape(shape: "portrait" | "landscape") {
     localStorage.setItem("badgeDefaults", JSON.stringify({ landscape: {} }))
     ctx = null
     ed = null
     render(
       <PictoriumRoot>
         <Probe />
-        <BadgeDefaultsSection active shape="portrait" />
+        <BadgeDefaultsSection active shape={shape} />
       </PictoriumRoot>,
     )
     await flush()
-    const group = screen.getByRole("group", { name: "ui.logoAlign" })
-    expect(within(group).getByRole("button", { name: "ui.sideLeft" })).toBeDisabled()
-    expect(within(group).getByRole("button", { name: "ui.alignCenter" })).not.toBeDisabled()
+    const adv = screen.getByTestId("badge-advanced-toggle")
+    if (adv.getAttribute("aria-expanded") !== "true") fireEvent.click(adv)
+    const sg = screen.getByTestId("badge-group-style-toggle")
+    if (sg.getAttribute("aria-expanded") !== "true") fireEvent.click(sg)
+  }
+
+  it("portrait renders no logoAlign group; the style group stays reachable", async () => {
+    await renderBadgeShape("portrait")
+    expect(screen.queryByRole("group", { name: "ui.logoAlign" })).toBeNull()
+    expect(screen.queryByText("ui.logoAlign")).toBeNull()
+    expect(screen.getByTestId("badge-group-style")).toBeInTheDocument()
+  })
+
+  it("landscape renders no logoAlign group; the style group stays reachable", async () => {
+    await renderBadgeShape("landscape")
+    expect(screen.queryByRole("group", { name: "ui.logoAlign" })).toBeNull()
+    expect(screen.queryByText("ui.logoAlign")).toBeNull()
+    expect(screen.getByTestId("badge-group-style")).toBeInTheDocument()
   })
 })

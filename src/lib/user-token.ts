@@ -181,6 +181,28 @@ function plainHeaders(h?: HeadersInit): Record<string, string> {
 }
 
 /**
+ * UUID pinned in the request path query (`?u=`/`?user=`), respecting the
+ * existing scoping (scopedApiInit). Null when the request carries no scope.
+ */
+function requestPathUuid(path: string): string | null {
+  try {
+    const qIndex = path.indexOf("?")
+    if (qIndex < 0) return null
+    const query = path.slice(qIndex + 1).split("#")[0]
+    if (!query) return null
+    const sp = new URLSearchParams(query)
+    for (const raw of [sp.get("u"), sp.get("user")]) {
+      if (typeof raw !== "string") continue
+      const id = normalizeUuidId(raw)
+      if (UUID_RE.test(id)) return id
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+/**
  * Retry 401 con la password di sessione (per `http()`/`userFetch`): stesso
  * caso di fetchWithUserAuthRetry ma per il plumbing generico — il path porta
  * già `?u=` (scopedApiInit) e gli header il token stantio. Ritorna la Response
@@ -193,8 +215,14 @@ export async function retryWithPasswordAuth(
   res: { status: number },
 ): Promise<Response | null> {
   if (res.status !== 401) return null
-  const uuid = currentPathUuid()
-  if (!uuid) return null
+  const current = currentPathUuid()
+  const pinned = requestPathUuid(path) ?? current
+  if (!pinned) return null
+  // Namespace guard: the request scope must still own the retry. A profile
+  // switch mid-flight (B current, A requested) never sends B's password to
+  // A, and token clearing stays pinned to the request scope.
+  if (pinned !== current) return null
+  const uuid = pinned
   const token = getStoredUserToken(uuid)
   const password = getStoredUserPassword(uuid)
   if (!token || !password) return null

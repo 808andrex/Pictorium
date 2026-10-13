@@ -48,7 +48,7 @@ for (const width of [390, 1280]) {
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
     await page.getByRole("button", { name: /Impostazioni/i }).click()
     if (width < 640) await page.locator("#mobile-settings-category").selectOption("prefs")
-    else await page.getByRole("tab", { name: "Preferenze" }).click()
+    else await page.getByRole("button", { name: "Preferenze", exact: true }).click()
     await expect(page.getByRole("radio", { name: "Chiaro", exact: true })).toBeVisible()
     await page.screenshot({ path: `test-results/theme-settings-${width}.png`, fullPage: true, animations: "disabled" })
     expect(errors).toEqual([])
@@ -126,8 +126,9 @@ for (const width of [390, 1280]) {
     await expect(logo).toHaveAttribute("src", "/pictorium-light.svg")
     await expect.poll(() => logo.evaluate((el: HTMLImageElement) => el.complete && el.naturalWidth > 0)).toBe(true)
     await page.getByRole("button", { name: /Impostazioni/i }).click()
-    for (const [tab, label] of [["badge", "Badge"], ["trasforma", "Trasforma"], ["prefs", "Preferenze"], ["data", "Dati & Cache"]]) {
+    for (const [tab, label] of [["badge", "Badge"], ["transform", "Trasforma"], ["prefs", "Preferenze"], ["data", "Dati & Cache"]]) {
       if (width < 640) await page.locator("#mobile-settings-category").selectOption(tab)
+      else if (label === "Preferenze" || label === "Dati & Cache") await page.getByRole("button", { name: label, exact: true }).click()
       else await page.getByRole("tab", { name: label, exact: true }).click()
       const controls = page.getByTestId("settings-controls").filter({ visible: true })
       await expect(controls).toBeVisible()

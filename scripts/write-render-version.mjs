@@ -64,6 +64,7 @@ const RENDER_FILES = [
   "src/lib/poster-service.ts",
   "src/lib/poster-url.ts",
   "src/lib/pre-release.ts",
+  "src/lib/provider-brand-palette.ts",
   "src/lib/ratings.ts",
   "src/lib/release-badge.ts",
   "src/lib/separate-rating-renderer.ts",

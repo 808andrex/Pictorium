@@ -69,6 +69,15 @@ function paramsOf(url: string): URLSearchParams {
   return new URL(url, "http://localhost").searchParams
 }
 
+// Staged five-tab session: edits stage with zero durable writes; the single
+// global Save installs them into the outer truth the Probe reads.
+async function saveStaged() {
+  fireEvent.click(screen.getByTestId("settings-save"))
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(600)
+  })
+}
+
 describe("buildDefaultsPreviewUrl preview-only shape", () => {
   it("portrait: URL identici con o senza i nuovi campi (nessun mixing)", () => {
     const base = buildDefaultsPreviewUrl(FLAT)
@@ -399,8 +408,8 @@ describe("SettingsPanel reale: tab Trasforma → Orizzontale → slider live →
     expect(opened.length).toBeGreaterThan(0)
     expect(lastParams().get("shape")).toBe("poster")
 
-    // Passo a Trasforma (sotto-tab Verticale): ancora portrait.
-    fireEvent.click(screen.getByRole("tab", { name: "ui.transform" }))
+    // Passo a Trasforma: ancora portrait.
+    fireEvent.click(screen.getByRole("tab", { name: "ui.settingsTabTransform" }))
     expect(screen.queryByText("ui.landscapeDefaultsHint")).toBeNull()
     await act(async () => {
       await vi.advanceTimersByTimeAsync(600)
@@ -461,13 +470,15 @@ describe("SettingsPanel reale: tab Trasforma → Orizzontale → slider live →
     expect(screen.getByTestId("settings-preview").querySelector(".aspect-video")).toBeNull()
 
     // Persistenza: default shape mai toccato, override Orizzontale intatti.
+    // Staged session: the explicit Save installs the draft into outer truth.
+    await saveStaged()
     const ed = ctx as unknown as PosterEditorCtx
     expect(ed.defaultPosterShape).toBe("poster")
     expect(ed.landscape.gradientHeight).toBe(45)
     expect(ed.landscape.topBadgeScale).toBe(130)
 
     // Badge tab with a Portrait target: poster (the persisted target is portrait here).
-    fireEvent.click(screen.getByRole("tab", { name: "ui.badgeSection" }))
+    fireEvent.click(screen.getByRole("tab", { name: "ui.settingsTabBadge" }))
     await act(async () => {
       await vi.advanceTimersByTimeAsync(600)
     })

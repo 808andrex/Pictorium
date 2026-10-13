@@ -1,4 +1,5 @@
-import { test, expect, type Page } from "@playwright/test"
+import { test, expect, type Page, type TestInfo } from "@playwright/test"
+import { writeFile } from "node:fs/promises"
 
 // I test poster girano SENZA TMDB_API_KEY: le chiamate esterne (TMDB, immagini,
 // JustWatch, Wikidata, IMDb) vengono servite dal mock server locale
@@ -462,22 +463,42 @@ test.describe("poster API — functional", () => {
     expect(buffer.length).toBeGreaterThan(1000)
   })
 
-  test("top shade (ts) — default 50, off needs explicit ts=0", async ({ request }) => {
-    // Default 50: senza parametro e con ts=50 i byte sono identici;
-    // con ts=0 (spenta) il render differisce.
+  test("top shade (ts) — default 80, off needs explicit ts=0", async ({ request }, testInfo) => {
+    // Default 80: omitted and explicit ts=80 render byte-identical; ts=0 (off) differs.
+    // Legacy ts=50 stays a valid mid shade, byte-different from both 80 and 0 (stored value preserved, not automigrated).
     const base = { genreName: "Action", voteAverage: "7.8", badges: "1", ranking: "0" }
     const defRes = await request.get(posterUrl(base))
     expect(defRes.ok()).toBeTruthy()
     const defBuffer = await defRes.body()
     expect(defBuffer.length).toBeGreaterThan(1000)
-    const fiftyRes = await request.get(posterUrl({ ...base, ts: "50" }))
-    expect(fiftyRes.ok()).toBeTruthy()
-    expect(Buffer.compare(defBuffer, await fiftyRes.body())).toBe(0)
+    const eightyRes = await request.get(posterUrl({ ...base, ts: "80" }))
+    expect(eightyRes.ok()).toBeTruthy()
+    const eightyBuffer = await eightyRes.body()
+    expect(eightyBuffer.length).toBeGreaterThan(1000)
+    expect(Buffer.compare(defBuffer, eightyBuffer)).toBe(0)
     const offRes = await request.get(posterUrl({ ...base, ts: "0" }))
     expect(offRes.ok()).toBeTruthy()
     const offBuffer = await offRes.body()
     expect(offBuffer.length).toBeGreaterThan(1000)
     expect(Buffer.compare(defBuffer, offBuffer)).not.toBe(0)
+    const fiftyRes = await request.get(posterUrl({ ...base, ts: "50" }))
+    expect(fiftyRes.ok()).toBeTruthy()
+    const fiftyBuffer = await fiftyRes.body()
+    expect(fiftyBuffer.length).toBeGreaterThan(1000)
+    expect(Buffer.compare(fiftyBuffer, eightyBuffer)).not.toBe(0)
+    expect(Buffer.compare(fiftyBuffer, offBuffer)).not.toBe(0)
+    const fiftyRepeatRes = await request.get(posterUrl({ ...base, ts: "50" }))
+    expect(fiftyRepeatRes.ok()).toBeTruthy()
+    expect(Buffer.compare(fiftyBuffer, await fiftyRepeatRes.body())).toBe(0)
+    const attachPng = async (info: TestInfo, name: string, body: Buffer, contentType: string) => {
+      const file = info.outputPath(name)
+      await writeFile(file, body)
+      await info.attach(name, { path: file, contentType })
+    }
+    await attachPng(testInfo, "ts-omitted-default80.png", defBuffer, defRes.headers()["content-type"] ?? "image/png")
+    await attachPng(testInfo, "ts-explicit80.png", eightyBuffer, eightyRes.headers()["content-type"] ?? "image/png")
+    await attachPng(testInfo, "ts-explicit50-legacy.png", fiftyBuffer, fiftyRes.headers()["content-type"] ?? "image/png")
+    await attachPng(testInfo, "ts-off-explicit0.png", offBuffer, offRes.headers()["content-type"] ?? "image/png")
   })
 
   test("all badges off (clean poster) — valid image", async ({ request }) => {

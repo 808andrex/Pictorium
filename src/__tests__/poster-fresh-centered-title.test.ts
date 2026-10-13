@@ -43,6 +43,18 @@ import type { ServerDefaults } from "@/lib/server-defaults"
 // INTENTIONALLY moves (updated pin below, see NEW_RANKED_PORTRAIT); ranked
 // landscape is re-pinned by task8b (left-blur band, same value as
 // poster-fresh-unranked.test.ts — identical inputs, identical bytes).
+// Universal topShade default 50 -> 80 (user-approved global change, owned by
+// src/__tests__/default-top-shade-80.test.tsx; root-caused in
+// C:\Users\lucaf\AppData\Local\Temp\opencode\final-render-failure-audit\):
+// every exact fixture below omits topShade, so the ranked-landscape,
+// unranked (both shapes) and Standard (both shapes) pins move to the
+// demonstrated 80-default bytes (explicit topShade 80 renders byte-identical
+// to the omitted default; explicit 50 restores the old pins byte-exactly
+// through the current code, proving no other drift). The ranked-portrait
+// not.toBe guard below is untouched (its bytes move with the same veil but
+// were never exact-pinned). Old 50-default pins are kept as
+// LEGACY_TOP_SHADE_50_* guards below: explicit stored 50 values must keep
+// rendering those exact bytes.
 const PRE_RANKED_PORTRAIT = "1fa71a22783ee98a0fe033e5f8ebdd8dd443336ee2992f286980af90330c2f90"
 // Task15 gentle-polish candidate (visually independently reviewed + approved:
 // rim border opacity 95->80 / 80->68, blur feather 16->32 gamma 1.3; samples
@@ -62,7 +74,7 @@ const PRE_RANKED_PORTRAIT = "1fa71a22783ee98a0fe033e5f8ebdd8dd443336ee2992f28698
 // identical inputs/bytes as poster-fresh-unranked.test.ts landscape pin,
 // which moves identically); unranked and Standard pins below untouched
 // (verified by the suites pinning them).
-const PRE_RANKED_LANDSCAPE = "c504aab7722ba206cd6a23711a71b8beb78358411e9bcc97f5a3754af535d48c"
+const PRE_RANKED_LANDSCAPE = "33f2998c55de5a3eb6d331939005a8df1f875baeb4955cb97b513da29f0e5a9a"
 // Task8a2 BEFORE hashes (captured with the pre-task8a2 fresh-layout via the
 // same helpers/inputs as this file — task8a2/before-unranked-*.sha): the
 // pre-task4 pins below are historic references only (task4 moved the meta
@@ -82,10 +94,17 @@ const PRE_RANKED_LANDSCAPE = "c504aab7722ba206cd6a23711a71b8beb78358411e9bcc97f5
 // C:\Users\lucaf\AppData\Local\Temp\opencode\task12\): the RANKED LANDSCAPE
 // pin below is RE-PINNED (was 101a… — identical inputs/bytes as
 // poster-fresh-unranked.test.ts); unranked and Standard pins below untouched.
-const TASK8A2_BEFORE_UNRANKED_PORTRAIT = "e1e4b228a05e29c6d9a5509c4b7769a1be7808c1456e2d6592b23803e7255359"
-const TASK8A2_BEFORE_UNRANKED_LANDSCAPE = "959f0b9aa491031004fa68c812f0323bd1024ff270c913633306bfc73a060429"
-const PRE_STANDARD_PORTRAIT = "2a66d52502b85186cb9c194601700b651b4c6c0b113e3316dba58c936e28a2a3"
-const PRE_STANDARD_LANDSCAPE = "3bcfe823d2a6bee45c475b0dfe15b5483bd3289c4e235b0392555c9464b857ab"
+const TASK8A2_BEFORE_UNRANKED_PORTRAIT = "413bc344ed1930ac4d98ae52dcb88485a76c56b929f93ef1c94e5ea88cdd8146"
+const TASK8A2_BEFORE_UNRANKED_LANDSCAPE = "7c80714616beae0f7d7ea886df768fcdbcd04554cba6154fd7e9533a5b560c07"
+const PRE_STANDARD_PORTRAIT = "61f7a700437eb2915d23ca1a893819ee1b98603c624ad937cdffed4c7e07deee"
+const PRE_STANDARD_LANDSCAPE = "14de4e5e55dc08e13fca59ada9bdee02530be7719540dcb1dd62f35434d3614e"
+// Explicit topShade 50 legacy pins (pre-80-default bytes for the exact
+// fixtures above).
+const LEGACY_TOP_SHADE_50_RANKED_LANDSCAPE = "c504aab7722ba206cd6a23711a71b8beb78358411e9bcc97f5a3754af535d48c"
+const LEGACY_TOP_SHADE_50_UNRANKED_PORTRAIT = "e1e4b228a05e29c6d9a5509c4b7769a1be7808c1456e2d6592b23803e7255359"
+const LEGACY_TOP_SHADE_50_UNRANKED_LANDSCAPE = "959f0b9aa491031004fa68c812f0323bd1024ff270c913633306bfc73a060429"
+const LEGACY_TOP_SHADE_50_STANDARD_PORTRAIT = "2a66d52502b85186cb9c194601700b651b4c6c0b113e3316dba58c936e28a2a3"
+const LEGACY_TOP_SHADE_50_STANDARD_LANDSCAPE = "3bcfe823d2a6bee45c475b0dfe15b5483bd3289c4e235b0392555c9464b857ab"
 
 function sha(buf: Buffer): string {
   return createHash("sha256").update(buf).digest("hex")
@@ -575,6 +594,101 @@ describe("preservation pins (landscape ranked, unranked both shapes, standard bo
     expect(sha(buf)).not.toBe(PRE_RANKED_PORTRAIT)
     console.log(`[task8a2] new ranked-portrait bytes sha=${sha(buf)}`)
   }, 120000)
+})
+
+describe("explicit topShade 50 legacy pins (stored 50 keeps the old bytes)", () => {
+  it("renders explicit 50 exactly like the old pins while omitted/explicit 80 share the new pins", async () => {
+    const logo = await whiteLogo()
+    const cases: { name: string; input: Partial<GenerationInput>; dims: { w: number; h: number }; oldPin: string; newPin: string }[] = [
+      {
+        name: "ranked landscape",
+        input: {
+          posterBuf: await patternedBase(LAND_W, LAND_H),
+          shape: "landscape",
+          logoFetch: logo,
+          posterLayout: "fresh",
+          rankingEnabled: true,
+          finalRank: 5,
+          genreName: "Dramma",
+          networkLogo: true,
+          tmdbNetworks: ["Netflix"],
+        },
+        dims: { w: LAND_W, h: LAND_H },
+        oldPin: LEGACY_TOP_SHADE_50_RANKED_LANDSCAPE,
+        newPin: PRE_RANKED_LANDSCAPE,
+      },
+      {
+        name: "unranked portrait",
+        input: {
+          posterBuf: await patternedBase(STD_W, STD_H),
+          logoFetch: logo,
+          posterLayout: "fresh",
+          posterFreshScope: "all",
+          shape: "poster",
+          rankingEnabled: false,
+          finalRank: null,
+          genreName: "Dramma",
+          networkLogo: true,
+          tmdbNetworks: ["Netflix"],
+        },
+        dims: { w: STD_W, h: STD_H },
+        oldPin: LEGACY_TOP_SHADE_50_UNRANKED_PORTRAIT,
+        newPin: TASK8A2_BEFORE_UNRANKED_PORTRAIT,
+      },
+      {
+        name: "unranked landscape",
+        input: {
+          posterBuf: await patternedBase(LAND_W, LAND_H),
+          logoFetch: logo,
+          posterLayout: "fresh",
+          posterFreshScope: "all",
+          shape: "landscape",
+          rankingEnabled: false,
+          finalRank: null,
+          genreName: "Dramma",
+          networkLogo: true,
+          tmdbNetworks: ["Netflix"],
+        },
+        dims: { w: LAND_W, h: LAND_H },
+        oldPin: LEGACY_TOP_SHADE_50_UNRANKED_LANDSCAPE,
+        newPin: TASK8A2_BEFORE_UNRANKED_LANDSCAPE,
+      },
+      {
+        name: "standard portrait",
+        input: {
+          posterBuf: await patternedBase(STD_W, STD_H),
+          logoFetch: logo,
+          rankingEnabled: true,
+          finalRank: 6,
+        },
+        dims: { w: STD_W, h: STD_H },
+        oldPin: LEGACY_TOP_SHADE_50_STANDARD_PORTRAIT,
+        newPin: PRE_STANDARD_PORTRAIT,
+      },
+      {
+        name: "standard landscape",
+        input: {
+          posterBuf: await patternedBase(LAND_W, LAND_H),
+          shape: "landscape",
+          logoFetch: logo,
+          rankingEnabled: true,
+          finalRank: 6,
+        },
+        dims: { w: LAND_W, h: LAND_H },
+        oldPin: LEGACY_TOP_SHADE_50_STANDARD_LANDSCAPE,
+        newPin: PRE_STANDARD_LANDSCAPE,
+      },
+    ]
+    for (const c of cases) {
+      const def = await generatePosterBuffer(baseInput({ ...c.input }))
+      const ts80 = await generatePosterBuffer(baseInput({ ...c.input, topShade: 80 }))
+      const ts50 = await generatePosterBuffer(baseInput({ ...c.input, topShade: 50 }))
+      expect(await dims(def), c.name).toEqual(c.dims)
+      expect(sha(def), c.name).toBe(c.newPin)
+      expect(sha(ts80), c.name).toBe(sha(def))
+      expect(sha(ts50), c.name).toBe(c.oldPin)
+    }
+  }, 240000)
 })
 
 describe("task8a2 evidence samples (approved temp only, never the repo)", () => {

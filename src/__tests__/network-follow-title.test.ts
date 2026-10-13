@@ -558,8 +558,13 @@ describe("network follow server contract (persistence/urls/cache)", () => {
   it("legacy dv signature is pinned; follow toggle never enters it", () => {
     const legacy = buildStremioPosterSearchParams({ compactTuning: true })
     // Fixture esatta: qualsiasi cambio a parti/algoritmo invalida i dv
-    // storici (bump intenzionale, mai silenzioso).
-    expect(legacy.get("dv")).toBe("76947925")
+    // storici (bump intenzionale, mai silenzioso). Approved default topShade
+    // 50 -> 80 moved the omitted-tuning signature 76947925 -> efd222d2.
+    expect(legacy.get("dv")).toBe("efd222d2")
+    // Counterfactual: explicit topShade 50 restores the pre-change bytes,
+    // explicit 80 equals omitted (80 is the default).
+    expect(buildStremioPosterSearchParams({ compactTuning: true, topShade: 50 }).get("dv")).toBe("76947925")
+    expect(buildStremioPosterSearchParams({ compactTuning: true, topShade: 80 }).get("dv")).toBe(legacy.get("dv"))
     const off = buildStremioPosterSearchParams({ compactTuning: true, networkLogoFollowTitle: false })
     const on = buildStremioPosterSearchParams({ compactTuning: true, networkLogoFollowTitle: true })
     // Toggle esplicito: stessa firma (bassa cardinalità, viaggia esplicito).

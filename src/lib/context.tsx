@@ -10,6 +10,7 @@ import { resolveNetworkShapeView, resolveNetworkEffectiveView } from "./network-
 import type { RibbonSide } from "./useDefaults"
 type LogoAlign = "left" | "center"
 import { posterUrl, titleOf, yearOf, STREAMING_PLATFORMS, mergeImageLists, isCustomPosterUrl, type ImageLists } from "./utils"
+import { isTvdbArtworkUrl } from "./tvdb-gallery-types"
 export { mergeImageLists, type ImageLists } from "./utils"
 import { matchTMDBStudios } from "./badge-labels"
 import { setLang as setI18nLang, createT, isDictionaryLoaded } from "./i18n"
@@ -42,6 +43,7 @@ import { TranslationProvider } from "./contexts/TranslationContext"
 import { MetaInfoProvider } from "./contexts/MetaInfoContext"
 import { MappingsProvider } from "./contexts/MappingsContext"
 import { useCustomCatalogs } from "./useCustomCatalogs"
+import type { CatalogShapes } from "./catalog-shape"
 import { useRankingSources } from "./useRankingSources"
 import { useLocalConfigToken } from "./useLocalConfigToken"
 import { slotsReferencingCustom, shouldApplyRankRefresh } from "./ranking-source"
@@ -254,6 +256,11 @@ export interface PictoriumCtx {
   renameCatalog: (id: string, newName: string) => void
   resetCatalogNames: () => void
   resetCatalogOrder: () => void
+  /** Per-catalog card format overrides (`poster`|`landscape` only; absent key = follow global). */
+  catalogShapes: CatalogShapes
+  setCatalogShapes: (shapes: CatalogShapes) => void
+  setCatalogShape: (id: string, shape: "poster" | "landscape" | null) => void
+  resetCatalogShapes: () => void
   /** Raw Top 20 source ids (`""` = explicit JustWatch); resolved via the pure resolver. */
   rankingSourceMovie: string
   rankingSourceSeries: string
@@ -807,6 +814,10 @@ export function usePictorium(): PictoriumCtx {
     renameCatalog,
     resetCatalogNames,
     resetCatalogOrder,
+    catalogShapes,
+    setCatalogShapes,
+    setCatalogShape,
+    resetCatalogShapes,
   } = useCustomCatalogs(safeGetItem, safeSetItem)
 
   // --- Top 20 Ranking Sources (global movie/series charts) ---
@@ -819,7 +830,7 @@ export function usePictorium(): PictoriumCtx {
 
   // Signed device config for namespace-less spaces (null otherwise).
   const { token: localConfigToken, status: localConfigTokenStatus } =
-    useLocalConfigToken({ customCatalogs, rankingSourceMovie, rankingSourceSeries })
+    useLocalConfigToken({ customCatalogs, rankingSourceMovie, rankingSourceSeries, catalogShapes })
 
   // Targeted trendRank refresh for the current item (after a ranking save):
   // same endpoint and params as the item loader, without reloading
@@ -1721,7 +1732,12 @@ export function usePictorium(): PictoriumCtx {
     const tmdbNetworks = itemType === "tv" ? (details.networks || []).map((n: { name: string }) => n.name) : (details.production_companies || []).map((c: { name: string }) => c.name)
     tmdbMatchedStudios = matchTMDBStudios(tmdbNetworks)
     const settledAwards = pending.awardsSettled ? pending.awards : noAwards
-    setMetaInfo({ genres: details.genres || [], voteAverage: details.voteAverage || 0, aggregatedRatings: details.aggregatedRatings ?? null, imdb_id: details.imdb_id ?? undefined, wikidata_id: details.wikidata_id ?? undefined, type: details.type ?? undefined, status: details.status ?? undefined, release_date: details.release_date ?? undefined, first_air_date: details.first_air_date ?? undefined, last_air_date: details.last_air_date ?? undefined, next_episode_to_air: details.next_episode_to_air ?? undefined, number_of_seasons: details.number_of_seasons ?? undefined, number_of_episodes: details.number_of_episodes ?? undefined, awards: settledAwards.awards, nominations: settledAwards.nominations, studios: tmdbMatchedStudios.length ? tmdbMatchedStudios : settledAwards.studios, director: settledAwards.director, keywords: settledAwards.keywords, networksDetailed: details.networks || [], productionCompaniesDetailed: details.production_companies || [] })
+    // The vote follows the sources active for this fetch (the same `rsrc`
+    // the details URL carried): with aggregated ratings the average is
+    // computed locally, so a raw server vote never sticks, and a later manual
+    // source change recomputes from the newest array via the effect below.
+    const baseVote = (computeVote(details.aggregatedRatings ?? null, activeSources) ?? details.voteAverage) || 0
+    setMetaInfo({ genres: details.genres || [], voteAverage: baseVote, aggregatedRatings: details.aggregatedRatings ?? null, imdb_id: details.imdb_id ?? undefined, wikidata_id: details.wikidata_id ?? undefined, type: details.type ?? undefined, status: details.status ?? undefined, release_date: details.release_date ?? undefined, first_air_date: details.first_air_date ?? undefined, last_air_date: details.last_air_date ?? undefined, next_episode_to_air: details.next_episode_to_air ?? undefined, number_of_seasons: details.number_of_seasons ?? undefined, number_of_episodes: details.number_of_episodes ?? undefined, awards: settledAwards.awards, nominations: settledAwards.nominations, studios: tmdbMatchedStudios.length ? tmdbMatchedStudios : settledAwards.studios, director: settledAwards.director, keywords: settledAwards.keywords, networksDetailed: details.networks || [], productionCompaniesDetailed: details.production_companies || [] })
     if (pending.rankSettled) setTrendRank(pending.rank || null)
     // A pending new rank must not leave the previous load's rank visible.
     else setTrendRank(null)
@@ -1885,9 +1901,10 @@ export function usePictorium(): PictoriumCtx {
   // that supersedes the open before any poster was picked must still land an
   // initial poster instead of leaving the editor empty. Mapping, preset,
   // logoDisabled, backdrop and format rules live here once — callers must not
-  // duplicate them. The refresh passes skipDefaultsSync: rebuilding the whole
-  // editor state from storage on a language switch would wipe in-memory tweaks
-  // and revert a just-changed region (open already synced styles beforehand).
+  // duplicate them. Both the refresh and the open post-load continuation pass
+  // skipDefaultsSync: rebuilding the whole editor state from storage would
+  // wipe in-memory tweaks (open already synced styles beforehand, the refresh
+  // must also not revert a just-changed region).
   const applyLoadedSelection = (data: ImageLists, details: { original_language: string }, item: SearchResult, skipDefaultsSync = false) => {
     const itemType = item.media_type
     const itemId = item.id
@@ -1917,7 +1934,13 @@ export function usePictorium(): PictoriumCtx {
         ? existing.customPosterUrl
         : null
       const previewFilePath = customFile ?? existing.posterPath
-      const previewLang = customFile ? null : existing.language
+      // Saved TVDB base reuses the stored mapping language (no new schema):
+      // only genuinely textless (null, including legacy-ambiguous saves)
+      // reads as clean; with-text reopens honestly non-clean. Generic custom
+      // URLs keep the historical null (always clean-eligible).
+      const previewLang = customFile
+        ? (isTvdbArtworkUrl(customFile) ? (existing.language ?? null) : null)
+        : existing.language
       const foundPoster = !customFile ? (data.posters || []).find((p: TMDBImage) => p.file_path === existing.posterPath) : undefined
       navigation.setPreviewPoster(foundPoster ? { file_path: foundPoster.file_path, iso_639_1: foundPoster.iso_639_1, vote_average: 0, width: foundPoster.width, height: foundPoster.height } : { file_path: previewFilePath, iso_639_1: previewLang, vote_average: 0, width: 0, height: 0 })
       let foundLogo: TMDBImage | undefined
@@ -1926,7 +1949,10 @@ export function usePictorium(): PictoriumCtx {
         navigation.setSelectedLogo(foundLogo ? { file_path: foundLogo.file_path, iso_639_1: existing.language, vote_average: 0, width: foundLogo.width, height: foundLogo.height } : { file_path: existing.logoPath, iso_639_1: existing.language, vote_average: 0, width: 0, height: 0 })
       // Riapertura mapping senza logo esplicito: nessun auto su portrait
       // non-clean (solo clean o landscape); logoDisabled sempre onorato.
-      } else if (!existing.logoDisabled && (customFile ? true : ((foundPoster ? foundPoster.iso_639_1 === null : previewLang === null) || (existing.posterShape ?? defaultPosterShape) === "landscape"))) {
+      // A saved TVDB custom base with recorded text (non-null language)
+      // counts as non-clean: never auto-logo over baked-in text (legacy-
+      // ambiguous null and generic custom URLs stay clean-eligible as before).
+      } else if (!existing.logoDisabled && (customFile ? (isTvdbArtworkUrl(customFile) ? previewLang === null : true) : ((foundPoster ? foundPoster.iso_639_1 === null : previewLang === null) || (existing.posterShape ?? defaultPosterShape) === "landscape"))) {
         const autoLogo = autoLogoSelection(data.logos || [], lang, details.original_language, `${itemType}/${itemId}`)
         if (autoLogo) {
           navigation.setSelectedLogo({ file_path: autoLogo.file_path, iso_639_1: autoLogo.iso_639_1, vote_average: 0, width: autoLogo.width, height: autoLogo.height })
@@ -1968,8 +1994,11 @@ export function usePictorium(): PictoriumCtx {
       setEpisodeGroupId(existing.episodeGroupId ?? null)
     } else {
       setLogoDisabled(false)
-      setNetworkLogo(defaultNetworkLogo)
-      setNetworkLogoPosition(defaultNetworkLogoPosition)
+      // Fresh-title network init was already installed pre-fetch (flats, plus
+      // the landscape profile via applyFreshLandscapeDefaults): re-asserting
+      // the flats here would clobber the land profile, so the post-load path
+      // leaves these exactly as the open sync left them (mid-load tweaks and
+      // the land profile both survive).
       setEpisodeGroupId(null)
       const clean = data.posters?.find((p: TMDBImage) => p.iso_639_1 === null)
       const langPoster = data.posters?.find((p: TMDBImage) => p.iso_639_1 === lang)
@@ -2335,7 +2364,12 @@ export function usePictorium(): PictoriumCtx {
       setBadgeRating(defaultBadgeRating)
       setBadgeQuality(defaultBadgeQuality)
       setQualityBadgeStyle(defaultQualityBadgeStyle)
-      setVideoFormats(null)
+      // Fresh per-title formats stay explicit (same freeze contract as the
+      // other visuals): portrait installs the flat default, landscape the
+      // land profile (re-asserted by applyFreshLandscapeDefaults below).
+      // Null would emit no `formats` param and leak the previous title's
+      // state through the shared per-title slot.
+      setVideoFormats(defaultPosterShape === "landscape" ? (landscapeDefaults?.videoFormats ?? defaultVideoFormats) : defaultVideoFormats)
       setCustomRatings(defaultCustomRatings)
       setRatingSources(nextSources)
       setSeparateRatings(defaultSeparateRatings)
@@ -2396,7 +2430,10 @@ export function usePictorium(): PictoriumCtx {
       if (!loaded) return
       if (navigation.fetchIdRef.current !== fetchId || loaded.signal.aborted) return
       const { details, data } = loaded
-      applyLoadedSelection(data, details, item)
+      // Styles were already synced before the fetch (see above): the
+      // continuation only merges artwork/details/rank, so it must not rebuild
+      // editor state from storage — that would wipe tweaks made mid-load.
+      applyLoadedSelection(data, details, item, true)
     } finally {
       // A superseded load must not switch off the new title's spinner, and an
       // unmounted load (aborted without a fetchId bump) must not setState.
@@ -2471,13 +2508,19 @@ export function usePictorium(): PictoriumCtx {
         // Portrait preservato dal salvato (mai preview unsaved): riallinea la
         // preview all'identità salvata quando esiste.
         if (prev) {
-          const savedFile = prev.customPosterUrl && isCustomPosterUrl(prev.customPosterUrl)
+          const savedCustom = prev.customPosterUrl && isCustomPosterUrl(prev.customPosterUrl)
             ? prev.customPosterUrl
-            : prev.posterPath
+            : null
+          const savedFile = savedCustom ?? prev.posterPath
           if (savedFile && savedFile !== navigation.previewPoster?.file_path) {
+            // Saved TVDB base reuses the stored mapping language (same rule
+            // as the open-title reload above; generic custom stays null).
+            const savedLang = savedCustom
+              ? (isTvdbArtworkUrl(savedCustom) ? (prev.language ?? null) : null)
+              : (prev.language ?? null)
             navigation.setPreviewPoster({
               file_path: savedFile,
-              iso_639_1: prev.customPosterUrl && isCustomPosterUrl(prev.customPosterUrl) ? null : (prev.language ?? null),
+              iso_639_1: savedLang,
               vote_average: 0,
               width: 0,
               height: 0,
@@ -2601,6 +2644,7 @@ export function usePictorium(): PictoriumCtx {
     homeDisabledCatalogIds, setHomeDisabledCatalogIds, toggleCatalogHome,
     catalogOrder, setCatalogOrder, moveCatalog,
     catalogRenames, setCatalogRenames, renameCatalog, resetCatalogNames, resetCatalogOrder,
+    catalogShapes, setCatalogShapes, setCatalogShape, resetCatalogShapes,
     rankingSourceMovie, rankingSourceSeries, setRankingSource, rankSourceNonce, refreshCurrentRank,
     localConfigToken, localConfigTokenStatus,
     t,
@@ -2624,7 +2668,7 @@ export function usePictorium(): PictoriumCtx {
     trending.trending, trending.trendingError, trending.trendingStatus, trending.streamingCharts, trending.platformErrors, trending.mdblistAnimeList, trending.animeStatus, trending.animeSource, trending.refreshNonce,
     trending.refreshLists, trending.loadPlatform,
     theme, uiAccent, serviceErrors, hasNetflixRank,
-    customCatalogs, disabledCatalogIds, homeDisabledCatalogIds, catalogOrder, catalogRenames,
+    customCatalogs, disabledCatalogIds, homeDisabledCatalogIds, catalogOrder, catalogRenames, catalogShapes,
     rankingSourceMovie, rankingSourceSeries, rankSourceNonce, catalogsSyncNonce, localConfigToken, localConfigTokenStatus,
   ])
 }

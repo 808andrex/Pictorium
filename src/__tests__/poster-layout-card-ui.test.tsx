@@ -3,9 +3,9 @@
  * - The layout selector exposes all 5 choices as a controlled radiogroup with
  *   accessible labels, illustrative CSS thumbnails (no second renderer) and a
  *   responsive wrapping grid (no 5-long-labels single-row overflow).
- * - The apply-scope selector is visible for Fresh AND Card (generic wording
- *   for Card, same stored `posterFreshScope`), hidden for Standard with the
- *   stored value kept.
+ * - Ranked-only scope per title (no scope dropdown, same as the global
+ *   Classifiche): Fresh/Card stage `ranked`; a stored explicit "all" on an
+ *   existing mapping is preserved until an explicit new selection.
  * - Per-title and per-shape default round-trips: portrait Provider Glass +
  *   landscape Stremio stay independent; reopen hydrates saved Card values;
  *   Standard/Fresh behavior is unchanged.
@@ -116,7 +116,7 @@ describe("five-choice layout selector", () => {
   })
 })
 
-describe("scope selector visibility (Card + Fresh, never Standard)", () => {
+describe("ranked-only scope per title (no scope dropdown, stored all preserved)", () => {
   function renderEditor() {
     const { Probe, ctx } = probe()
     renderWithCtx(
@@ -126,32 +126,79 @@ describe("scope selector visibility (Card + Fresh, never Standard)", () => {
     return { ctx }
   }
 
-  function layoutGroup(): HTMLElement {
-    return screen.getByRole("radiogroup", { name: "ui.posterLayout" })
+  function presentationGroup(): HTMLElement {
+    return within(screen.getByTestId("ranking-presentation")).getByRole("radiogroup", { name: "ui.rankFamily" })
   }
 
-  it("hides on Standard, shows generic wording on Card, Fresh wording on Fresh", () => {
+  it("never shows a scope dropdown; Fresh/Card show the ranked-only hint with ranked staged", async () => {
     const { ctx } = renderEditor()
+    await act(async () => {})
+    // Standard: no scope control, no hint (stored preference untouched).
     expect(screen.queryByTestId("fresh-scope-selector")).toBeNull()
+    expect(screen.queryByTestId("fresh-scope-select")).toBeNull()
+    expect(screen.queryByText("ui.posterFreshScopeHint")).toBeNull()
+    expect(screen.queryByText("ui.posterLayoutScopeHint")).toBeNull()
+    // Fresh stages fresh+ranked with the ranked-only hint (no ALL choice).
     fireEvent.click(
-      within(layoutGroup()).getByRole("radio", { name: "ui.posterLayoutNuvio" }),
+      within(presentationGroup()).getByRole("radio", { name: "ui.posterLayoutGroupedFresh" }),
     )
-    expect(ctx().posterLayout).toBe("nuvio")
-    expect(screen.getByTestId("fresh-scope-selector")).toBeTruthy()
-    expect(screen.getByText("ui.posterLayoutScope")).toBeTruthy()
+    expect(ctx().posterLayout).toBe("fresh")
+    expect(ctx().posterFreshScope).toBe("ranked")
+    expect(screen.queryByTestId("fresh-scope-selector")).toBeNull()
+    expect(screen.queryByTestId("fresh-scope-select")).toBeNull()
+    expect(screen.getByText("ui.posterFreshScopeHint")).toBeTruthy()
+    // Card stages the remembered skin + ranked with the generic hint.
+    fireEvent.click(
+      within(presentationGroup()).getByRole("radio", { name: "ui.posterLayoutGroupedCard" }),
+    )
+    expect(ctx().posterLayout).toBe("provider-glass")
+    expect(ctx().posterFreshScope).toBe("ranked")
+    expect(screen.queryByTestId("fresh-scope-selector")).toBeNull()
     expect(screen.getByText("ui.posterLayoutScopeHint")).toBeTruthy()
     expect(screen.queryByText("ui.posterFreshScope")).toBeNull()
-    fireEvent.change(screen.getByTestId("fresh-scope-select"), {
-      target: { value: "all" },
-    })
+    // Back to a classic: hints hide again, no scope control appears.
+    fireEvent.click(
+      within(presentationGroup()).getByRole("radio", { name: "ui.ribbon" }),
+    )
+    expect(ctx().posterLayout).toBe("standard")
+    expect(screen.queryByTestId("fresh-scope-selector")).toBeNull()
+    expect(screen.queryByText("ui.posterFreshScopeHint")).toBeNull()
+    expect(screen.queryByText("ui.posterLayoutScopeHint")).toBeNull()
+  })
+
+  it("preserves a stored explicit all on mount (no silent rewrite) until a new selection stages ranked", async () => {
+    document.body.innerHTML = ""
+    localStorage.setItem(
+      "badgeDefaults",
+      JSON.stringify({ posterLayout: "fresh", posterFreshScope: "all" }),
+    )
+    const { ctx } = renderEditor()
+    await act(async () => {})
+    // Mount never rewrites: stored all preserved, Fresh still selected.
+    expect(ctx().posterLayout).toBe("fresh")
+    expect(ctx().posterFreshScope).toBe("all")
+    expect(
+      within(presentationGroup()).getByRole("radio", { name: "ui.posterLayoutGroupedFresh" }),
+    ).toHaveAttribute("aria-checked", "true")
+    expect(screen.queryByTestId("fresh-scope-selector")).toBeNull()
+    const stored = JSON.parse(localStorage.getItem("badgeDefaults") ?? "{}")
+    expect(stored.posterFreshScope).toBe("all")
+    // Re-clicking Fresh is a no-op (stored scope kept).
+    fireEvent.click(
+      within(presentationGroup()).getByRole("radio", { name: "ui.posterLayoutGroupedFresh" }),
+    )
+    expect(ctx().posterFreshScope).toBe("all")
+    // A new selection (classic detour + Fresh) stages ranked.
+    fireEvent.click(
+      within(presentationGroup()).getByRole("radio", { name: "ui.ribbon" }),
+    )
+    expect(ctx().posterLayout).toBe("standard")
     expect(ctx().posterFreshScope).toBe("all")
     fireEvent.click(
-      within(layoutGroup()).getByRole("radio", { name: "ui.posterLayoutFresh" }),
+      within(presentationGroup()).getByRole("radio", { name: "ui.posterLayoutGroupedFresh" }),
     )
-    expect(screen.getByText("ui.posterFreshScope")).toBeTruthy()
-    expect(screen.getByText("ui.posterFreshScopeHint")).toBeTruthy()
-    // The stored scope survives the layout switch (fresh inherits "all").
-    expect(ctx().posterFreshScope).toBe("all")
+    expect(ctx().posterLayout).toBe("fresh")
+    expect(ctx().posterFreshScope).toBe("ranked")
   })
 })
 
@@ -165,7 +212,7 @@ describe("per-title Card round-trip (portrait provider-glass, landscape stremio)
     return { ctx }
   }
 
-  it("selects Card per title, keeps badge/logo/transform values, restores on switchback", () => {
+  it("selects Card per title via the unified presentation, keeps badge/logo/transform values, restores on switchback", () => {
     const { ctx } = renderEditor()
     const before = {
       badge: ctx().badgeStyle,
@@ -175,11 +222,13 @@ describe("per-title Card round-trip (portrait provider-glass, landscape stremio)
       genre: ctx().genreBadgeScale,
       net: ctx().networkLogoScale,
     }
-    const group = screen.getByRole("radiogroup", { name: "ui.posterLayout" })
+    const group = within(screen.getByTestId("ranking-presentation")).getByRole("radiogroup", { name: "ui.rankFamily" })
+    // Card stages the remembered default skin (provider-glass) + ranked.
     fireEvent.click(
-      within(group).getByRole("radio", { name: "ui.posterLayoutProviderGlass" }),
+      within(group).getByRole("radio", { name: "ui.posterLayoutGroupedCard" }),
     )
     expect(ctx().posterLayout).toBe("provider-glass")
+    expect(ctx().posterFreshScope).toBe("ranked")
     expect(ctx().badgeStyle).toBe(before.badge)
     expect(ctx().rankingBadgeStyle).toBe(before.rank)
     expect(ctx().logoScale).toBe(before.logo)
@@ -213,16 +262,26 @@ describe("per-title Card round-trip (portrait provider-glass, landscape stremio)
       { posterLayout: ctx().posterLayout } as never,
     )
     expect(paramsOf(preview).get("layout")).toBe("provider-glass")
-    // Standard detour keeps the Card scope; switching back restores Card.
+    // Classic detour keeps the remembered skin; Card restores it (not the default).
     fireEvent.click(
-      within(group).getByRole("radio", { name: "ui.posterLayoutStandard" }),
+      within(group).getByRole("radio", { name: "ui.ribbon" }),
     )
     expect(ctx().posterLayout).toBe("standard")
-    expect(ctx().rankingBadgeStyle).toBe(before.rank)
+    expect(ctx().rankingBadgeStyle).toBe("netflix")
     fireEvent.click(
-      within(group).getByRole("radio", { name: "ui.posterLayoutStremio" }),
+      within(group).getByRole("radio", { name: "ui.posterLayoutGroupedCard" }),
+    )
+    expect(ctx().posterLayout).toBe("provider-glass")
+    // Skin switch stages stremio + ranked, Card stays checked with one skin checked.
+    const skins = screen.getByTestId("poster-layout-skins")
+    fireEvent.click(
+      within(skins).getByRole("radio", { name: "ui.posterLayoutSkinViolet" }),
     )
     expect(ctx().posterLayout).toBe("stremio")
+    expect(ctx().posterFreshScope).toBe("ranked")
+    expect(
+      within(group).getByRole("radio", { name: "ui.posterLayoutGroupedCard" }),
+    ).toHaveAttribute("aria-checked", "true")
   })
 })
 
@@ -237,8 +296,10 @@ describe("defaults per shape: portrait provider-glass, landscape stremio", () =>
         createElement(Probe),
       ),
     )
-    const t = screen.getByTestId("badge-group-style-toggle")
+    const t = screen.getByTestId("badge-advanced-toggle")
     if (t.getAttribute("aria-expanded") !== "true") fireEvent.click(t)
+    const g = screen.getByTestId("badge-group-style-toggle")
+    if (g.getAttribute("aria-expanded") !== "true") fireEvent.click(g)
     return { ctx }
   }
 
@@ -348,9 +409,14 @@ describe("Card transform applicability (fixed geometry disabled, values kept)", 
       nox: ctx().networkLogoOffsetX,
       follow: ctx().networkLogoFollowTitle,
     }
-    const group = screen.getByRole("radiogroup", { name: "ui.posterLayout" })
+    const group = within(screen.getByTestId("ranking-presentation")).getByRole("radiogroup", { name: "ui.rankFamily" })
     fireEvent.click(
-      within(group).getByRole("radio", { name: "ui.posterLayoutNuvio" }),
+      within(group).getByRole("radio", { name: "ui.posterLayoutGroupedCard" }),
+    )
+    // Remembered default skin first, then the nuvio skin (explicit switch).
+    expect(ctx().posterLayout).toBe("provider-glass")
+    fireEvent.click(
+      within(screen.getByTestId("poster-layout-skins")).getByRole("radio", { name: "ui.posterLayoutSkinBlack" }),
     )
     expect(ctx().posterLayout).toBe("nuvio")
     // Four fixed-geometry groups disabled: title offsets, rank, genre, network offsets.
@@ -374,10 +440,11 @@ describe("Card transform applicability (fixed geometry disabled, values kept)", 
       document.querySelectorAll('input[type="range"]'),
     ).filter((el) => !(el as HTMLInputElement).disabled)
     expect(enabledRanges.length).toBeGreaterThan(0)
-    // Switchback to Standard re-enables everything with values intact.
+    // Switchback to a classic re-enables everything with values intact.
     fireEvent.click(
-      within(group).getByRole("radio", { name: "ui.posterLayoutStandard" }),
+      within(group).getByRole("radio", { name: "ui.ribbon" }),
     )
+    expect(ctx().posterLayout).toBe("standard")
     expect(document.querySelectorAll("fieldset[disabled]").length).toBe(0)
     expect(ctx().topBadgeScale).toBe(before.top)
     expect(ctx().genreBadgeScale).toBe(before.genre)
@@ -391,9 +458,13 @@ describe("Card transform applicability (fixed geometry disabled, values kept)", 
       ctx().setGlobalBadges(true)
       ctx().setBadgeQuality(true)
     })
-    const group = screen.getByRole("radiogroup", { name: "ui.posterLayout" })
+    const group = within(screen.getByTestId("ranking-presentation")).getByRole("radiogroup", { name: "ui.rankFamily" })
     fireEvent.click(
-      within(group).getByRole("radio", { name: "ui.posterLayoutNuvio" }),
+      within(group).getByRole("radio", { name: "ui.posterLayoutGroupedCard" }),
+    )
+    expect(ctx().posterLayout).toBe("provider-glass")
+    fireEvent.click(
+      within(screen.getByTestId("poster-layout-skins")).getByRole("radio", { name: "ui.posterLayoutSkinBlack" }),
     )
     expect(ctx().posterLayout).toBe("nuvio")
     // The genre section keeps exactly one disabled fieldset (the fixed X/Y
@@ -435,9 +506,9 @@ describe("Card transform applicability (fixed geometry disabled, values kept)", 
       ctx().setGlobalBadges(true)
       ctx().setBadgeQuality(true)
     })
-    const group = screen.getByRole("radiogroup", { name: "ui.posterLayout" })
+    const group = within(screen.getByTestId("ranking-presentation")).getByRole("radiogroup", { name: "ui.rankFamily" })
     fireEvent.click(
-      within(group).getByRole("radio", { name: "ui.posterLayoutFresh" }),
+      within(group).getByRole("radio", { name: "ui.posterLayoutGroupedFresh" }),
     )
     expect(ctx().posterLayout).toBe("fresh")
     expect(document.querySelectorAll("fieldset[disabled]").length).toBe(0)

@@ -9,7 +9,7 @@
  * - Footer: Fine primary always, secondary Riprova only on failure.
  */
 import { beforeEach, describe, expect, it, vi, afterEach } from "vitest"
-import { act, fireEvent, renderHook, screen } from "@testing-library/react"
+import { act, fireEvent, renderHook, screen, within } from "@testing-library/react"
 import { useDefaults } from "@/lib/useDefaults"
 import { shouldSkipServerSync } from "@/lib/guest-guard"
 import { SettingsPanel } from "@/components/SettingsPanel"
@@ -496,7 +496,7 @@ describe("defaultSyncStatus lifecycle", () => {
   })
 })
 
-describe("footer live region (real lifecycle)", () => {
+describe("footer explicit save (staged session)", () => {
   let putBodies: unknown[]
   let putOk: boolean
   let storage: StorageStub
@@ -510,12 +510,16 @@ describe("footer live region (real lifecycle)", () => {
     vi.stubGlobal("XMLHttpRequest", NoopXHR as unknown as typeof XMLHttpRequest)
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (_url: unknown, init?: { method?: string; body?: string }) => {
-        if (init?.method === "PUT") {
+      vi.fn(async (url: unknown, init?: { method?: string; body?: string }) => {
+        const u = String(url)
+        if (init?.method === "PUT" && u.includes("/api/defaults")) {
           putBodies.push(JSON.parse(init.body as string))
-          return { ok: putOk, status: putOk ? 200 : 500, json: async () => ({}) }
+          return { ok: putOk, status: putOk ? 200 : 500, headers: { get: () => null }, json: async () => ({}) }
         }
-        return { ok: true, status: 200, json: async () => ({}) }
+        if (u.includes("/api/defaults/presets")) {
+          return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ presets: [] }) }
+        }
+        return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({}) }
       }),
     )
     vi.mocked(shouldSkipServerSync).mockResolvedValue(false)
@@ -526,148 +530,104 @@ describe("footer live region (real lifecycle)", () => {
     vi.useRealTimers()
   })
 
-  function region(): HTMLElement {
-    return screen.getByTestId("defaults-sync-status")
+  function status(): HTMLElement {
+    return screen.getByTestId("settings-save-status")
   }
 
-  function retryButton(): HTMLElement {
-    // ui.retry is translated by the unit-test i18n mock (see setup.ts
-    // itDict): match tolerantly, like the existing Chiudi/ui.close asserts.
-    return screen.getByRole("button", { name: /Riprova|ui\.retry/i })
+  function saveButton(): HTMLElement {
+    return screen.getByTestId("settings-save")
   }
 
-  it("idle shows no saved claim, Fine primary always, no retry", async () => {
-    renderWithCtx(
-      <SettingsPanel setSettingsOpen={() => {}} exportData={() => {}} importData={() => {}} />,
-    )
-    expect(region().textContent).toBe("ui.loading")
-    expect(screen.getByText("ui.settingsDone")).toBeInTheDocument()
-    expect(screen.queryByRole("button", { name: /Riprova|ui\.retry/i })).toBeNull()
-    expect(screen.queryByText("ui.syncNow")).toBeNull()
-  })
-
-  it("edit shows device-saved syncing, then synced; Fine stays primary", async () => {
-    renderWithCtx(
-      <SettingsPanel setSettingsOpen={() => {}} exportData={() => {}} importData={() => {}} />,
-    )
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1200)
-    })
-    expect(region().textContent).toBe("ui.synced")
-    fireEvent.click(screen.getByRole("switch", { name: "ui.genreRatingBadge" }))
-    expect(region().textContent).toBe("ui.savedLocalSyncing")
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(700)
-    })
-    expect(putBodies).toHaveLength(1)
-    expect(region().textContent).toBe("ui.synced")
-    expect(screen.getByText("ui.settingsDone")).toBeInTheDocument()
-    expect(screen.queryByRole("button", { name: /Riprova|ui\.retry/i })).toBeNull()
-  })
-
-  it("failed shows the desync with secondary Riprova; retry recovers with no new edit", async () => {
-    putOk = false
-    renderWithCtx(
-      <SettingsPanel setSettingsOpen={() => {}} exportData={() => {}} importData={() => {}} />,
-    )
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1200)
-    })
-    fireEvent.click(screen.getByRole("switch", { name: "ui.genreRatingBadge" }))
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(700)
-    })
-    expect(putBodies).toHaveLength(1)
-    expect(region().textContent).toBe("ui.defaultsSyncFailed")
-    expect(screen.getByText("ui.settingsDone")).toBeInTheDocument()
-    // Server recovers: explicit retry sends exactly one more PUT.
-    putOk = true
-    fireEvent.click(retryButton())
-    await act(async () => {})
-    expect(putBodies).toHaveLength(2)
-    expect(region().textContent).toBe("ui.synced")
-    expect(screen.queryByRole("button", { name: /Riprova|ui\.retry/i })).toBeNull()
-  })
-
-  it("network rejection settles the footer out of loading with retry", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (_url: unknown, init?: { method?: string; body?: string }) => {
-        if (init?.method === "PUT") {
-          putBodies.push(JSON.parse(init.body as string))
-          return { ok: putOk, status: putOk ? 200 : 500, json: async () => ({}) }
-        }
-        return Promise.reject(new Error("down"))
-      }),
-    )
-    renderWithCtx(
-      <SettingsPanel setSettingsOpen={() => {}} exportData={() => {}} importData={() => {}} />,
-    )
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1200)
-    })
-    // Never infinite loading: unconfirmed with a secondary retry.
-    expect(region().textContent).toBe("ui.unconfirmed")
-    expect(retryButton()).toBeInTheDocument()
-    expect(screen.getByText("ui.settingsDone")).toBeInTheDocument()
-  })
-
-  it("guest skip shows the honest local-only note, never synced", async () => {
-    renderWithCtx(
-      <SettingsPanel setSettingsOpen={() => {}} exportData={() => {}} importData={() => {}} />,
-    )
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1200)
-    })
-    expect(region().textContent).toBe("ui.synced")
-    // Guest from here on: the hydration refresh above kept the fast path.
-    vi.mocked(shouldSkipServerSync).mockResolvedValueOnce(true)
-    fireEvent.click(screen.getByRole("switch", { name: "ui.genreRatingBadge" }))
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(800)
-    })
-    expect(putBodies).toEqual([])
-    expect(region().textContent).toBe("ui.defaultsLocalOnly")
-  })
-
-  it("device write failure shows local-failed with retry; recovery rewrites", async () => {
-    renderWithCtx(
-      <SettingsPanel setSettingsOpen={() => {}} exportData={() => {}} importData={() => {}} />,
-    )
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1200)
-    })
-    const origSet = storage.setItem.bind(storage)
-    storage.setItem = (k: string, v: string) => {
-      if (k === "badgeDefaults") throw new Error("quota")
-      origSet(k, v)
+  // Five-tab homes: visibility switches live on Information (never Advanced).
+  function openInformation() {
+    const tab = screen.getByRole("tab", { name: "ui.settingsTabInformation" })
+    if (tab.getAttribute("aria-selected") !== "true") {
+      act(() => { fireEvent.click(tab) })
     }
-    fireEvent.click(screen.getByRole("switch", { name: "ui.genreRatingBadge" }))
-    expect(region().textContent).toBe("ui.localSaveFailed")
-    expect(putBodies).toEqual([])
-    // Device recovers: retry rewrites local + PUTs with no new edit.
-    storage.setItem = origSet
-    fireEvent.click(retryButton())
-    await act(async () => {})
-    expect(putBodies).toHaveLength(1)
-    expect(region().textContent).toBe("ui.synced")
-  })
+  }
 
-  it("diverged hydration shows unconfirmed with retry; retry syncs, no startup PUT", async () => {
-    storage.setItem("badgeDefaults", JSON.stringify({ defaultBadgeYear: false }))
+  function informationPanel(): HTMLElement {
+    return screen.getByRole("tabpanel", { name: "ui.badgeSection" })
+  }
+
+  // Mount barrier for this fake-timer suite. The panel (and its
+  // `presets-panel`) commits synchronously, but RTL `findBy*`/`waitFor`
+  // cannot settle while Vitest fake timers are installed: with no global
+  // `jest`, @testing-library/react takes the real-timer branch and its
+  // `asyncWrapper` drains the microtask queue with a real `setTimeout(0)`
+  // that the fake clock intercepts and never fires, so the await hangs.
+  // Advance the fake clock once (the same `settle` used by the defaults
+  // suites) to resolve mount hydration, then assert presence synchronously.
+  async function mountSettingsPanel() {
     renderWithCtx(
       <SettingsPanel setSettingsOpen={() => {}} exportData={() => {}} importData={() => {}} />,
     )
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1200)
     })
-    // Server never saw the local values: unconfirmed, and no automatic PUT.
+    expect(screen.getByTestId("presets-panel")).toBeInTheDocument()
+  }
+
+  it("clean shows an honest pre-save status with Save disabled and no retry", async () => {
+    await mountSettingsPanel()
+    expect(status().textContent).toBe("ui.settingsNotSavedYet")
+    expect(saveButton()).toBeDisabled()
+    expect(screen.queryByTestId("settings-retry")).toBeNull()
     expect(putBodies).toEqual([])
-    expect(region().textContent).toBe("ui.unconfirmed")
-    expect(retryButton()).toBeInTheDocument()
-    fireEvent.click(retryButton())
-    await act(async () => {})
+  })
+
+  it("edit stages dirty with no PUT; single Save commits once and stays on the tab", async () => {
+    await mountSettingsPanel()
+    openInformation()
+    const panel = informationPanel()
+    const ratingSwitch = within(panel).getByRole("switch", { name: "ui.badgeRating" })
+    act(() => { fireEvent.click(ratingSwitch) })
+    // Staged only: dirty status, Save enabled, zero PUTs/storage writes.
+    expect(status().textContent).toBe("ui.unsavedChanges")
+    expect(saveButton()).not.toBeDisabled()
+    expect(putBodies).toEqual([])
+    await act(async () => { fireEvent.click(saveButton()) })
     expect(putBodies).toHaveLength(1)
-    expect(region().textContent).toBe("ui.synced")
+    expect(status().textContent).toBe("ui.synced")
+    expect(saveButton()).toBeDisabled()
+    // Same tab, still on the page (no close, no navigation).
+    expect(screen.getByRole("tab", { name: "ui.settingsTabInformation" })).toHaveAttribute("aria-selected", "true")
+    expect(screen.queryByTestId("settings-retry")).toBeNull()
+  })
+
+  it("failed save keeps the editable draft with error status; the single Save retries", async () => {
+    putOk = false
+    await mountSettingsPanel()
+    openInformation()
+    const panel = informationPanel()
+    act(() => { fireEvent.click(within(panel).getByRole("switch", { name: "ui.badgeRating" })) })
+    await act(async () => { fireEvent.click(saveButton()) })
+    expect(putBodies).toHaveLength(1)
+    expect(status().textContent).toBe("ui.saveError")
+    // Draft retained and still editable: no separate retry button — the
+    // single global Save retries on the same page.
+    expect(screen.queryByTestId("settings-retry")).toBeNull()
+    expect(saveButton()).not.toBeDisabled()
+    putOk = true
+    await act(async () => { fireEvent.click(saveButton()) })
+    expect(putBodies).toHaveLength(2)
+    expect(status().textContent).toBe("ui.synced")
+    expect(screen.queryByTestId("settings-retry")).toBeNull()
+  })
+
+  it("tab and shape navigation never PUTs and never touches delivery", async () => {
+    await mountSettingsPanel()
+    openInformation()
+    const panel = informationPanel()
+    act(() => { fireEvent.click(within(panel).getByRole("switch", { name: "ui.badgeRating" })) })
+    expect(putBodies).toEqual([])
+    // Free navigation across tabs and shapes: no PUT, draft retained.
+    for (const name of ["ui.settingsTabRankings", "ui.settingsTabBadge", "ui.settingsTabTransform", "ui.settingsTabPreset"]) {
+      const tab = screen.getByRole("tab", { name })
+      act(() => { fireEvent.click(tab) })
+    }
+    expect(putBodies).toEqual([])
+    expect(status().textContent).toBe("ui.unsavedChanges")
+    expect(saveButton()).not.toBeDisabled()
   })
 })

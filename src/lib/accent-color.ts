@@ -208,6 +208,218 @@ function hslToRgb(H: number, S: number, L: number): AccentResult {
   }
 }
 
+/**
+ * Contrast-derived bounds for the UNUSED adaptive automatic-accent solver
+ * below (foundation only: nothing calls it yet, so no rendered output
+ * changes). The user chose readability (4.5:1 normal-text bar) over the
+ * audit's 3:1 large-text proposal; hue and saturation are always preserved.
+ */
+export const AUTO_BADGE_ACCENT_L_MIN = 0.24
+export const AUTO_BADGE_ACCENT_L_MAX = 0.6
+export const AUTO_BADGE_ACCENT_TEXT_CONTRAST = 4.5
+export const AUTO_BADGE_ACCENT_SEPARATION = 3
+export const AUTO_BADGE_ACCENT_L_STEP = 0.01
+
+/** Optional local badge-background context (WCAG linear luminance 0..1). */
+export interface AdaptiveAccentOptions {
+  readonly backgroundLuminance?: number | null
+}
+
+/** Diagnostics for the chosen adaptive candidate (see solveAdaptiveAccent). */
+export interface AdaptiveAccentDiagnostics {
+  /** Chosen lightness (HSL, exact value passed to hslToRgb). */
+  readonly l: number
+  /** Legacy anchor (AUTO_BADGE_ACCENT_LIGHTNESS), kept for stability. */
+  readonly anchorL: number
+  /** Renderer text choice for the chosen fill (textColorForBg rule). */
+  readonly textColor: string
+  /** Effective contrast of textColor on the chosen 8-bit fill. */
+  readonly textContrast: number
+  /** Contrast of the chosen fill vs backgroundLuminance (null without context). */
+  readonly separation: number | null
+  /** True when some bounded candidate reaches the 4.5 text target. */
+  readonly feasibleText: boolean
+  /** True when some text-safe candidate also reaches the 3:1 separation target. */
+  readonly feasibleSeparation: boolean
+  /** Number of bounded candidates evaluated (constant CPU cap). */
+  readonly evaluations: number
+}
+
+/** Effective text choice for an 8-bit fill, replicating textColorForBg. */
+function chosenTextForFill(r: number, g: number, b: number): { color: string; ratio: number } {
+  const bgLum = relativeLuminance(r, g, b)
+  const whiteLum = relativeLuminance(255, 255, 255)
+  const whiteRatio = contrastRatio(whiteLum, bgLum)
+  if (whiteRatio >= COLORED_BADGE_LIGHT_TEXT_MIN_CONTRAST) {
+    return { color: "#ffffff", ratio: whiteRatio }
+  }
+  const er = Math.round(r * 0.2)
+  const eg = Math.round(g * 0.2)
+  const eb = Math.round(b * 0.2)
+  const darkLum = relativeLuminance(er, eg, eb)
+  const darkRatio = contrastRatio(darkLum, bgLum)
+  return whiteRatio >= darkRatio
+    ? { color: "#ffffff", ratio: whiteRatio }
+    : { color: "rgba(0,0,0,0.80)", ratio: darkRatio }
+}
+
+function clampChannel(v: number): number {
+  if (!Number.isFinite(v)) return 0
+  return Math.max(0, Math.min(255, Math.round(v)))
+}
+
+function clampLum(v: number): number {
+  if (!Number.isFinite(v)) return 0
+  return Math.max(0, Math.min(1, v))
+}
+
+/**
+ * Pure adaptive automatic accent (FOUNDATION ONLY — not wired into any
+ * normalizer, caller, render path or UI). Preserves hue/saturation and
+ * searches a bounded deterministic L grid for the candidate closest to the
+ * legacy anchor whose ACTUAL renderer text choice (textColorForBg rule,
+ * measured on the final 8-bit fill) reaches 4.5:1. With an optional local
+ * background luminance, separation (>= 3:1) is a second priority among
+ * text-safe candidates; when both are unreachable, text stays first and
+ * separation is maximized, then the smallest anchor move wins. When no
+ * bounded candidate reaches 4.5, the deterministic best-text-contrast
+ * candidate is returned with feasibleText=false (no guarantee is pretended).
+ * No I/O, no randomness, no time/date/locale, no mutable external state.
+ */
+export function solveAdaptiveAccent(
+  color: AccentResult,
+  options?: AdaptiveAccentOptions,
+): { color: AccentResult; diagnostics: AdaptiveAccentDiagnostics } {
+  const cr = clampChannel(color.r)
+  const cg = clampChannel(color.g)
+  const cb = clampChannel(color.b)
+  const { h, s } = rgbToHsl(cr, cg, cb)
+  const hue = ((h % 360) + 360) % 360
+  const sat = Math.max(0, Math.min(1, s))
+  const anchorL = AUTO_BADGE_ACCENT_LIGHTNESS
+  const rawBg = options?.backgroundLuminance
+  const bgLum = rawBg === undefined || rawBg === null || !Number.isFinite(rawBg)
+    ? null
+    : clampLum(rawBg)
+
+  const steps = Math.round((AUTO_BADGE_ACCENT_L_MAX - AUTO_BADGE_ACCENT_L_MIN) / AUTO_BADGE_ACCENT_L_STEP)
+  const levels: number[] = []
+  for (let i = 0; i <= steps; i++) {
+    levels.push(AUTO_BADGE_ACCENT_L_MIN + i * AUTO_BADGE_ACCENT_L_STEP)
+  }
+  if (!levels.some((l) => Math.abs(l - anchorL) < 1e-12)) levels.push(anchorL)
+
+  interface Candidate {
+    l: number
+    fill: AccentResult
+    textColor: string
+    textContrast: number
+    separation: number | null
+  }
+  const candidates: Candidate[] = levels.map((l) => {
+    const raw = hslToRgb(hue, sat, l)
+    const fill = {
+      r: clampChannel(raw.r),
+      g: clampChannel(raw.g),
+      b: clampChannel(raw.b),
+    }
+    const chosen = chosenTextForFill(fill.r, fill.g, fill.b)
+    const fillLum = relativeLuminance(fill.r, fill.g, fill.b)
+    return {
+      l,
+      fill,
+      textColor: chosen.color,
+      textContrast: chosen.ratio,
+      separation: bgLum === null ? null : contrastRatio(fillLum, bgLum),
+    }
+  })
+
+  const feasibleText = candidates.some((c) => c.textContrast >= AUTO_BADGE_ACCENT_TEXT_CONTRAST)
+  const pool = feasibleText
+    ? candidates.filter((c) => c.textContrast >= AUTO_BADGE_ACCENT_TEXT_CONTRAST)
+    : candidates
+  const feasibleSeparation = bgLum !== null &&
+    pool.some((c) => (c.separation ?? 0) >= AUTO_BADGE_ACCENT_SEPARATION)
+
+  const distAnchor = (l: number): number => Math.abs(l - anchorL)
+  let best: Candidate = pool[0]
+  if (!feasibleText) {
+    // Best-effort fallback: deterministic best text contrast, then best
+    // separation (when context exists), then smallest anchor move.
+    for (const c of pool) {
+      if (c.textContrast > best.textContrast + 1e-9) { best = c; continue }
+      if (Math.abs(c.textContrast - best.textContrast) > 1e-9) continue
+      if (bgLum !== null && (c.separation ?? 0) > (best.separation ?? 0) + 1e-9) { best = c; continue }
+      if (bgLum !== null && Math.abs((c.separation ?? 0) - (best.separation ?? 0)) > 1e-9) continue
+      if (distAnchor(c.l) < distAnchor(best.l) - 1e-12) best = c
+      else if (Math.abs(distAnchor(c.l) - distAnchor(best.l)) <= 1e-12 && c.l < best.l) best = c
+    }
+  } else if (bgLum !== null && !feasibleSeparation) {
+    // Text-first: maximize separation among text-safe candidates, then
+    // smallest anchor move (predictable policy, documented).
+    for (const c of pool) {
+      if ((c.separation ?? 0) > (best.separation ?? 0) + 1e-9) { best = c; continue }
+      if (Math.abs((c.separation ?? 0) - (best.separation ?? 0)) > 1e-9) continue
+      if (distAnchor(c.l) < distAnchor(best.l) - 1e-12) best = c
+      else if (Math.abs(distAnchor(c.l) - distAnchor(best.l)) <= 1e-12 && c.l < best.l) best = c
+    }
+  } else if (bgLum !== null && feasibleSeparation) {
+    // Both reachable: closest to anchor among candidates passing both bars.
+    const both = pool.filter((c) => (c.separation ?? 0) >= AUTO_BADGE_ACCENT_SEPARATION)
+    best = both[0]
+    for (const c of both) {
+      if (distAnchor(c.l) < distAnchor(best.l) - 1e-12) best = c
+      else if (Math.abs(distAnchor(c.l) - distAnchor(best.l)) <= 1e-12 && c.l < best.l) best = c
+    }
+  } else {
+    // No background: closest to anchor among text-safe candidates.
+    for (const c of pool) {
+      if (distAnchor(c.l) < distAnchor(best.l) - 1e-12) best = c
+      else if (Math.abs(distAnchor(c.l) - distAnchor(best.l)) <= 1e-12 && c.l < best.l) best = c
+    }
+  }
+
+  return {
+    color: best.fill,
+    diagnostics: {
+      l: best.l,
+      anchorL,
+      textColor: best.textColor,
+      textContrast: best.textContrast,
+      separation: best.separation,
+      feasibleText,
+      feasibleSeparation: bgLum === null ? false : feasibleSeparation,
+      evaluations: candidates.length,
+    },
+  }
+}
+
+/**
+ * RGB-only adaptive automatic accent (foundation only, unwired). See
+ * solveAdaptiveAccent for the policy and diagnostics.
+ */
+export function adaptiveAutomaticAccent(
+  color: AccentResult,
+  options?: AdaptiveAccentOptions,
+): AccentResult {
+  return solveAdaptiveAccent(color, options).color
+}
+
+/**
+ * Hex variant of adaptiveAutomaticAccent (foundation only, unwired).
+ * Non-hex or malformed input is returned intact, like
+ * normalizeAutomaticAccentHex (never an invented color).
+ */
+export function adaptiveAutomaticAccentHex(hex: string, options?: AdaptiveAccentOptions): string {
+  if (typeof hex !== "string" || !hex.startsWith("#")) return hex
+  const [r, g, b, a] = parseColor(hex)
+  if (a !== 1 || ![r, g, b].every(Number.isFinite)) return hex
+  if (!/^#[0-9a-fA-F]{6}$/.test(hex)) return hex
+  const out = adaptiveAutomaticAccent({ r, g, b }, options)
+  const to2 = (n: number) => n.toString(16).padStart(2, "0")
+  return `#${to2(out.r)}${to2(out.g)}${to2(out.b)}`
+}
+
 export interface BucketAnalysis {
   readonly hue: number
   readonly avgSat: number

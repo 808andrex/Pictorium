@@ -11,8 +11,10 @@ import {
   isCardSkin,
   isValidCardAccentHex,
   resolveCardSkinAccent,
+  resolveProviderGlassSkinAccent,
   type CardSkin,
 } from "@/lib/card-layout-skins"
+import { PROVIDER_GLASS_NEUTRAL_ACCENT } from "@/lib/provider-brand-palette"
 import { LAND_H, LAND_W } from "@/lib/constants"
 import { STD_H, STD_W } from "@/lib/image-utils"
 
@@ -175,11 +177,16 @@ describe("poster card skins (shared glass backgrounds)", () => {
     }
     expect(diff).toBeGreaterThan(0)
 
+    // Provider-glass neutral is its own approved gray (#707780, fixed
+    // provider palette), NOT the generic unresolved-accent #555555.
     const neutral = cardSkinBackgroundSvg(
       "provider-glass",
       STD_W,
       STD_H,
-      CARD_SKIN_NEUTRAL_ACCENT,
+      PROVIDER_GLASS_NEUTRAL_ACCENT,
+    )
+    expect(resolveProviderGlassSkinAccent(undefined)).toBe(
+      PROVIDER_GLASS_NEUTRAL_ACCENT,
     )
     for (const missing of [undefined, null, "", "red", "#fff", "#gggggg", 42]) {
       const svg = cardSkinBackgroundSvg("provider-glass", STD_W, STD_H, missing)
@@ -196,15 +203,20 @@ describe("poster card skins (shared glass backgrounds)", () => {
       "#12345",
       "#1234567",
     ]
+    // Hostile provider-glass accents fall back to the provider-glass
+    // neutral (#707780); the generic #555555 contract stays untouched.
     const neutral = cardSkinBackgroundSvg(
       "provider-glass",
       STD_W,
       STD_H,
-      CARD_SKIN_NEUTRAL_ACCENT,
+      PROVIDER_GLASS_NEUTRAL_ACCENT,
     )
     for (const evil of hostile) {
       expect(isValidCardAccentHex(evil)).toBe(false)
       expect(resolveCardSkinAccent(evil)).toBe(CARD_SKIN_NEUTRAL_ACCENT)
+      expect(resolveProviderGlassSkinAccent(evil)).toBe(
+        PROVIDER_GLASS_NEUTRAL_ACCENT,
+      )
       const svg = cardSkinBackgroundSvg("provider-glass", STD_W, STD_H, evil)!
       expect(svg).toBe(neutral)
       expect(svg).not.toContain(evil)

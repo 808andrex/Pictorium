@@ -8,9 +8,17 @@
  * - highlight = proiezione intera per forma, mai subset di chiavi;
  * - isolamento effective dimostrato via buildDefaultsPreviewUrl (stesso
  *   endpoint del renderer, regola `land ?? flat`).
+ *
+ * SettingsPanel UI (staged draft, single source of truth for saving): the
+ * Apple click applies to the staged draft ONLY — in landscape the real preview
+ * URL (DefaultsPosterPreview, same builder) carries the complete canonical
+ * profile (blurFade 100 + siblings) while the durable/outer ctx stays intact
+ * and no PUT is sent. The outer-ctx assertions (canonical profile + flat/global/
+ * delivery intact) hold AFTER the single explicit Save, when the draft is
+ * persisted and installed.
  */
-import { beforeEach, describe, expect, it, vi } from "vitest"
-import { act, fireEvent, screen, within } from "@testing-library/react"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { act, cleanup, fireEvent, screen, within } from "@testing-library/react"
 import { createElement } from "react"
 import { SettingsPanel } from "@/components/SettingsPanel"
 import { BadgeDefaultsSection } from "@/components/settings/BadgeDefaultsSection"
@@ -30,16 +38,51 @@ import {
   type VisualPresetValues,
 } from "@/lib/visual-presets"
 import { buildDefaultsPreviewUrl } from "@/lib/poster-url"
+import { resetGuestGuardForTests } from "@/lib/guest-guard"
+import { __resetAdminTokenForTests } from "@/lib/admin-token"
 import { renderWithCtx } from "@/__tests__/test-utils"
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }),
 }))
 
+let puts: { url: string; body: Record<string, unknown> }[]
+let presetList: unknown[]
+
 beforeEach(() => {
   localStorage.clear()
-  vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({}) })))
+  puts = []
+  presetList = []
+  vi.clearAllMocks()
+  resetGuestGuardForTests()
+  __resetAdminTokenForTests()
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: unknown, init?: { method?: string; body?: string }) => {
+      const u = String(url)
+      if (init?.method === "PUT" && u.includes("/api/defaults")) {
+        puts.push({ url: u, body: JSON.parse(init.body as string) })
+        return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({}), text: async () => "{}" }
+      }
+      if (u.includes("/api/defaults/presets")) {
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: () => null },
+          json: async () => ({ presets: presetList }),
+          text: async () => JSON.stringify({ presets: presetList }),
+        }
+      }
+      return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({}), text: async () => "{}" }
+    }),
+  )
   vi.useFakeTimers()
+})
+
+afterEach(() => {
+  cleanup()
+  vi.unstubAllGlobals()
+  vi.useRealTimers()
 })
 
 function renderBadge(shape: "portrait" | "landscape") {
@@ -242,7 +285,7 @@ describe("Apple builtin UI (isolamento per target)", () => {
     expect(isHighlighted(appleButton())).toBe(true)
   })
 
-  it("landscape: profilo Apple, flat/globali/delivery e URL portrait intatti", async () => {
+  it("landscape: Apple staged on the draft only, canonical preview, Save persists the profile", async () => {
     localStorage.setItem("badgeDefaults", JSON.stringify({
       defaultPosterShape: "poster",
       defaultBadgeStyle: "shadow",
@@ -250,32 +293,118 @@ describe("Apple builtin UI (isolamento per target)", () => {
       defaultLogoAlign: "left",
       landscape: {},
     }))
+    // REAL preview URL: SettingsPanel writes the debounced preview through the
+    // actual DefaultsPosterPreview (same `land ?? flat` builder), so the
+    // effective landscape recipe is verified on the URL, not on the ctx alone.
+    const opened: string[] = []
+    class FakeXHR {
+      onprogress: ((e: unknown) => void) | null = null
+      onload: (() => void) | null = null
+      onerror: (() => void) | null = null
+      ontimeout: (() => void) | null = null
+      responseType = ""
+      timeout = 0
+      status = 0
+      response: unknown = null
+      open(_method: string, url: string) { opened.push(String(url)) }
+      send() {}
+      abort() {}
+      setRequestHeader() {}
+    }
+    vi.stubGlobal("XMLHttpRequest", FakeXHR as unknown as typeof XMLHttpRequest)
+
     const { ctx } = renderSettings()
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(100)
+      await vi.advanceTimersByTimeAsync(600)
     })
     fireEvent.click(within(screen.getByTestId("format-target-selector")).getByText("ui.posterShapeLandscape"))
-    const flatsBefore = JSON.stringify(portraitPresetPatch(captureVisualPreset(ctx())))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(600)
+    })
+    const lastParams = () => new URL(opened[opened.length - 1], "http://localhost").searchParams
+    expect(lastParams().get("shape")).toBe("landscape")
+
+    // Outer/durable truth pre-apply (single source of the Save) + URL baseline.
+    const landSeed = JSON.stringify(ctx().landscape)
     const portBefore = previewUrl(ctx(), "portrait")
+    const landBefore = previewUrl(ctx(), "landscape")
+    expect(isHighlighted(appleButton())).toBe(false)
+
     fireEvent.click(appleButton())
-    // Profilo Apple applicato (flat nested + nested landscape vince).
-    expect(ctx().landscape.blurFade).toBe(100)
-    expect(ctx().landscape.qualityBadgeStyle).toBe("color")
-    expect(ctx().landscape.genreBadgeOffsetY).toBe(0)
-    expect(ctx().landscape.logoOffsetY).toBeNull()
-    expect(ctx().landscape.rankingBadgeStyle).toBe("number")
-    expect(ctx().landscape.networkLogo).toBe(true)
-    expect(ctx().landscape.ribbonEnabled).toBe(true)
-    expect(ctx().landscape.sashOrder).toEqual(["upcoming", "rank", "new", "award", "extra"])
-    // Flat, globali e delivery intatti.
-    expect(JSON.stringify(portraitPresetPatch(captureVisualPreset(ctx())))).toBe(flatsBefore)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(600)
+    })
+    // The staged draft carries the COMPLETE canonical Apple profile: the real
+    // preview URL (`land ?? flat` builder) exposes blurFade 100 + siblings.
+    const canonLand = APPLE_VISUAL_DEFAULTS.landscape
+    const staged = lastParams()
+    expect(staged.get("shape")).toBe("landscape")
+    expect(staged.get("bf")).toBe(String(canonLand.blurFade))
+    expect(staged.get("gradHeight")).toBe(String(canonLand.gradientHeight))
+    expect(staged.get("blur")).toBe(String(canonLand.blurIntensity))
+    expect(staged.get("bd")).toBe(String(canonLand.blurDarkness))
+    expect(staged.get("tint")).toBe(String(canonLand.tintStrength))
+    expect(staged.get("ts")).toBe(String(canonLand.topShade))
+    expect(staged.get("bs")).toBe(canonLand.badgeStyle)
+    expect(staged.get("rs")).toBe(canonLand.rankingBadgeStyle)
+    expect(staged.get("qbs")).toBe(canonLand.qualityBadgeStyle)
+    expect(staged.get("goy")).toBe(String(canonLand.genreBadgeOffsetY))
+    expect(staged.get("netLogo")).toBe(canonLand.networkLogo ? "1" : "0")
+    expect(staged.get("ribbon")).toBe(canonLand.ribbonEnabled ? "1" : "0")
+    // Global rating sources outside the projection: preserved.
+    expect(staged.get("rsrc")).toBe("imdb")
+
+    // Zero durable writes / no autosave: outer ctx and URL unchanged,
+    // no PUT. The profile lives only in the staged draft.
+    expect(puts).toHaveLength(0)
+    expect(JSON.stringify(ctx().landscape)).toBe(landSeed)
     expect(ctx().defaultBadgeStyle).toBe("shadow")
     expect(ctx().defaultRatingSources).toEqual(["imdb"])
     expect(ctx().defaultLogoAlign).toBe("left")
     expect(ctx().defaultPosterShape).toBe("poster")
-    // Effettivo portrait invariato.
+    expect(previewUrl(ctx(), "landscape")).toBe(landBefore)
     expect(previewUrl(ctx(), "portrait")).toBe(portBefore)
-    // Highlight proiezione landscape intera.
     expect(isHighlighted(appleButton())).toBe(true)
+
+    // Single explicit Save: preview == saved, canonical profile installed.
+    vi.useRealTimers()
+    fireEvent.click(screen.getByTestId("settings-save"))
+    await screen.findByText("ui.synced")
+    expect(puts).toHaveLength(1)
+    const body = puts[0].body
+    expect(body.landscape).toMatchObject({
+      blurFade: canonLand.blurFade,
+      gradientHeight: canonLand.gradientHeight,
+      qualityBadgeStyle: canonLand.qualityBadgeStyle,
+      genreBadgeOffsetY: canonLand.genreBadgeOffsetY,
+      logoOffsetY: canonLand.logoOffsetY,
+      rankingBadgeStyle: canonLand.rankingBadgeStyle,
+      networkLogo: canonLand.networkLogo,
+      ribbonEnabled: canonLand.ribbonEnabled,
+      sashOrder: canonLand.sashOrder,
+    })
+    // Flat, global and delivery intact (preset targets landscape). Server
+    // payload: flat without the `default` prefix (defaultsToPayload).
+    expect(body.badgeStyle).toBe("shadow")
+    expect(body.ratingSources).toEqual(["imdb"])
+    expect(body.logoAlign).toBe("left")
+    expect(body.posterShape).toBe("poster")
+    // The outer ctx adopts the saved state: canonical profile + frozen portrait.
+    expect(ctx().landscape.blurFade).toBe(canonLand.blurFade)
+    expect(ctx().landscape.qualityBadgeStyle).toBe(canonLand.qualityBadgeStyle)
+    expect(ctx().landscape.genreBadgeOffsetY).toBe(canonLand.genreBadgeOffsetY)
+    expect(ctx().landscape.logoOffsetY).toBeNull()
+    expect(ctx().landscape.rankingBadgeStyle).toBe(canonLand.rankingBadgeStyle)
+    expect(ctx().landscape.networkLogo).toBe(canonLand.networkLogo)
+    expect(ctx().landscape.ribbonEnabled).toBe(canonLand.ribbonEnabled)
+    expect(ctx().landscape.sashOrder).toEqual(canonLand.sashOrder)
+    expect(ctx().defaultBadgeStyle).toBe("shadow")
+    expect(ctx().defaultRatingSources).toEqual(["imdb"])
+    expect(ctx().defaultLogoAlign).toBe("left")
+    expect(ctx().defaultPosterShape).toBe("poster")
+    const saved = new URL(previewUrl(ctx(), "landscape"), "http://localhost").searchParams
+    expect(saved.get("bf")).toBe(String(canonLand.blurFade))
+    expect(saved.get("qbs")).toBe(canonLand.qualityBadgeStyle)
+    expect(previewUrl(ctx(), "portrait")).toBe(portBefore)
   })
 })

@@ -62,6 +62,49 @@ ombra trasparente `TOP_SHADOW_PAD=14`):
 | Bordo bar | profilo 1.5px adattivo (`bottomLight ? "rgba(0,0,0,0.12)" : "rgba(255,255,255,0.22)"`), come quality-badge; la vecchia `line` 1px `rgba(0,0,0,0.10)` è rimossa |
 | Box Model Unificato | Altezza scatola `badgeBoxHeight(fs) = fs + round(fs * 0.40) * 2` (`1.8 * fs`), padding X `round(fs * 0.75)`, ombra uniforme `badgeShadowBox(h)` (`blur = max(round(h * 0.20), 4), off = max(round(h * 0.10), 2)`) condiviso da tutti i badge centrati |
 
+## Accento automatico adattivo (genere/rank/extra `colored`)
+
+L'accento AUTOMATICO estratto (tinta di scena same-hue) si adatta alla banda
+locale del badge invece di restare alla lightness fissa 5/12: hue/saturazione
+intatti, L in [0.24, 0.60] (`solveAdaptiveAccent` in `accent-color.ts`), testo
+renderer 4.5:1 prima priorità (`textColorForBg`), separazione fondo 3:1 seconda;
+se 4.5 è irraggiungibile nei bound, vince il best-contrast documentato
+(`feasibleText=false`, nessuna garanzia pretesa). Genere = banda bottom,
+rank/extra = banda top. Approssimazione a DUE BANDE, mai pixel-exact per badge:
+media striscia 8% sul canvas effettivo (portrait `STD_WxSTD_H`, landscape
+`LAND_WxLAND_H` — il service campiona il buffer già fittato dalla route) +
+velo nero analitico (top: alpha `0.75·topShade/100`; bottom: `blurDarkness`
+solo a blur attivo) misurato in luminanza WCAG lineare sui canali velati, non
+sulla media Rec.709 non-lineare. Vignetta/pre-release/scrim laterali non
+modellati (stima conservativa); offset espliciti possono portare il badge fuori
+banda (vale l'anchor-nearest). `ac=` manuale resta byte-identico (bypass);
+fallback genere/grigio senza estrazione e tinta senza banda restano alla
+normalizzazione legacy 5/12 byte-identica (tutto `GENRE_FALLBACK`, Comedy
+inclusa); palette fisse provider-glass/neutral mai adattive; Fresh/Card hanno
+aspetto fisso (solo un extra `colored` automatico riusato dentro Fresh/Card si
+adatta via path condiviso). Il picker auto in UI (`BadgeControls`) mostra la
+shade EFFETTIVA dipinta (header `X-Pictorium-Accent` della stessa risposta
+immagine caricata via XHR blob da `usePosterPreview`, hook
+`useEffectiveAccent`, display-only: mai dentro `isManualAccent`/`ac=`/mapping;
+la base legacy `autoAccentColor` da `useRootColors` resta solo identità
+canonica per il confronto manuale): nessuna fetch JSON dedicata nel flusso
+normale, nessuna dipendenza da finestre TTL (`?accentmeta=1` resta solo
+diagnostica read-only, mai necessaria al picker; record vecchi senza header =
+unknown onesto): default picker = banda bottom/genere (la
+card del picker), top/rank solo quando è l'unico a dipingere, con entrambe le
+zone etichettate (`ui.accentAutoTop/Bottom`, anche se uguali) e provenienza
+`manual` etichettata senza riscrivere il canonico; stili che non dipingono /
+loading / unknown = caption onesta (`ui.accentAutoNone/Detecting/Unavailable`,
+picker disabilitato su placeholder) con percorso manuale sempre disponibile
+(`ui.chooseManualColor`, scrive il canonico solo su scelta esplicita).
+Sotto il picker la caption `ui.accentAutoHint` lo chiarisce. Blur sempre sulla
+tinta naturale, mai sull'adattato. CPU bound: max 2 crop cachati
+(`poster-extract` 24h) + max 2x~38 valutazioni solver, nessun fetch/decode in più.
+Estrazione e bande solo per gli stili che dipingono l'accento (genere `colored`,
+top `colored`/`corner`/extra-`number`/`default` con accentFill; `follow-rank`
+segue il fallback `rs` del renderer): gli altri stili e le bande manuali `ac=`
+non decodificano nulla e tengono il valore legacy stabile in chiave cache.
+
 ## Badge Ranking/Extra
 
 | Parametro | Server (`svg-badge.ts:renderRankingBadge/renderExtraBadge`) |
@@ -223,16 +266,23 @@ Opt-in (`sep=1`, default OFF): sostituisce la media ★ nel badge con una colonn
 > `colored` come Badge spegne il nastro (`rankVariantValue`), come Nastro lo
 > accende. Stesso accent → PNG diversi tra Standard e Colorato.
 >
-> **Preview contestuale default (U2):** `previewFamily` (`auto`/`rank`/`info`/…)
+> **Preview contestuale default (U2):** `previewFamily` (`auto`/`rank`/`info`/`extra`/…)
 > + `previewExtra` (campione `__badge.*` risolto server-side) viaggiano solo
 > nella preview default (`buildDefaultsPreviewUrl`, stesso endpoint poster,
 > nessun renderer duplicato) e non si salvano mai. `auto` rende la priorità
 > effettiva salvata per forma (`sash`, `rank` incluso quando abilitato);
 > `rank` restringe a `rank` (vuoto se rank spento, mai fallback info);
 > `info` forza il primo campione info abilitato con `xbs` proprio (niente
-> campione a categorie spente). Le card segnalano la family su focus/pointer
+> campione a categorie spente); `extra` (solo dalla card stile extra) forza il
+> campione `extra` quando il bucket è consentito, altrimenti il primo info
+> abilitato — mai un fantasma a categorie spente. `genre` (stile genere/font)
+> forza un campione preview-only con `layout=standard`: Fresh/Card hanno
+> aspetto fisso e nascondono il badge genere per contratto renderer (mai
+> restyle), così `bs`/`bfont` restano visibili senza toccare lo staged/salvato.
+> Le card segnalano la family su focus/pointer
 > (mai hover, nessun move focus); Auto ripristina sash effettivo e rimuove
-> `extra` forzato.
+> `extra` forzato. `rank`/`auto` mostrano sempre il layout configurato
+> (Fresh incluso); il ritorno a `rank`/`auto` ripristina Fresh.
 
 ## Parametri URL (query string)
 
@@ -251,7 +301,7 @@ Opt-in (`sep=1`, default OFF): sostituisce la media ★ nel badge con una colonn
 | `gradHeight` | `gradientHeight` | `qGradHeight` — alimenta l'altezza del gradiente/sfocatura (blurHeight): query > mapping > config token > server defaults > default di formato (30 portrait, 20 landscape; mapping non-clean senza valore congelato: 20). Post-selezione solo Stremio unmapped: se il poster finale ha testo incorporato, i default globali non vincono sul profilo non-clean (20/80, come il client) |
 | `bf` | `blurFade` (slider editor 0..100 + double-click reset 50, 70 in landscape) | punto di attacco transizione 0..100 (default 50 portrait, 70 landscape, 80 profilo non-clean senza valori congelati): query > mapping > config token > server defaults > 50 (70 landscape, 80 non-clean). Emessa sempre esplicita in preview e Stremio. Curva ease-out continua `u = 1-(1-t)^γ` (γ = 1 + (1-bf/100)·2.5; default 50 → γ=2.25): tocca 1 solo all'ultima riga, NESSUN plateau (il vecchio `min(t/fadeStop,1)` appiattiva il fondo e piega lo shade) |
 | `tint` | `tintStrength` (slider editor 0..100 + default globale, double-click reset 20) | `qTint` — intensità tinta di scena 0..100 (default 20): query > mapping (`tintStrength`) > config token > server defaults (`PICTORIUM_TINT_STRENGTH`) > 20. Emessa sempre esplicita in preview e Stremio. Nessun profilo landscape dedicato (vale per entrambi i canvas) |
-| `ts` | `topShade` (slider editor 0..100 + default globale `defaultTopShade`, double-click reset 50) | `qTs` — ombra lineare superiore 0..100 (default 50): query > mapping (`topShade`) > config token > server defaults (`PICTORIUM_TOP_SHADE`) > 50. Solo flat (vale per entrambi i canvas, come la tinta). Preview sempre esplicita (`ts=0/..`); Stremio solo quando ≠ 50 (URL esistenti invariati). Sotto compactTuning la risolve il server dal mapping |
+| `ts` | `topShade` (slider editor 0..100 + default globale `defaultTopShade`, double-click reset 80) | `qTs` — ombra lineare superiore 0..100 (default 80): query > mapping (`topShade`) > config token > server defaults (`PICTORIUM_TOP_SHADE`) > 80. Solo flat (vale per entrambi i canvas, come la tinta). Preview sempre esplicita (`ts=0/..`); Stremio solo quando ≠ 80 (URL esistenti invariati). Sotto compactTuning la risolve il server dal mapping |
 | `dv` | mai dallo stato (firmata dal builder) | hash FNV-1a (8 hex) del tuning omesso negli URL compatti — emessa solo con `compactTuning`, mai letta dal render: invalida browser/edge/Stremio a ogni cambio default senza cambiare un pixel. Il proxy addon emette la stessa chiave ma con copertura totale dei defaults (`proxyDefaultsSignature` in `addon-proxy.ts`: stili/toggle inclusi — i param espliciti clobberebbero i mapping, vedi catena query > mapping) |
 | `tl` | `topLight ? "1" : "0"` (sempre, anche per genre badges) | `qTopLight` — override se presente |
 | `bl` | `bottomEdgeColor` via `useRootColors` (solo a calcolo completato, come `tl`) | `qBottomLight` — override se presente, altrimenti calcolo server sulla striscia inferiore corretto per la banda blur (`computeBottomLight`) |
@@ -340,6 +390,8 @@ Opt-in (`sep=1`, default OFF): sostituisce la media ★ nel badge con una colonn
 
 Opt-in grafico (`standard` = resa storica, default; `fresh` = numerale classifica in vetro + colonna meta a posizioni fisse, stesso renderer unico). Parametro `layout` in query; per-titolo nel mapping (flat + profilo `landscape`); nei default globali (flat + profilo Orizzontale) e nel config token. Nessun nuovo campo oltre `posterLayout`/`landscape.posterLayout`.
 
+> **Preset pronto Fresh (galleria Preset, solo ranked):** settimo tile (`FRESH_VISUAL_DEFAULTS` in `default-visual-presets.ts`, fedele all'export readonly `C:\Users\lucaf\Desktop\fresh.json` + `fresh`/`ranked` espliciti su entrambi i formati, età OFF/IT/standard canonica) — portrait `netflix`+nastro/minimal/knockout/grade 35, landscape `number`/`color`/`follow-rank`/grade 50. La galleria `PresetsPanel` lo applica con `withReadyPresetLayoutFresh` (stesso freeze dell'altro formato dello Standard, mai reset d'ingresso Fresh che distruggerebbe le posizioni 0/null esplicite); i 6 esistenti restano Standard, i personali applicano verbatim. Lista legacy Badge-tab resta a 6 (nessuno store duplicato).
+
 | Aspetto | Regola |
 |---|---|
 | Precedenza server (`resolvePosterLayout` in `poster-config.ts`) | query `layout` > mapping effettivo per formato (`mapping.landscape` vince sul flat) > config token > default effettivi per formato (`effectiveDefaultsForShape`) > `standard`. Query presente ma invalida/vuota = `standard` esplicito, mai eredita (chiave cache distinta dall'assenza) |
@@ -374,6 +426,11 @@ Stessa catena di persistenza del Fresh (query `layout` > mapping effettivo per f
 | Numerale Card alto/stretto (P9) | OGNI rank 1..20 tiene misura/anchor/baseline verbatim del reference (`sizeSingle`/`sizeDouble`, `xSingle`/`xDouble`, `centerY + size*0.34 + drop` — overlap parziale dietro la card è il design `cover.js`, vedi rank 2/4/1 negli esempi). Le doppie cifre (10..20) condensano SOLO in larghezza (`CARD_NUMERAL_CONDENSE_X = 0.6`, stesso pattern `scale(<cx> 1)` del numerale Fresh, senza toccare Fresh): mai shrink uniforme (il vecchio gutter-fit rimpiccioliva le doppie portrait 168px → ~91px). Outline uniforme via anello morfologico (dilatazione post-trasformata — `vector-effect="non-scaling-stroke"` è ignorato da resvg, misurato byte-identico); glow/ombre verbatim per-skin. Misura su inchiostro reale: shift misurato (mai shrink), prima cifra interamente prima della card, seconda a maggioranza visibile, struttura a due masse sulla mask senza ombre (il glow fonde le giunzioni strette). Nessun nuovo parametro/campo/rank oltre 20 |
 | Numerale Card LARGE + fix 4 (P16, correzione ciclo 1) | GRANDEZZA: rank 2..20 scalano ×`CARD_NUMERAL_ENLARGE` = 1.18 (punto medio della fascia utente 15-20%, misurato su inchiostro reale entrambi i formati) con stroke proporzionale; rank 1 RESTA verbatim pre-P16 (size/stroke/anchor originali, baseline con la sua misura — "1 andava bene come prima", utente). Anchor/tracking/baseline/condensazione base invariati, occlusione SOLO naturale per ordine layer (numerale prima della card, mai crop del viewport, MAI shift forzato per indurre tuck — "NON obbligatoriamente sotto il poster"). OUTLINE UNICO singoli+doppie: le singole non sono più `<text>` stroked — resvg strokeggia ogni sottopercorso del font separatamente e i contorni del "4" Inter si sovrappongono dentro il glifo, dipingendo segmenti interni spuri (causa misurata: rogue px su old senza filtri, zero sul ring; i counter legittimi restano vuoti). L'anello deriva dalla silhouette UNITA (stessa pipeline delle doppie, hue/gradienti/glow per-skin invariati, counter 6/8/9/0 mai riempiti). CONDENSA ADATTIVA: se a 0.6 la seconda cifra resta <50% visibile (portrait "20" ingrandito, già marginale in P9), retry a 0.55/0.5/0.45 STESSA altezza finché le due masse + prima-prima-card + seconda-maggioranza passano (primo step valido vince, oltre = omesso). Fit misurato su singole (core dentro il canvas) come sulle doppie. Nessun nuovo parametro/campo/rank oltre 20 |
 | Provider dentro la cornice (P17, contour BLOCCATO) | PROVIDER (consegnato): il mark scivola leggermente verso il centro (`placeCardProviderMark`: origine a `cardProviderMinLeft` = rima interna cornice + margine proporzionale `max(6, CW/125)`, taglia P14/`netscale` intatte, sotto il rank) e può superare `card.x` SOLO nella fascia strettamente sotto-card (mai dentro l'arte; se i due vincoli sono incompatibili a taglia piena — landscape 150%+ — vince l'arte senza shrink). Banda meta sempre dopo il mark reale + gap; posizione mai dipendente dal badge (niente salti). CONTOUR (non consegnato, bloccato con evidenze): il ripristino del pieno `stroke-width` via anello simmetrico (`dilate`±`erode`) è stato prototipato e MISURATO (spessore steli piatti = vecchio totale su 1/4/7/11/20 entrambi i formati) ma rompe 5 garanzie esistenti — rogue interni sul diagonale del 4 per inflazione del kernel quadrato (~×1.4), fori piccoli parzialmente riempiti dal `dilate`, ombra più forte che riempie la valle tra cifre e il counter dello 0 (PNG diagnostici + log in temp `p17/`); l'unione a due bande risolve i fori ma non diagonale/valle/ombra. Nessun test indebolito: l'anello P16 resta, il task contour va rideciso (tolleranza diagonale o peso ridotto esplicito). Nessun nuovo parametro/campo |
+| Tinta fissa provider-glass (palette brand, mai pixel) | SOLO cornice/sfondo vetro `provider-glass` (atmosfera + body + sheen/rim via `brandTintPalette`): tinta da palette FISSA 8 provider per identità brand già risolta (`provider-brand-palette.ts`, chiave canonica `networkKey` del resolver esistente — stessi alias/priorità del logo disegnato: NOW/Sky → `sky`, HBO/Max → `hbo`, Prime/Amazon → `prime`; NESSUN nuovo matcher, NESSUN campionamento pixel da logo/artwork, NESSUN fetch in più). Palette approvata: Netflix `#E50914`, Prime Video `#00A8E1`, Disney+ `#176BCA`, HBO/Max `#7138E8`, Apple TV `#A8ADB5`, Paramount+ `#0064FF`, Crunchyroll `#F47521`, NOW `#00D98B`; provider non listati/assenti (inclusi i fallback TMDB per network ignoti, a prescindere dai loro pixel) = neutro `#707780` dal ramo dedicato (`resolveProviderGlassSkinAccent`, MAI il generico `#555555` che resta per Nuvio/gli altri percorsi). Precedenza: `ac=`/mapping manuale valido vince sempre (contratto pubblico invariato); manuale invalido = ignorato (lookup brand, poi neutro). Il numerale resta cristallo neutro (`cardNumeralMaterial` ignora l'accent per `provider-glass` — la palette non ricolora mai i numeri). Nuvio (nero pieno) e Stremio (viola fisso) byte-identici; Fresh/Standard invariati. Nessun nuovo parametro query/config/store |
+
+## Preset personali: indipendenza del look salvato
+
+Ogni preset personale possiede l'intera ricetta visiva del formato in editing (mai il look precedente): badge/classifica/gradienti/trasformazioni + presentazione ranking (`posterLayout`/`posterFreshScope`) + stile extra standalone (`extraBadgeStyle`) + classificazione (`ageBadge`/`ageCountry`/`ageBadgeStyle`). Chiavi opzionali con nomi/enum del backend (validazione only): gli snapshot legacy senza chiavi restano validi e risolvono i canonici di fabbrica (standard/ranked/extra-null-segui-own-rank/off/IT/standard — stessa fonte di `useDefaults`), mai il live precedente né euristiche sul nome; i valori espliciti (inclusi i `null` canonici) sono onorati verbatim. Snapshot mai riscritti su render/apertura: normalizzazione pura ai bordi capture/apply/thumb/import (`normalizePersonalPreset` + `PERSONAL_FLAT_TO_LANDSCAPE` in `visual-presets.ts`; il contratto ready/per-titolo con la mappa `PRESET_FLAT_TO_LANDSCAPE` congelata resta byte-identico). Fuori dal perimetro (preservati verbatim come i ready): `ratingSources` (senza chiave profilo), `logoAlign` + fit flag (toggle globali), `posterShape` (delivery), credenziali/config provider/cataloghi/regione/userid (mai contenuto preset). Contratto sessione invariato: lo staged normalizza `freshScope "all"` → `"ranked"` per ogni seed (ranked-only), quindi i personali salvati portano `ranked` come qualsiasi altro edit.
 
 ## Files coinvolti
 

@@ -12,6 +12,8 @@ import { useT } from "@/lib/contexts/TranslationContext"
 import { usePosterEditor } from "@/lib/contexts/PosterEditorContext"
 import { usePosterFit } from "@/lib/usePosterFit"
 import { useFanartPosters } from "@/lib/useFanartPosters"
+import { useTvdbArtworks } from "@/lib/useTvdbArtworks"
+import { RatingSourceIcon } from "@/components/RatingSourceIcon"
 import { RotateCcw, Check, Clock, Sparkles, ArrowUpDown, EyeOff, ChevronDown, X, Loader2 } from "lucide-react"
 
 interface Props {
@@ -62,6 +64,9 @@ export function PosterOptions({ posters, posterActivePath, lang, selectPoster, a
 
   // Fanart.tv: fetch lazy solo a tab aperta (mai all'apertura del titolo).
   const fanart = useFanartPosters(activeGroup === "fanart")
+  // TVDB: stesso pattern lazy; la fetch è condivisa con le altre gallery
+  // (un'unica richiesta per titolo/utente, vedi useTvdbArtworks).
+  const tvdb = useTvdbArtworks(activeGroup === "tvdb", "posters")
 
   const posterTabs = useMemo(() => {
     const tabs: { key: string; label: string; count: number }[] = []
@@ -71,8 +76,10 @@ export function PosterOptions({ posters, posterActivePath, lang, selectPoster, a
     }
     // Tab Fanart.tv alla pari delle lingue: solo a titolo selezionato.
     if (selected) tabs.push({ key: "fanart", label: t("ui.fanartTitle"), count: fanart.posters.length })
+    // Tab TVDB (poster): stessa posizione/parità, lazy all'apertura.
+    if (selected) tabs.push({ key: "tvdb", label: t("ui.tvdbTitle"), count: tvdb.items.length })
     return tabs
-  }, [hasClean, cleanPosters.length, customPosters.length, savedCustomPoster, langGroups, selected, fanart.posters.length, t])
+  }, [hasClean, cleanPosters.length, customPosters.length, savedCustomPoster, langGroups, selected, fanart.posters.length, tvdb.items.length, t])
 
   useEffect(() => {
     if (posterTabs.length > 0 && !posterTabs.some((t) => t.key === activeGroup)) {
@@ -196,9 +203,10 @@ export function PosterOptions({ posters, posterActivePath, lang, selectPoster, a
 
   const activeClean = activeGroup === "clean"
   const activeFanart = activeGroup === "fanart"
+  const activeTvdb = activeGroup === "tvdb"
   const activeLangImgs = useMemo(() => {
-    return !activeClean && !activeFanart ? langGroups.find(([l]) => l === activeGroup)?.[1] ?? [] : []
-  }, [activeClean, activeFanart, langGroups, activeGroup])
+    return !activeClean && !activeFanart && !activeTvdb ? langGroups.find(([l]) => l === activeGroup)?.[1] ?? [] : []
+  }, [activeClean, activeFanart, activeTvdb, langGroups, activeGroup])
 
   const visibleLangImgs = useMemo(() => {
     return activeLangImgs.slice(0, visibleLangCount)
@@ -431,7 +439,7 @@ export function PosterOptions({ posters, posterActivePath, lang, selectPoster, a
         <p className="text-center py-12 text-muted text-xs">{t("ui.loading")}</p>
       )}
 
-      {!activeClean && !activeFanart && (
+      {!activeClean && !activeFanart && !activeTvdb && (
         <>
           <div className="grid grid-cols-3 gap-2">
             {visibleLangImgs.map((img) => {
@@ -496,6 +504,62 @@ export function PosterOptions({ posters, posterActivePath, lang, selectPoster, a
                     onSelect={selectPoster}
                     title={`${langLabel} · ♥ ${m?.likes ?? 0}`}
                   />
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTvdb && (
+        <div data-testid="tvdb-posters-panel">
+          {(tvdb.status === "idle" || tvdb.status === "loading") && (
+            <p className="flex items-center justify-center gap-1.5 py-12 text-[11px] text-zinc-500" role="status">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden="true" />
+              {t("ui.tvdbLoading")}
+            </p>
+          )}
+          {tvdb.status === "empty" && (
+            <p className="py-12 text-center text-[11px] text-zinc-500">{t("ui.tvdbEmptyPosters")}</p>
+          )}
+          {tvdb.status === "not_configured" && (
+            <p className="py-12 px-2 text-center text-[11px] text-zinc-500 leading-relaxed">{t("ui.tvdbNotConfigured")}</p>
+          )}
+          {tvdb.status === "unavailable" && (
+            <div className="py-8 text-center">
+              <p className="text-[11px] text-zinc-500">{t("ui.tvdbUnavailable")}</p>
+              <button
+                type="button"
+                onClick={() => tvdb.reload()}
+                className="mt-2 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-[11px] font-semibold text-zinc-300 hover:text-white hover:bg-white/10 transition-all"
+              >
+                {t("ui.retry")}
+              </button>
+            </div>
+          )}
+          {tvdb.status === "ready" && (
+            <div className="grid grid-cols-3 gap-2">
+              {tvdb.items.map((tile, i) => {
+                const m = tvdb.meta[i]
+                const lang = m?.language ?? null
+                // Codici TVDB a 3 lettere mostrati così come sono (maiuscoli);
+                // null = lingua sconosciuta, MAI "textless" (la testualità
+                // vive sul separato `includesText`, non sulla lingua).
+                const langLabel = !lang ? t("ui.fanartLangUnknown") : lang.toUpperCase()
+                return (
+                  <div key={tile.file_path} className="relative">
+                    <PosterBtn
+                      staggerIndex={i}
+                      img={tile}
+                      active={posterActivePath === tile.file_path}
+                      onSelect={selectPoster}
+                      title={`${t("ui.tvdbTitle")} · ${langLabel}`}
+                    />
+                    <span className="absolute top-1 left-1 z-20 flex items-center gap-1 rounded-md bg-black/60 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-200 backdrop-blur-md border border-white/10 pointer-events-none">
+                      <RatingSourceIcon id="tvdb" className="w-3 h-3" />
+                      {t("ui.tvdbTitle")}
+                    </span>
+                  </div>
                 )
               })}
             </div>

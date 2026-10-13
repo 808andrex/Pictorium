@@ -34,14 +34,86 @@ interface DefaultsPosterPreviewProps {
    *  stays mounted when collapsed so no refetch happens. Compact only. */
   collapsed?: boolean
   onCollapsedChange?: (v: boolean) => void
+  /** Floating overlay mode (mobile settings): minimal live thumbnail card —
+   *  same single owner, same blob URL/state/zoom modal as the other modes,
+   *  only narrower chrome (no header/chip/search). */
+  floating?: boolean
+  /** Suspend overlays: while true (settings exit-confirm owns the focus) an
+   *  open zoom is closed so two dialogs are never active at once. */
+  suspended?: boolean
+  /** Optional simplified chrome for the primary draft page only: actual
+   *  poster/loading/error/zoom remain, full info chips/search secondary
+   *  (change-sample-title disclosure). Default callers unaffected. */
+  simpleChrome?: boolean
+  /** Optional draft defaults override (guided setup): read-only field
+   *  overrides for the preview builder only. Absent = live editor state.
+   *  No context/provider changes; regular callers unaffected. */
+  draftDefaults?: Partial<{
+    defaultLogoScale: number | null
+    defaultLogoOffsetX: number | null
+    defaultLogoOffsetY: number | null
+    defaultGlobalBadges: boolean
+    defaultRankingBadges: boolean
+    defaultBadgeGenre: boolean
+    defaultBadgeYear: boolean
+    defaultBadgeRating: boolean
+    defaultBadgeQuality: boolean
+    defaultCustomRatings: boolean
+    defaultSeparateRatings: boolean
+    defaultSeparateRatingsStyle: import("@/lib/badge-styles").SeparateRatingsStyle
+    defaultRatingSources: string[]
+    defaultBadgeStyle: import("@/lib/badge-styles").BadgeStyle
+    defaultRankingBadgeStyle: import("@/lib/badge-styles").RankingBadgeStyle
+    defaultExtraBadgeStyle: import("@/lib/badge-styles").ExtraBadgeStyle | import("@/lib/badge-styles").ExtraBadgeFollowRank | null
+    defaultBadgeFont: import("@/lib/badge-styles").BadgeFont
+    defaultQualityBadgeStyle: import("@/lib/badge-styles").QualityBadgeStyle
+    defaultVideoFormats: readonly import("@/lib/av-specs").VideoFormat[]
+    defaultBlurEnabled: boolean
+    defaultBlurIntensity: number
+    defaultBlurFade: number
+    defaultBlurDarkness: number
+    defaultTintStrength: number
+    defaultTopShade: number
+    defaultGradientHeight: number
+    defaultTopBadgeScale: number
+    defaultTopBadgeOffsetX: number
+    defaultTopBadgeOffsetY: number
+    defaultExtraBadgeScale: number | null
+    defaultExtraBadgeOffsetX: number | null
+    defaultExtraBadgeOffsetY: number | null
+    defaultGenreBadgeScale: number
+    defaultGenreBadgeOffsetX: number
+    defaultGenreBadgeOffsetY: number
+    defaultQualityBadgeScale: number
+    defaultQualityBadgeOffsetX: number
+    defaultQualityBadgeOffsetY: number
+    defaultSeparateBadgeScale: number | null
+    defaultSeparateBadgeOffsetX: number | null
+    defaultSeparateBadgeOffsetY: number | null
+    defaultNetworkLogoScale: number
+    defaultNetworkLogoOffsetX: number
+    defaultNetworkLogoOffsetY: number
+    defaultNetworkLogo: boolean
+    defaultNetworkLogoPosition: import("@/lib/types").NetworkLogoPosition
+    defaultNetworkLogoFollowTitle: boolean | null
+    defaultRibbonEnabled: boolean
+    defaultRibbonSide: "left" | "right"
+    defaultPosterShape: import("@/lib/types").PosterShape
+    defaultPosterLayout: import("@/lib/types").PosterLayout | null
+    defaultPosterFreshScope: import("@/lib/types").PosterFreshScope | null
+    defaultLogoAlign: "left" | "center" | null
+    defaultSashOrder: readonly import("@/lib/badge-priority").SashBucket[]
+    landscape: import("@/lib/server-defaults").LandscapeServerDefaults | null
+  }>
 }
 
 /**
- * Preview-only sample label per informational sash bucket (Informazioni
- * family): existing badge keys, resolved server-side in the request language
- * via the `extra=` path — no new translations, no new fetch, real data still
- * wins everywhere else (only the top badge is forced, exactly like an editor
- * custom badge, and only while this family is edited).
+ * Preview-only sample label per informational sash bucket (`info` family, and
+ * the `extra` family which prioritizes the `extra` entry): existing badge
+ * keys, resolved server-side in the request language via the `extra=` path —
+ * no new translations, no new fetch, real data still wins everywhere else
+ * (only the top badge is forced, exactly like an editor custom badge, and
+ * only while this family is edited).
  */
 const INFO_FAMILY_SAMPLE_KEY: Record<SashBucket, string | null> = {
   upcoming: "__badge.comingSoon",
@@ -56,6 +128,7 @@ const PREVIEW_FAMILY_LABEL_KEY: Record<DefaultsPreviewFamily, string> = {
   auto: "ui.previewEditingAuto",
   rank: "ui.rankFamily",
   info: "ui.titleInfoFamily",
+  extra: "ui.titleInfoFamily",
   genre: "ui.genreRatingBadge",
   ratings: "ui.ratingsFamily",
   quality: "ui.badgeQuality",
@@ -81,8 +154,21 @@ export interface DefaultsPreviewBuildOpts {
  */
 export function buildDefaultsPreviewUrlFromEditor(
   ed: PosterEditorCtx,
-  opts: DefaultsPreviewBuildOpts,
+  opts: DefaultsPreviewBuildOpts & { draftDefaults?: DefaultsPosterPreviewProps["draftDefaults"] },
 ): { url: string; shape: "poster" | "landscape" } {
+  // Draft override (guided setup): read-only field overlays for preview
+  // only. Absent = live editor state (existing callers byte-identical).
+  // Landscape merges key-wise so a sparse draft profile still inherits.
+  if (opts.draftDefaults !== undefined) {
+    const { landscape: draftLand, ...draftFlat } = opts.draftDefaults as Record<string, unknown>
+    ed = {
+      ...ed,
+      ...draftFlat,
+      ...(draftLand !== undefined
+        ? { landscape: { ...ed.landscape, ...(draftLand as object) } }
+        : null),
+    } as PosterEditorCtx
+  }
   // Previewed shape mirrors the builder rule (`land ?? flat` only applies in
   // landscape): portrait always reads the shared flats.
   const previewIsLandscape =
@@ -95,10 +181,26 @@ export function buildDefaultsPreviewUrlFromEditor(
     ((previewIsLandscape ? ed.landscape.rankingBadges : undefined) ?? ed.defaultRankingBadges) !== false
   // First enabled informational bucket in saved priority order: no enabled
   // info bucket (or master off) = no sample, never a phantom badge.
+  // The `extra` family originates from the standalone extra-badge style
+  // control: it prioritizes the existing `extra`-bucket sample (whose look the
+  // `xbs` choice drives) whenever that bucket is allowed (ranking master on +
+  // `extra` in the effective sash for the previewed shape). When `extra` is
+  // disabled but another non-rank bucket is enabled, the first enabled one is
+  // used instead — every forced `extra=` sample renders as an extra-type top
+  // badge, so `xbs` stays visible and nothing unsupported is enabled. With no
+  // enabled info bucket (or master off) there is no sample at all: the preview
+  // falls back to the genuine data path rather than forcing a badge whose
+  // category the user switched off.
+  const enabledInfoBuckets =
+    effPreviewRankingForFamily
+      ? effPreviewSashForFamily.filter((b) => b === "upcoming" || b === "new" || b === "award" || b === "extra")
+      : []
   const infoSampleBucket =
-    opts.previewFamily === "info" && effPreviewRankingForFamily
-      ? effPreviewSashForFamily.find((b) => b === "upcoming" || b === "new" || b === "award" || b === "extra")
-      : undefined
+    opts.previewFamily === "extra"
+      ? (enabledInfoBuckets.includes("extra") ? ("extra" as const) : enabledInfoBuckets[0])
+      : opts.previewFamily === "info"
+        ? enabledInfoBuckets[0]
+        : undefined
   const previewExtra = infoSampleBucket ? INFO_FAMILY_SAMPLE_KEY[infoSampleBucket] : null
   const url = buildDefaultsPreviewUrl({
     tmdbKey: opts.tmdbKey,
@@ -175,7 +277,7 @@ export function buildDefaultsPreviewUrlFromEditor(
   return { url, shape: previewIsLandscape ? "landscape" as const : "poster" as const }
 }
 
-export function DefaultsPosterPreview({ compact, previewShape, demoMedia, onDemoMediaChange, previewFamily, onPreviewFamilyChange, collapsed = false, onCollapsedChange }: DefaultsPosterPreviewProps) {
+export function DefaultsPosterPreview({ compact, floating, suspended, previewShape, demoMedia, onDemoMediaChange, previewFamily, onPreviewFamilyChange, collapsed = false, onCollapsedChange, draftDefaults, simpleChrome }: DefaultsPosterPreviewProps) {
   const ed = usePosterEditor()
   const { t, lang } = useT()
   const bodyId = useId()
@@ -201,6 +303,12 @@ export function DefaultsPosterPreview({ compact, previewShape, demoMedia, onDemo
   const demoTitle = demoMedia?.title?.trim() ? demoMedia.title.trim() : "Avatar"
   const searchLanguage = getRegionDef(ed.defaultRegion).lang
 
+  // Draft overlay (guided setup): read through a ref so the debounced URL
+  // effect below depends only on the stable stringified identity — the
+  // same builder/loading path serves draft and live callers alike.
+  const draftDefaultsRef = useRef(draftDefaults)
+  draftDefaultsRef.current = draftDefaults
+  const draftKey = JSON.stringify(draftDefaults ?? null)
   // Calcolo URL con debounce a 200ms per non sovraccaricare il server durante lo scorrimento dei controlli
   useEffect(() => {
     const { url } = buildDefaultsPreviewUrlFromEditor(ed, {
@@ -210,6 +318,7 @@ export function DefaultsPosterPreview({ compact, previewShape, demoMedia, onDemo
       demoMedia: demoMedia ?? null,
       previewShape: previewShape ?? null,
       previewFamily: previewFamily ?? null,
+      draftDefaults: draftDefaultsRef.current ?? undefined,
     })
 
     const timer = setTimeout(() => {
@@ -283,6 +392,9 @@ export function DefaultsPosterPreview({ compact, previewShape, demoMedia, onDemo
     previewFamily,
     retryNonce,
     ed,
+    // Draft overlay identity: stringified so draft edits rebuild the URL
+    // through the same builder path (existing callers: stable undefined).
+    draftKey,
   ])
 
   // Anti-blank tra anteprime (buffer precedente mantenuto finché il nuovo non è pronto)
@@ -393,6 +505,13 @@ export function DefaultsPosterPreview({ compact, previewShape, demoMedia, onDemo
     }
   }, [])
 
+  // Exit-confirm supersedes the zoom overlay: close it so two dialogs are
+  // never active (the shared Modal skips focus-restore when focus already
+  // moved to the superseding dialog; closing here never discards or saves).
+  useEffect(() => {
+    if (suspended) setZoomed(false)
+  }, [suspended])
+
   // Aspect conforme all'URL (stessa shape effettiva del builder): switch
   // immediato, senza mixing durante il debounce (l'immagine precedente resta
   // in buffer finché la nuova non è pronta).
@@ -401,14 +520,16 @@ export function DefaultsPosterPreview({ compact, previewShape, demoMedia, onDemo
   // Accessible zoom (shared Modal: focus trap, Escape, backdrop, focus/scroll
   // restore): overlay above the settings dialog (z-[80]). A second click on
   // the enlarged image closes (restore) with no layout shift underneath
-  // (Modal locks scroll in a portal).
+  // (Modal locks scroll in a portal). `min-w-0`: the panel is a flex item of
+  // the overlay — without it `min-width: auto` lets the poster's intrinsic
+  // width force the panel past narrow viewports (cropped zoom on 320px).
   const zoomModal = (
     <Modal
       isOpen={zoomed}
       onClose={() => setZoomed(false)}
       labelledBy="defaults-preview-zoom-title"
       overlayClassName="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fade-in"
-      className="max-w-3xl text-center"
+      className="max-w-3xl text-center min-w-0"
     >
       <h3 id="defaults-preview-zoom-title" className="sr-only">{demoTitle}</h3>
       {imgSrc ? (
@@ -433,9 +554,10 @@ export function DefaultsPosterPreview({ compact, previewShape, demoMedia, onDemo
   // "What am I editing" chip: always visible (compact mobile included), text
   // only — never moves focus, never unmounts controls. A small reset button
   // appears while a family is targeted so the full `auto` preview is one
-  // click away (preview-only: it only lifts "auto" to the owner).
+  // click away (preview-only: it only lifts "auto" to the owner). The full
+  // hint sentence stays available as its accessible tooltip.
   const editingChip = (
-    <div className="w-full flex justify-center [@media(max-height:760px)]:order-2">
+    <div className="w-full flex justify-center">
       <span
         data-testid="defaults-preview-editing"
         title={t("ui.previewEditingHint")}
@@ -464,6 +586,21 @@ export function DefaultsPosterPreview({ compact, previewShape, demoMedia, onDemo
   )
 
   const searchRow = (
+    simpleChrome ? (
+      <details data-testid="defaults-preview-sample-disclosure" className="w-full rounded-lg border border-white/10 bg-white/[0.02] px-2 py-1">
+        <summary data-testid="defaults-preview-sample-toggle" className="cursor-pointer text-[11px] font-semibold text-zinc-300 min-h-[44px] flex items-center">{t("ui.defaultsPreviewChangeSample")}</summary>
+        <div className="pb-1">
+          <DefaultsPreviewTitleSearch
+            tmdbKey={tmdbKey}
+            hasServerKey={serverHasTmdbKey}
+            language={searchLanguage}
+            demoMedia={demoMedia ?? null}
+            onDemoMediaChange={(m) => onDemoMediaChange?.(m)}
+            compact={compact}
+          />
+        </div>
+      </details>
+    ) : (
     <DefaultsPreviewTitleSearch
       tmdbKey={tmdbKey}
       hasServerKey={serverHasTmdbKey}
@@ -472,7 +609,9 @@ export function DefaultsPosterPreview({ compact, previewShape, demoMedia, onDemo
       onDemoMediaChange={(m) => onDemoMediaChange?.(m)}
       compact={compact}
     />
+    )
   )
+  const editingChipRendered = simpleChrome ? null : editingChip
 
   if (compact) {
     return (
@@ -501,7 +640,7 @@ export function DefaultsPosterPreview({ compact, previewShape, demoMedia, onDemo
           </div>
         </div>
         <div id={bodyId} className={collapsed ? "hidden" : undefined}>
-        {editingChip}
+        {editingChipRendered}
 
         <div className="flex justify-center">
           <div data-testid="defaults-preview-media" className={`relative select-none bg-zinc-950/80 rounded-xl overflow-hidden shadow-inner border border-white/10 ${
@@ -569,9 +708,103 @@ export function DefaultsPosterPreview({ compact, previewShape, demoMedia, onDemo
     )
   }
 
+  // Floating overlay mode (mobile settings): a minimal LIVE thumbnail card —
+  // the same single owner, same blob URL/state/zoom modal as every other
+  // mode, only narrower chrome (no header, chip or search: the thumbnail
+  // tap opens the shared zoom, the owner wrapper provides minimize + corner
+  // controls). The frame keeps the true ratio (2/3 portrait, 16/9
+  // landscape) and the full image is always visible (no inner scroll).
+  if (floating) {
+    return (
+      <div className="overflow-hidden rounded-2xl border border-white/15 bg-zinc-950/90 shadow-xl">
+        <div data-testid="defaults-preview-media" className={`relative w-full select-none bg-zinc-950/80 ${
+          isLandscape ? "aspect-video" : "aspect-[2/3]"
+        }`}>
+          {previewLoading && (
+            <div className="absolute top-0 inset-x-0 h-0.5 bg-accent-orange/30 z-30 overflow-hidden">
+              <div
+                className="h-full bg-accent-orange transition-all duration-200"
+                style={{ width: `${Math.max(loadProgress, 10)}%` }}
+              />
+            </div>
+          )}
+
+          {prevSrc && prevSrc !== imgSrc && (
+            /* eslint-disable-next-line @next/next/no-img-element */
+            <img
+              src={prevSrc}
+              alt=""
+              aria-hidden="true"
+              draggable={false}
+              className={`absolute inset-0 w-full h-full ${isLandscape ? "object-contain" : "object-cover"}`}
+            />
+          )}
+
+          {imgSrc ? (
+            <button
+              type="button"
+              data-testid="defaults-preview-zoom-open"
+              onClick={() => setZoomed(true)}
+              aria-label={t("ui.defaultsPreviewZoomOpen")}
+              aria-expanded={zoomed}
+              className="absolute inset-0 w-full h-full cursor-zoom-in"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={imgSrc}
+                alt={demoTitle}
+                draggable={false}
+                onLoad={handleImgLoad}
+                className={`absolute inset-0 w-full h-full transition-opacity duration-150 ${isLandscape ? "object-contain" : "object-cover"}`}
+              />
+            </button>
+          ) : (
+            <div className="absolute inset-0 bg-surface2/40 animate-pulse" />
+          )}
+
+          {imageError && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/85 text-center p-1 z-20">
+              <ImageOff className="w-4 h-4 text-zinc-500 mb-0.5" />
+              <button
+                type="button"
+                onClick={() => setRetryNonce((n) => n + 1)}
+                aria-label={t("ui.retry")}
+                title={t("ui.retry")}
+                className="mt-1 px-2 py-0.5 text-[10px] text-zinc-200 bg-white/10 hover:bg-white/20 rounded flex items-center gap-1 cursor-pointer min-w-[44px] min-h-[44px] justify-center"
+              >
+                <RefreshCw className="w-2.5 h-2.5" />
+              </button>
+            </div>
+          )}
+        </div>
+        {zoomModal}
+      </div>
+    )
+  }
+
+  // Desktop global preview (Impostazioni globali): deliberate compact layout —
+  // header, editing chip, poster, title search DIRECTLY BELOW the poster,
+  // then the demo-data caution only. DOM order matches visual order (no
+  // flex-order swaps), so keyboard/AT navigation follows what sighted users
+  // see. The
+  // longer explanations (previewEditingHint, settingsGlobalDesc) are
+  // intentionally dropped here: the dialog title, format target and footer
+  // already carry that context, and the hint survives as the chip tooltip.
+  // The column itself scrolls (owner wrapper) at short heights/zoom, so the
+  // search stays reachable without scrolling at ordinary desktop sizes while
+  // the wheel still works when space is tight. The poster box is bounded on
+  // BOTH axes and driven by width (`w-full` + a `min(100%,…)` cap derived
+  // from the dialog height), so it grows at taller viewports (1440x900)
+  // yet shrinks to fit the remaining column height at 1280x720/1024x768
+  // with no column scroll; the `min-h` floor keeps it visually useful and
+  // forces the allowed column scroll at short heights instead of shrinking
+  // to 1px. No `overflow-hidden` clipping on the card: the bottom stays
+  // reachable. The results dropdown renders in-flow below the search input
+  // with its own `max-h-44 overflow-y-auto` scroller, so it never pushes
+  // the column into scroll at ordinary heights.
   return (
-    <div className="w-full flex flex-col items-center bg-surface/40 border border-surface2/60 rounded-2xl p-4 shadow-md">
-      <div className="w-full flex items-center justify-between mb-3 px-1 [@media(max-height:760px)]:order-1">
+    <div className="w-full flex flex-col items-center bg-surface/40 border border-surface2/60 rounded-2xl p-2 shadow-md min-h-0">
+      <div className="w-full flex items-center justify-between mb-0.5 px-1 shrink-0">
         <div className="flex items-center gap-1.5 text-xs font-semibold text-zinc-200">
           <Sparkles className="w-3.5 h-3.5 text-accent-orange" />
           <span>{t("ui.defaultsPreviewTitle")}</span>
@@ -580,13 +813,10 @@ export function DefaultsPosterPreview({ compact, previewShape, demoMedia, onDemo
           {demoMedia?.title ? demoTitle : t("ui.defaultsPreviewSubtitle")}
         </span>
       </div>
-      {editingChip}
-      <p className="text-[10px] text-zinc-500 text-center mt-1.5 px-2 select-none leading-relaxed [@media(max-height:760px)]:order-4">
-        {t("ui.previewEditingHint")}
-      </p>
+      {editingChipRendered}
 
-      <div className={`relative select-none bg-zinc-950/90 rounded-2xl overflow-hidden shadow-2xl border border-white/10 w-full [@media(max-height:760px)]:order-3 ${
-        isLandscape ? "aspect-video" : "aspect-[2/3] max-w-[calc(58dvh_-_200px)]"
+      <div data-testid="defaults-preview-media" className={`relative select-none bg-zinc-950/90 rounded-2xl overflow-hidden shadow-2xl border border-white/10 mx-auto mt-1 w-full shrink-0 ${
+        isLandscape ? "aspect-video max-w-[min(100%,calc((88dvh_-_493px)*1.778))] max-h-[calc(88dvh_-_493px)] min-h-[90px]" : "aspect-[2/3] max-w-[min(100%,calc((88dvh_-_493px)*0.667))] max-h-[calc(88dvh_-_493px)] min-h-[120px]"
       }`}>
         {previewLoading && (
           <div className="absolute top-0 inset-x-0 h-1 bg-accent-orange/20 z-30 overflow-hidden">
@@ -653,17 +883,14 @@ export function DefaultsPosterPreview({ compact, previewShape, demoMedia, onDemo
         )}
       </div>
 
-      <div className="w-full [@media(max-height:760px)]:order-2">
+      <div className="w-full mt-1 shrink-0">
         {searchRow}
       </div>
-      <p className="text-[10px] text-amber-200/70 text-center mt-2 px-2 select-none leading-relaxed [@media(max-height:760px)]:order-4">
+
+      <p className="text-[10px] text-amber-200/70 text-center mt-1 px-2 select-none leading-snug shrink-0">
         {t("ui.defaultsPreviewSamplesNotice")}
       </p>
       {zoomModal}
-
-      <p className="text-[10px] text-zinc-500 text-center mt-2.5 px-2 select-none leading-relaxed [@media(max-height:760px)]:order-5">
-        {t("ui.settingsGlobalDesc")}
-      </p>
     </div>
   )
 }

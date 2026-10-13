@@ -100,8 +100,14 @@ describe("applyPerTitleVisualPreset portrait", () => {
     expect(ed.extraBadgeScale).toBeNull()
     expect(ed.extraBadgeOffsetX).toBeNull()
     expect(ed.extraBadgeOffsetY).toBeNull()
-    // extraBadgeStyle audit: no flat source -> preserved, never reset.
-    expect(ed.extraBadgeStyle).toBe("corner")
+    // extraBadgeStyle audit: the portrait title owns the snapshot's flat
+    // style — Apple carries the legacy null (follow own rank), so the live
+    // tuned "corner" is replaced, never preserved.
+    expect(ed.extraBadgeStyle).toBeNull()
+    // Owned ranking presentation from the snapshot (ready six resolve
+    // Standard/ranked, never the live title's values).
+    expect(ed.posterLayout).toBe("standard")
+    expect(ed.posterFreshScope).toBe("ranked")
     // Global-only / shared / binding state preserved.
     expect(ed.ratingSources).toEqual(["imdb", "trakt"])
     expect(ed.logoAlign).toBe("left")
@@ -119,7 +125,7 @@ describe("applyPerTitleVisualPreset portrait", () => {
     expect(localStorage.getItem("badgeDefaults")).toBe(storageBefore)
   })
 
-  it("portrait ignores a landscape-only extraBadgeStyle in the snapshot", async () => {
+  it("portrait owns the flat extraBadgeStyle (landscape-only style never leaks)", async () => {
     const box = renderProbe()
     let ed = await settled(box)
     await act(async () => {
@@ -133,7 +139,9 @@ describe("applyPerTitleVisualPreset portrait", () => {
       ;(box.ed as PosterEditorCtx).applyPerTitleVisualPreset(values)
     })
     ed = box.ed as PosterEditorCtx
-    expect(ed.extraBadgeStyle).toBe("corner")
+    // Flat legacy null wins over the live "corner", and the nested "vetro"
+    // never leaks across shapes.
+    expect(ed.extraBadgeStyle).toBeNull()
   })
 
   it("portrait null scale resolves auto-fit from the current logo aspect (not the live scale)", async () => {
@@ -315,7 +323,11 @@ describe("applied per-title values freeze through the unchanged save path", () =
     expect(body.qualityBadgeStyle).toBe("knockout")
     expect(body.gradientHeight).toBe(50)
     expect(body.logoOffsetY).toBe(-40)
-    expect(body.extraBadgeStyle).toBe("corner")
+    // The applied snapshot owns the flat extra style (Apple legacy null),
+    // so the previously tuned "corner" does not survive the apply.
+    expect(body.extraBadgeStyle).toBeNull()
+    expect(body.posterLayout).toBe("standard")
+    expect(body.posterFreshScope).toBe("ranked")
     expect(body.genreBadgeOffsetY).toBe(-40)
   })
 })

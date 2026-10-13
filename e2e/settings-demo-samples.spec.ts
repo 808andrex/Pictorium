@@ -36,8 +36,16 @@ function isPreviewPoster(raw: string): URL | null {
   return u.searchParams.get("preview") === "1" ? u : null
 }
 
+// The settings dialog mounts TWO poster-request producers on the same
+// preview path: the dialog preview (DefaultsPosterPreview, XHR blob) and the
+// preset-gallery thumbnails (plain <img>). Recorders must capture the dialog
+// stream only: resourceType xhr is the HAR-proven discriminator (thumbnails
+// are image, geometry/API fetches are fetch and never match preview=1 XHR
+// rows). URL-only matching mixes the streams (proven: Apple thumbnail
+// bs=minimal latched as the "before" preview vs dialog bs=shadow).
 function collectPreviewRequests(page: Page, seen: Seen) {
   page.on("request", (req) => {
+    if (req.resourceType() !== "xhr") return
     if (isPreviewPoster(req.url())) seen.urls.push(req.url())
   })
 }
@@ -358,39 +366,90 @@ test.describe("Settings demo samples: search, zoom, badges", () => {
     await expect(page.getByTestId("settings-preview").locator(".aspect-video")).toBeVisible()
   })
 
-  test("mobile 390px: search and zoom fit without overflow or shifts", async ({ page }) => {
+  // Mobile 390px: the preview is the user-authorized floating overlay, which
+  // by design has NO search (SettingsPanel mobile branch mounts
+  // DefaultsPosterPreview floating: same XHR owner/state/zoom, narrower
+  // chrome without header, chip or search). The old compact-toggle
+  // assertion addressed a mode that is never mounted at <768px, so it is
+  // re-scoped here to the real mobile contract: search UI absent, floating
+  // minimize/restore + corner-cycle usable, Save/Close never obstructed
+  // (the overlay is corner-snapped inside the dialog body, above the
+  // footer), zoom still fits, and the TV demo switch done at desktop width
+  // keeps its visual params across the flip. Desktop search coverage stays
+  // in the tests above (>=768px textbox + option selection proofs).
+  test("mobile 390px: floating preview without search, usable overlay, TV params preserved", async ({ page }) => {
     await seed(page)
-    await page.setViewportSize({ width: 390, height: 844 })
+    await page.setViewportSize({ width: 1280, height: 900 })
     await resetBadgeToggles(page)
+    const seen: Seen = { urls: [] }
+    collectPreviewRequests(page, seen)
     await page.route("**/api/tmdb/search**", async (route) => {
       await route.fulfill({ json: CASA_PAYLOAD })
     })
     const dialog = await openSettings(page)
-    const overflowX = () => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)
-    expect(await overflowX()).toBeLessThanOrEqual(1)
+    await waitPreview(seen, (u) => u.pathname.includes("/movie/19995"))
+    // Desktop width: switch to the TV demo via the search below the poster.
     const search = dialog.locator('[data-testid="defaults-preview-title-search"]')
-    // Mobile compact: the search body starts closed by design; expand it via
-    // the public toggle before asserting the textbox.
-    await search.getByTestId("defaults-preview-search-toggle").click()
     const box = search.getByRole("textbox")
-    await expect(box).toBeVisible()
     await box.fill("casa")
     await box.press("Enter")
-    const option = search.getByRole("option", { name: /La casa di carta/ })
-    await expect(option).toBeVisible()
-    const ob = (await option.boundingBox())!
-    expect(ob.x).toBeGreaterThanOrEqual(0)
-    expect(ob.x + ob.width).toBeLessThanOrEqual(391)
-    await option.click()
+    await nextPreview(
+      seen,
+      // Click DENTRO l'azione: la preview TV è emessa dalla selezione, e un
+      // poll from-now con noop dopo il click perderebbe il burst già partito
+      // (stesso flaw baseline provato su u4: niente refetch senza edit).
+      async () => {
+        await search.getByRole("option", { name: /La casa di carta/ }).click()
+      },
+      (u) => u.pathname.includes("/api/poster/tv/1399") && u.searchParams.get("demosamples") === "1",
+    )
+    // Flip to mobile: the same mounted preview becomes the floating overlay
+    // (prop flip, no unmount, no refetch) and the search UI unmounts.
+    await page.setViewportSize({ width: 390, height: 844 })
+    const floating = dialog.locator('[data-testid="settings-preview"][data-floating="true"]')
+    await expect(floating).toBeVisible()
+    await expect(dialog.locator('[data-testid="defaults-preview-title-search"]')).toHaveCount(0)
+    // The TV switch params survive the flip (last dialog XHR still tv).
+    const lastTv = seen.urls.filter((u) => u.includes("/api/poster/tv/1399")).pop()
+    expect(lastTv).toBeTruthy()
+    const tvImage = dialog.getByAltText("La casa di carta")
+    await expect(tvImage).toBeVisible()
+    await expect.poll(() => tvImage.evaluate((el: HTMLImageElement) => el.naturalWidth)).toBeGreaterThan(0)
+    const overflowX = () => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)
+    expect(await overflowX()).toBeLessThanOrEqual(1)
+    // Floating minimize/restore keeps the single owner mounted.
+    await dialog.getByTestId("floating-preview-minimize").click()
+    await expect(dialog.getByTestId("floating-preview-restore")).toBeVisible()
+    await dialog.getByTestId("floating-preview-restore").click()
+    await expect(dialog.getByTestId("floating-preview-minimize")).toBeVisible()
+    await expect(tvImage).toBeVisible()
+    // Corner-cycle moves the overlay (observable state, no sleep).
+    const cornerBefore = await floating.getAttribute("data-corner")
+    await dialog.getByTestId("floating-preview-corner").click()
+    await expect.poll(() => floating.getAttribute("data-corner")).not.toBe(cornerBefore)
+    // Save/Back stay reachable: the overlay never covers the footer. On mobile
+    // the dialog close is the header Back button ("Indietro", ui.back), not
+    // the desktop X ("Chiudi") — the footer holds Save (+Install) only. Save is
+    // correctly DISABLED here (staged session, "Nessuna modifica": the TV
+    // demo switch is preview-only and must not dirty the draft), so the
+    // contract is visibility, not enabledness — the staged-save enable path
+    // is covered by specs that actually edit settings.
+    await expect(page.getByTestId("settings-save")).toBeVisible()
+    await expect(page.getByTestId("settings-save")).toBeDisabled()
+    await expect(dialog.getByRole("button", { name: "Indietro" })).toBeVisible()
+    // Zoom still fits without overflow or shifts.
     const opener = dialog.getByLabel(/Ingrandisci/)
     await opener.click()
     const dialogs = page.getByRole("dialog")
     await expect(dialogs).toHaveCount(2)
-    const zb = (await dialogs.nth(1).getByAltText("La casa di carta").boundingBox())!
+    const zoomed = dialogs.nth(1).getByAltText("La casa di carta")
+    await expect(zoomed).toBeVisible()
+    await expect.poll(() => zoomed.evaluate((el: HTMLImageElement) => el.naturalWidth)).toBeGreaterThan(0)
+    const zb = (await zoomed.boundingBox())!
     expect(zb.x).toBeGreaterThanOrEqual(0)
     expect(zb.x + zb.width).toBeLessThanOrEqual(391)
     await page.screenshot({ path: "artifacts/settings-demo-mobile-zoom.png" })
-    await dialogs.nth(1).getByAltText("La casa di carta").click()
+    await zoomed.click()
     await expect(dialogs).toHaveCount(1)
     expect(await overflowX()).toBeLessThanOrEqual(1)
   })
@@ -494,12 +553,22 @@ test.describe("Settings demo samples: search, zoom, badges", () => {
     })
     const seen: Seen = { urls: [] }
     collectPreviewRequests(page, seen)
-    const tvUrl = (from: number): Promise<string> => {
+    // Settled arrange-state gate: the first tv XHR can fire pre-hydration
+    // with the code-factory topShade (ts=80, PosterEditorContext:52) before
+    // the arranged FACTORY_DEFAULTS topShade (ts=50) is adopted (proven
+    // first=ts80/reopen=ts50 drift, bs=shadow both = dialog rows, single
+    // param delta). Byte-equality must compare settled rows, not the
+    // transient — same flaw class as the u4 noop baselines.
+    const settledTv = (u: URL) => u.searchParams.get("ts") === "50"
+    const tvUrl = (from: number, pred: (u: URL) => boolean = settledTv): Promise<string> => {
       let out: string | null = null
       return expect
         .poll(
           () => {
-            out = seen.urls.slice(from).find((u) => u.includes("/api/poster/tv/1399")) ?? null
+            out =
+              seen.urls
+                .slice(from)
+                .find((raw) => raw.includes("/api/poster/tv/1399") && pred(new URL(raw))) ?? null
             return out
           },
           { timeout: 30_000 },

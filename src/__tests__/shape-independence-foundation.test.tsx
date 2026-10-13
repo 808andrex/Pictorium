@@ -682,6 +682,8 @@ describe("editor setters + Badge tab reset", () => {
       ),
     )
     await act(async () => {})
+    const adv = screen.getByTestId("badge-advanced-toggle")
+    if (adv.getAttribute("aria-expanded") !== "true") fireEvent.click(adv)
     const badgePanel = screen.getByRole("tabpanel", { name: "ui.badgeSection" })
     const reset = within(badgePanel).getByRole("button", {
       name: "ui.reset · ui.posterShapeLandscape",

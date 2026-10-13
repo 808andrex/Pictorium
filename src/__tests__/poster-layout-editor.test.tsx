@@ -1,10 +1,17 @@
 /**
- * Task3: posterLayout (standard|fresh) client wiring.
+ * Task3: posterLayout (standard|fresh) client wiring (+ T1 unified per-title
+ * ranking presentation: ONE exclusive Nastro/Numero/Badge/Fresh/Card group in
+ * BadgeControls replaces the old separate layout card; Fresh entry resets
+ * only the genre/logo offsets of the edited shape, scales and every other
+ * recipe stay intact).
  * - Preview/default-preview/template builders carry explicit layout, while
  *   absent stays absent on template/legacy paths (existing standard URLs
  *   unchanged outside preview).
- * - Per-title selector (BadgeControls) is separate from the ranking style
- *   and never mutates badge/logo/transform settings.
+ * - Per-title presentation (BadgeControls) owns Nastro/Numero/Badge/Fresh/Card
+ *   over the existing stored fields: classic stages standard + its canonical
+ *   rank style, Fresh stages fresh+ranked with the enter-once offset reset,
+ *   Card stages the remembered skin + ranked. Scales/badge/logo provenance
+ *   are never rewritten by a presentation switch.
  * - Global defaults selector (BadgeDefaultsSection) is scoped per edit
  *   target: portrait writes the flat, landscape the profile override.
  * - Mapping dirty tracking compares the effective per-shape layout.
@@ -331,7 +338,7 @@ describe("mapping dirty tracks the effective per-shape layout", () => {
   })
 })
 
-describe("per-title layout selector (BadgeControls)", () => {
+describe("per-title unified ranking presentation (BadgeControls)", () => {
   function renderEditor() {
     const { Probe, ctx } = probe()
     renderWithCtx(
@@ -341,44 +348,79 @@ describe("per-title layout selector (BadgeControls)", () => {
     return { ctx }
   }
 
-  function layoutGroup(): HTMLElement {
-    // Distinct a11y group from the ranking appearance (ui.rankFamily).
-    return screen.getByRole("radiogroup", { name: "ui.posterLayout" })
+  function presentationGroup(): HTMLElement {
+    // Single exclusive group (replaces the old separate ui.posterLayout card
+    // and the legacy 3-choice rank group): exactly one radio checked.
+    return within(screen.getByTestId("ranking-presentation")).getByRole("radiogroup", { name: "ui.rankFamily" })
   }
 
-  it("renders Standard/Fresh separate from the ranking style", () => {
+  it("single exclusive 5-choice group, no separate layout card, no scope dropdown", () => {
     renderEditor()
-    const group = layoutGroup()
-    expect(within(group).getByRole("radio", { name: "ui.posterLayoutStandard" })).toHaveAttribute(
+    // The old separate layout card (and its scope dropdown) is gone.
+    expect(screen.queryByTestId("poster-layout-card")).toBeNull()
+    expect(screen.queryByRole("radiogroup", { name: "ui.posterLayout" })).toBeNull()
+    expect(screen.queryByTestId("fresh-scope-selector")).toBeNull()
+    expect(screen.queryByTestId("fresh-scope-select")).toBeNull()
+    const group = presentationGroup()
+    const options = within(group).getAllByRole("radio")
+    expect(options).toHaveLength(5)
+    for (const name of ["ui.ribbon", "ui.number", "ui.badgeSection", "ui.posterLayoutGroupedFresh", "ui.posterLayoutGroupedCard"]) {
+      expect(within(group).getByRole("radio", { name })).toBeInTheDocument()
+    }
+    // Seeded Standard+Nastro: exactly one checked (Nastro).
+    expect(options.filter((o) => o.getAttribute("aria-checked") === "true")).toHaveLength(1)
+    expect(within(group).getByRole("radio", { name: "ui.ribbon" })).toHaveAttribute(
       "aria-checked",
       "true",
     )
-    // The ranking appearance group is a different control.
-    expect(screen.getByRole("radiogroup", { name: "ui.rankFamily" })).not.toBe(group)
+    // Card skins stay hidden until Card is selected.
+    expect(screen.queryByTestId("poster-layout-skins")).toBeNull()
   })
 
-  it("switching to Fresh keeps badge/logo/transform settings intact", () => {
+  it("switching to Fresh stages fresh+ranked with the enter-once offset reset; scales intact, back is one-way", async () => {
     const { ctx } = renderEditor()
+    await act(async () => {
+      ctx().setGenreBadgeOffsetX(15)
+      ctx().setGenreBadgeOffsetY(-40)
+      ctx().setLogoOffsetX(12)
+      ctx().setLogoOffsetY(-40)
+      ctx().setLogoScale(75)
+    })
     const before = {
       badge: ctx().badgeStyle,
       rank: ctx().rankingBadgeStyle,
       ribbon: ctx().ribbonEnabled,
       logo: ctx().logoScale,
       top: ctx().topBadgeScale,
+      genreScale: ctx().genreBadgeScale,
     }
-    fireEvent.click(within(layoutGroup()).getByRole("radio", { name: "ui.posterLayoutFresh" }))
+    fireEvent.click(within(presentationGroup()).getByRole("radio", { name: "ui.posterLayoutGroupedFresh" }))
     expect(ctx().posterLayout).toBe("fresh")
+    expect(ctx().posterFreshScope).toBe("ranked")
+    // Enter-once reset: only the four offsets neutralized (per-title plain
+    // numbers, 0 = neutral).
+    expect(ctx().genreBadgeOffsetX).toBe(0)
+    expect(ctx().genreBadgeOffsetY).toBe(0)
+    expect(ctx().logoOffsetX).toBe(0)
+    expect(ctx().logoOffsetY).toBe(0)
+    // Scales, badge style, rank style and logo provenance untouched.
     expect(ctx().badgeStyle).toBe(before.badge)
     expect(ctx().rankingBadgeStyle).toBe(before.rank)
     expect(ctx().ribbonEnabled).toBe(before.ribbon)
     expect(ctx().logoScale).toBe(before.logo)
+    expect(ctx().logoScaleExplicit).toBe(true)
     expect(ctx().topBadgeScale).toBe(before.top)
-    // Switching back restores Standard without touching the rest.
+    expect(ctx().genreBadgeScale).toBe(before.genreScale)
+    // Switching back via Nastro restores Standard without restoring offsets.
     fireEvent.click(
-      within(layoutGroup()).getByRole("radio", { name: "ui.posterLayoutStandard" }),
+      within(presentationGroup()).getByRole("radio", { name: "ui.ribbon" }),
     )
     expect(ctx().posterLayout).toBe("standard")
-    expect(ctx().rankingBadgeStyle).toBe(before.rank)
+    expect(ctx().rankingBadgeStyle).toBe("netflix")
+    expect(ctx().genreBadgeOffsetX).toBe(0)
+    expect(ctx().genreBadgeOffsetY).toBe(0)
+    expect(ctx().logoOffsetX).toBe(0)
+    expect(ctx().logoOffsetY).toBe(0)
     expect(ctx().topBadgeScale).toBe(before.top)
   })
 
@@ -450,7 +492,9 @@ describe("global layout defaults scoped per edit target", () => {
         createElement(Probe),
       ),
     )
-    // The layout card lives in the style group (open); other groups stay shut.
+    // The layout card lives in the style group inside Advanced (both open).
+    const adv = screen.getByTestId("badge-advanced-toggle")
+    if (adv.getAttribute("aria-expanded") !== "true") fireEvent.click(adv)
     const t = screen.getByTestId("badge-group-style-toggle")
     if (t.getAttribute("aria-expanded") !== "true") fireEvent.click(t)
     return { ctx }

@@ -1,6 +1,7 @@
 import type { DefaultsState } from "./useDefaults"
 import { clearedExtraForPresetApply } from "./extra-materialize"
 import {
+  normalizePersonalPreset,
   PRESET_FLAT_TO_LANDSCAPE,
   resolveEffectiveLandscape,
   type VisualPresetValues,
@@ -44,11 +45,25 @@ import {
  * rank, keeps legacy URLs) — never materialized into explicit coordinates.
  * Explicit preset values always win.
  *
- * `extraBadgeStyle` audit: full presets carry no flat extra style (the key
- * predates the preset schema), so portrait NEVER writes it — a landscape-only
- * style from the preset's nested profile must not leak into the portrait
- * title. Landscape writes it only when the effective profile defines it
- * (absent = preserve the title's style, like the built-in applies).
+ * `extraBadgeStyle` audit: the portrait title owns its own extra-badge look
+ * (the mapping persists a flat `extraBadgeStyle`), so portrait writes the
+ * snapshot's own flat style verbatim — legacy `null`/omitted (which renders
+ * follow-own-rank) stays `null`, never the live title's tuned style.
+ * Landscape writes the effective profile style, canonically normalized so a
+ * legacy snapshot without a profile style owns the explicit follow-own-rank
+ * marker instead of inheriting the live title's look (absent = the marker,
+ * never preserved live — same canonical fallback as the global personal
+ * normalize, never the previous look).
+ *
+ * `posterLayout`/`posterFreshScope` audit: both persist per-title (flat +
+ * landscape profile, like the other shared visuals), so both shapes write
+ * the snapshot's own values verbatim — ready six resolve Standard, Fresh
+ * resolves fresh+ranked, personal resolves its stored recipe. Legacy
+ * snapshots without the keys resolve the canonical factory values
+ * (standard/ranked, same source as the global defaults) — never the live
+ * title's layout. `ageBadge`/`ageCountry`/`ageBadgeStyle` stay global-only:
+ * the mapping carries no age keys, so presets never project them here (no
+ * invented mapping contract; the chooser says so explicitly).
  *
  * Network follow: `null`/absent follow = inherit the title's current layer
  * (untouched). In landscape with a non-boolean follow, offsets are omitted
@@ -79,6 +94,8 @@ export type PerTitleVisualBareKey =
   | "badgeStyle"
   | "rankingBadgeStyle"
   | "extraBadgeStyle"
+  | "posterLayout"
+  | "posterFreshScope"
   | "badgeFont"
   | "qualityBadgeStyle"
   | "videoFormats"
@@ -218,7 +235,11 @@ export function projectPerTitleVisualPreset(
   }
 
   if (shape === "poster") {
-    const flat = values as unknown as Record<string, unknown>
+    // Canonical owned fill first (shared single truth with the global
+    // personal path): legacy snapshots without layout/scope/extra resolve
+    // the factory values — never the live title's look. Stored data is
+    // never rewritten (pure projection of a copy).
+    const flat = (normalizePersonalPreset(values) as unknown as Record<string, unknown>)
     // Mapped portrait flats via PRESET_FLAT_TO_LANDSCAPE (the map's
     // landscape names double as bare per-title keys): exclusions and
     // split-rule keys never enter the generic loop.
@@ -263,9 +284,16 @@ export function projectPerTitleVisualPreset(
       setBare("extraBadgeOffsetX", flat.defaultExtraBadgeOffsetX)
       setBare("extraBadgeOffsetY", flat.defaultExtraBadgeOffsetY)
     }
-    // NOTE: no `extraBadgeStyle` here by design (audit): presets carry no
-    // flat extra style, and the nested landscape profile's style is
-    // landscape-only — it must not leak into the portrait title.
+    // NOTE: no `ribbonSide` write above by design (no per-title
+    // persistence — save drops it, load forces the global default).
+    // Owned appearance flats (the preset map predates them): verbatim from
+    // the normalized snapshot — legacy `null`/filled-canonical (follow own
+    // rank / standard / ranked) wins over the live title, never inherits it.
+    // A nested landscape profile style never leaks in (portrait reads the
+    // flat only). Age stays global-only (no mapping keys — never projected).
+    setBare("extraBadgeStyle", flat.defaultExtraBadgeStyle)
+    setBare("posterLayout", flat.defaultPosterLayout)
+    setBare("posterFreshScope", flat.defaultPosterFreshScope)
     const logo = resolveLogoPatch(
       flat.defaultLogoScale as number | null | undefined,
       flat.defaultLogoOffsetX as number | null | undefined,
@@ -274,15 +302,19 @@ export function projectPerTitleVisualPreset(
     return { bare, logo, landscapeBlur: {} }
   }
   // Landscape: effective profile (explicit ?? flat), bare targets only.
+  // Normalized first (shared single truth): legacy snapshots without owned
+  // keys resolve the canonical factory values — never the live title — and
+  // an inheriting extra-style profile materializes the explicit
+  // follow-own-rank marker, so the edited landscape owns its full recipe.
   // `sashOrder` has no per-title target and is absent from the allowlist
-  // below by design (global-only). `extraBadgeStyle`/`network`/`extra`
-  // tuning/gradient/logo follow in their own rules underneath.
-  const eff = resolveEffectiveLandscape(values) as unknown as Record<string, unknown>
+  // below by design (global-only). Age stays global-only (no mapping keys).
+  const eff = resolveEffectiveLandscape(normalizePersonalPreset(values)) as unknown as Record<string, unknown>
   const effBare: PerTitleVisualBareKey[] = [
     "globalBadges", "rankingBadges",
     "badgeGenre", "badgeYear", "badgeRating", "badgeQuality",
     "customRatings", "separateRatings", "separateRatingsStyle",
     "badgeStyle", "rankingBadgeStyle",
+    "posterLayout", "posterFreshScope",
     "badgeFont", "qualityBadgeStyle", "videoFormats",
     "networkLogo", "networkLogoPosition",
     "preRelease", "ribbonEnabled",
@@ -295,8 +327,9 @@ export function projectPerTitleVisualPreset(
   for (const key of effBare) {
     setBare(key, eff[key])
   }
-  // Effective extra style only when the profile defines it (absent =
-  // preserve the title's style; the resolver never emits inherit-nulls).
+  // Effective extra style (always defined after the canonical normalize:
+  // explicit profile wins, a concrete stored flat materializes, legacy
+  // owns the follow-own-rank marker) — verbatim, never the live title.
   if (eff.extraBadgeStyle !== undefined) setBare("extraBadgeStyle", eff.extraBadgeStyle)
   // Network layer: boolean follow only; without it the whole layer is
   // inherited (offsets omitted too). Absent effective coords (flat fixed

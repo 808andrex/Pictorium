@@ -25,13 +25,17 @@ import { useNetworkFreeze } from "@/lib/useNetworkFreeze"
 import { useNetworkGeometry } from "@/lib/useNetworkGeometry"
 import { buildDefaultsPreviewUrlFromEditor } from "@/components/settings/DefaultsPosterPreview"
 import type { DefaultsPreviewDemoMedia, DefaultsPreviewFamily } from "@/lib/poster-url"
+import type { PosterElementId } from "@/components/settings/PosterElementNavigation"
 import { SliderRow } from "@/components/SliderRow"
 import { Toggle } from "@/components/Toggle"
 import { separateBadgeScaleToUI, uiToSeparateBadgeScale, SEPARATE_BADGE_SCALE_UI_MIN, SEPARATE_BADGE_SCALE_UI_MAX, NUMBER_BADGE_BASE_OFFSET_X } from "@/lib/badge-styles"
 import { getBadgeOffsetRange } from "@/lib/badge-offset-ranges"
+import { isCardSkin } from "@/lib/card-layout-skins"
+import { effectiveShapeDefaultLayout, effectiveShapeDefaultFreshScope } from "@/lib/poster-layout-resolve"
 import { GradientPresetRow } from "@/components/GradientPresetRow"
 import type { GradientPresetValues } from "@/lib/gradient-presets"
 import type { LandscapeServerDefaults } from "@/lib/server-defaults"
+import { AvailabilityGate, isExtraStyleActive, isGenreStyleActive, isQualityStyleActive, isRankStyleActive, orderActiveFirst, type EffectiveBadgeFlags } from "@/components/settings/SettingsElementAvailability"
 
 
 interface Props {
@@ -50,6 +54,17 @@ interface Props {
   /** True while this section is actually shown (Transform tab + landscape
    *  target): the geometry prefetch only runs then, never per slider tick. */
   controlsVisible?: boolean
+  /** Unified workspace element filter: groups for other elements stay
+   *  mounted + hidden. Absent = legacy full behavior. */
+  element?: PosterElementId | null
+  /**
+   * Geometry-only presentation (five-tab settings): a Position card hosts
+   * the landscape network-position override moved from the Badge tab
+   * (title-logo alignment is Auto-only, no selector); gated-off groups
+   * render a compact inactive placeholder with a short activate hint.
+   * Absent = legacy standalone behavior unchanged.
+   */
+  geometryOnly?: boolean
 }
 
 type LandKey = keyof LandscapeServerDefaults
@@ -67,7 +82,7 @@ type LandKey = keyof LandscapeServerDefaults
  * Nessun parametro URL/chiave cache: il server risolve dal profilo salvato
  * (già coperto da firma defaults e sd-hash).
  */
-export function LandscapeDefaultsSection({ editVal, editTxt, setEditVal, setEditTxt, onPreviewFamilyChange, demoMedia, previewFamily, controlsVisible }: Props) {
+export function LandscapeDefaultsSection({ editVal, editTxt, setEditVal, setEditTxt, onPreviewFamilyChange, demoMedia, previewFamily, controlsVisible, element, geometryOnly }: Props) {
   const { t, lang } = useT()
   const ed = usePosterEditor()
   const land = ed.landscape
@@ -90,6 +105,18 @@ export function LandscapeDefaultsSection({ editVal, editTxt, setEditVal, setEdit
     onFocusCapture: () => onPreviewFamilyChange?.(family),
     onPointerDownCapture: () => onPreviewFamilyChange?.(family),
   })
+  // Unified workspace filter (same contract as TransformPanel): null shows
+  // everything (legacy). Ratings and sources share the separate geometry.
+  const hideFor = (...els: PosterElementId[]): boolean | undefined =>
+    element ? !els.includes(element) : undefined
+  const hideForScaleFamily = (family: DefaultsPreviewFamily): boolean | undefined =>
+    family === "rank" ? hideFor("rank")
+    : family === "info" ? hideFor("info")
+    : family === "extra" ? hideFor("info")
+    : family === "genre" ? hideFor("genre")
+    : family === "quality" ? hideFor("quality")
+    : family === "logo" ? hideFor("logo")
+    : hideFor("background")
   // Landscape network follow ("Follow the title logo", default ON): same
   // freeze as the portrait card, on the landscape defaults-preview URL (same
   // builder, same sample) + netgeo=1. OFF locks actual top/left + effective
@@ -192,6 +219,17 @@ export function LandscapeDefaultsSection({ editVal, editTxt, setEditVal, setEdit
     (land.globalBadges ?? ed.defaultGlobalBadges) &&
     (land.badgeRating ?? ed.defaultBadgeRating) &&
     (land.separateRatings ?? ed.defaultSeparateRatings)
+  // Card truth for the landscape target (`land ?? flat` inheritance for
+  // BOTH layout and scope): geometry locks apply ONLY when the effective
+  // landscape Card skin is selected with effective scope "all". Ranked
+  // (explicit, absent or invalid) leaves Standard fallback positioning
+  // live. Explicit landscape scope wins, else the flat scope is inherited.
+  const effLandLayout = effectiveShapeDefaultLayout(ed.defaultPosterLayout, land, "landscape")
+  const effLandScope = effectiveShapeDefaultFreshScope(ed.defaultPosterFreshScope, land, "landscape")
+  const isCardAllLand = isCardSkin(effLandLayout) && effLandScope === "all"
+  const isCardRankedLand = isCardSkin(effLandLayout) && !isCardAllLand
+  const landCardNote = isCardAllLand ? t("ui.posterLayoutCardControlsNote") : undefined
+  const landFallbackNote = isCardRankedLand ? t("ui.posterLayoutCardFallbackNote") : undefined
 
   const applyPreset = (v: GradientPresetValues) => {
     set({
@@ -245,8 +283,9 @@ export function LandscapeDefaultsSection({ editVal, editTxt, setEditVal, setEdit
     prefix: string,
     family: DefaultsPreviewFamily,
     followKey?: Extract<LandKey, "networkLogoFollowTitle">,
+    cardLock?: "all" | "offsets" | "follow-offsets",
   ) => (
-    <div {...famAttrs(family)} className="space-y-1.5">
+    <div {...famAttrs(family)} hidden={hideForScaleFamily(family)} className="space-y-1.5">
       <div className="flex items-center justify-between px-1">
         <span className="font-semibold text-zinc-200 flex items-center gap-1.5">
           {icon}
@@ -265,16 +304,19 @@ export function LandscapeDefaultsSection({ editVal, editTxt, setEditVal, setEdit
         )}
       </div>
       {followKey && (
-        <div className="flex items-center justify-between px-1 gap-2">
+        <div className="flex items-center justify-between px-1 gap-2" title={followKey && cardLock ? landCardNote : (followKey && isCardRankedLand ? landFallbackNote : undefined)}>
           <span className="text-zinc-300">{t("ui.followTitleLogo")}</span>
           <Toggle
             value={landFollowOn}
             onChange={handleLandscapeFollowChange}
             label={t("ui.followTitleLogo")}
-            disabled={netFreezing || (landFollowOn && followOffDisabled)}
+            disabled={(cardLock ? true : false) || netFreezing || (landFollowOn && followOffDisabled)}
           />
         </div>
       )}
+      {cardLock === "all" ? (
+        <div title={landCardNote ?? undefined}>
+        <fieldset disabled className="contents">
       <SliderRow
         icon={<Search className="w-3.5 h-3.5" />}
         label={t("ui.scale")}
@@ -292,6 +334,30 @@ export function LandscapeDefaultsSection({ editVal, editTxt, setEditVal, setEdit
         editingKey={`${prefix}Scale`}
         suffix="%"
       />
+        </fieldset>
+        </div>
+      ) : (
+      <SliderRow
+        icon={<Search className="w-3.5 h-3.5" />}
+        label={t("ui.scale")}
+        value={land[sKey] ?? flatS}
+        min={50}
+        max={150}
+        boundsMin={10}
+        boundsMax={200}
+        onChange={(v) => set({ [sKey]: v } as Partial<LandscapeServerDefaults>)}
+        onDoubleClick={() => clear(sKey)}
+        editingValue={editVal}
+        editText={editTxt}
+        setEditingValue={setEditVal}
+        setEditText={setEditTxt}
+        editingKey={`${prefix}Scale`}
+        suffix="%"
+      />
+      )}
+      {cardLock ? (
+      <div title={landCardNote ?? undefined}>
+      <fieldset disabled className="contents">
       {(() => {
         // Effective rank style for the landscape target: the profile
         // override wins, else the portrait flat (styles are independent per
@@ -351,8 +417,217 @@ export function LandscapeDefaultsSection({ editVal, editTxt, setEditVal, setEdit
         editingKey={`${prefix}OY`}
         suffix="px"
       />
+      </fieldset>
+      </div>
+      ) : null}
+      {!cardLock && (() => {
+        // Effective rank style (live branch): same presentation mapping as
+        // the locked branch above, never a second derivation.
+        const landRankStyle = land.rankingBadgeStyle ?? ed.defaultRankingBadgeStyle
+        const numBase =
+          xKey === "topBadgeOffsetX" && landRankStyle === "number"
+            ? NUMBER_BADGE_BASE_OFFSET_X
+            : 0
+        const storedX = followKey
+          ? (netView.follow ? netView.relativeX : (netView.fixedX ?? flatX))
+          : (land[xKey] ?? flatX)
+        const effX = storedX + numBase
+        return (
+          <SliderRow
+            icon={<ArrowLeftRight className="w-3.5 h-3.5" />}
+            label="X"
+            value={effX}
+            min={landOffRangeX.min + numBase}
+            max={landOffRangeX.max + numBase}
+            boundsMin={landOffRangeX.boundsMin + numBase}
+            boundsMax={landOffRangeX.boundsMax + numBase}
+            step={1}
+            onChange={(v) => set({ [xKey]: v - numBase } as Partial<LandscapeServerDefaults>)}
+            onDoubleClick={() => clear(xKey)}
+            editingValue={editVal}
+            editText={editTxt}
+            setEditingValue={setEditVal}
+            setEditText={setEditTxt}
+            editingKey={`${prefix}OX`}
+            suffix="px"
+          />
+        )
+      })()}
+      {!cardLock && (
+      <SliderRow
+        icon={<ArrowUpDown className="w-3.5 h-3.5" />}
+        label="Y"
+        value={followKey ? (netView.follow ? netView.relativeY : (netView.fixedY ?? flatY)) : (land[yKey] ?? flatY)}
+        min={landOffRangeY.min}
+        max={landOffRangeY.max}
+        boundsMin={landOffRangeY.boundsMin}
+        boundsMax={landOffRangeY.boundsMax}
+        step={1}
+        onChange={(v) => set({ [yKey]: v } as Partial<LandscapeServerDefaults>)}
+        onDoubleClick={() => clear(yKey)}
+        editingValue={editVal}
+        editText={editTxt}
+        setEditingValue={setEditVal}
+        setEditText={setEditTxt}
+        editingKey={`${prefix}OY`}
+        suffix="px"
+      />
+      )}
+      {cardLock && (
+        <p className="text-[10px] text-muted italic leading-tight px-1">{t("ui.posterLayoutCardControlsNote")}</p>
+      )}
+      {!cardLock && isCardRankedLand && (prefix === "lst" || prefix === "lsg" || prefix === "lsn") && (
+        <p className="text-[10px] text-muted italic leading-tight px-1">{t("ui.posterLayoutCardFallbackNote")}</p>
+      )}
     </div>
   )
+
+  // Effective geometry groups (five-tab settings): gated scale groups in
+  // active-first DOM order with retained disabled controls. Legacy path
+  // below stays byte-identical (standalone reuse/tests). Deferred render:
+  // scaleGroup stays pure, invoked only in the mounted branch.
+  const renderSortedGroups = () => {
+    const effLandFlags: EffectiveBadgeFlags = {
+      globalBadges: land.globalBadges ?? ed.defaultGlobalBadges,
+      badgeGenre: land.badgeGenre ?? ed.defaultBadgeGenre,
+      badgeYear: land.badgeYear ?? ed.defaultBadgeYear,
+      badgeRating: land.badgeRating ?? ed.defaultBadgeRating,
+      separateRatings: land.separateRatings ?? ed.defaultSeparateRatings,
+      separateRatingsStyle: land.separateRatingsStyle ?? ed.defaultSeparateRatingsStyle,
+      rankingBadges: land.rankingBadges ?? ed.defaultRankingBadges,
+      sashOrder: land.sashOrder ?? ed.defaultSashOrder,
+      badgeQuality: land.badgeQuality ?? ed.defaultBadgeQuality,
+      networkLogo: land.networkLogo ?? ed.defaultNetworkLogo,
+      preRelease: land.preRelease ?? ed.defaultPreRelease,
+    }
+    const groups: { key: string; active: boolean; hidden: boolean | undefined; name: string; node: React.ReactNode; testId: string }[] = [
+      {
+        key: "rank", active: isRankStyleActive(effLandFlags), hidden: hideFor("rank"),
+        name: t("ui.rankFamily"), testId: "landscape-geo-rank",
+        node: scaleGroup(t("ui.rankFamily"), <Trophy className="w-3.5 h-3.5 text-amber-500" />, "topBadgeScale", "topBadgeOffsetX", "topBadgeOffsetY", ed.defaultTopBadgeScale, ed.defaultTopBadgeOffsetX, ed.defaultTopBadgeOffsetY, "lst", "rank", undefined, isCardAllLand ? "all" : undefined),
+      },
+      {
+        key: "extra", active: isExtraStyleActive(effLandFlags), hidden: hideFor("info"),
+        name: t("ui.sash_extra"), testId: "landscape-geo-extra",
+        node: scaleGroup(t("ui.sash_extra"), <Sparkles className="w-3.5 h-3.5 text-emerald-400" />, "extraBadgeScale", "extraBadgeOffsetX", "extraBadgeOffsetY", ed.defaultExtraBadgeScale ?? land.topBadgeScale ?? ed.defaultTopBadgeScale, ed.defaultExtraBadgeOffsetX ?? land.topBadgeOffsetX ?? ed.defaultTopBadgeOffsetX, ed.defaultExtraBadgeOffsetY ?? land.topBadgeOffsetY ?? ed.defaultTopBadgeOffsetY, "lse", "info"),
+      },
+      {
+        key: "genre", active: isGenreStyleActive(effLandFlags), hidden: hideFor("genre"),
+        name: t("ui.genreRatingBadge"), testId: "landscape-geo-genre",
+        node: scaleGroup(t("ui.genreRatingBadge"), <Star className="w-3.5 h-3.5 text-amber-400" />, "genreBadgeScale", "genreBadgeOffsetX", "genreBadgeOffsetY", ed.defaultGenreBadgeScale, ed.defaultGenreBadgeOffsetX, ed.defaultGenreBadgeOffsetY, "lsg", "genre", undefined, isCardAllLand ? "offsets" : undefined),
+      },
+      {
+        key: "quality", active: isQualityStyleActive(effLandFlags), hidden: hideFor("quality"),
+        name: t("ui.badgeQuality"), testId: "landscape-geo-quality",
+        node: scaleGroup(t("ui.badgeQuality"), <Sparkles className="w-3.5 h-3.5 text-purple-400" />, "qualityBadgeScale", "qualityBadgeOffsetX", "qualityBadgeOffsetY", ed.defaultQualityBadgeScale, ed.defaultQualityBadgeOffsetX, ed.defaultQualityBadgeOffsetY, "lsq", "quality"),
+      },
+      {
+        key: "separate", active: effSepGate, hidden: hideFor("ratings", "sources"),
+        name: t("ui.separateRatings"), testId: "landscape-geo-separate",
+        node: (
+          <div {...famAttrs("ratings")} className="space-y-1.5">
+            <div className="flex items-center justify-between px-1">
+              <span className="font-semibold text-zinc-200 flex items-center gap-1.5">
+                <Star className="w-3.5 h-3.5 text-amber-400" />
+                {t("ui.separateRatings")}
+              </span>
+              {(isOver("separateBadgeScale") || isOver("separateBadgeOffsetX") || isOver("separateBadgeOffsetY")) && (
+                <button
+                  type="button"
+                  title={resetLabel}
+                  aria-label={resetLabel}
+                  onClick={() => set({ separateBadgeScale: undefined, separateBadgeOffsetX: undefined, separateBadgeOffsetY: undefined })}
+                  className="text-xs text-muted hover:text-accent transition-colors px-2 py-0.5 rounded-md border border-border/50 hover:border-accent/30 cursor-pointer"
+                >
+                  {resetLabel}
+                </button>
+              )}
+            </div>
+            <SliderRow
+              icon={<Search className="w-3.5 h-3.5" />}
+              label={t("ui.scale")}
+              value={separateBadgeScaleToUI(land.separateBadgeScale ?? ed.defaultSeparateBadgeScale)}
+              min={50}
+              max={150}
+              boundsMin={SEPARATE_BADGE_SCALE_UI_MIN}
+              boundsMax={SEPARATE_BADGE_SCALE_UI_MAX}
+              onChange={(v) => set({ separateBadgeScale: uiToSeparateBadgeScale(v) })}
+              onDoubleClick={() => clear("separateBadgeScale")}
+              editingValue={editVal}
+              editText={editTxt}
+              setEditingValue={setEditVal}
+              setEditText={setEditTxt}
+              editingKey="lssepsScale"
+              suffix="%"
+            />
+            <SliderRow
+              icon={<ArrowLeftRight className="w-3.5 h-3.5" />}
+              label="X"
+              value={land.separateBadgeOffsetX ?? ed.defaultSeparateBadgeOffsetX}
+              min={landOffRangeX.min}
+              max={landOffRangeX.max}
+              boundsMin={landOffRangeX.boundsMin}
+              boundsMax={landOffRangeX.boundsMax}
+              step={1}
+              onChange={(v) => set({ separateBadgeOffsetX: v })}
+              onDoubleClick={() => clear("separateBadgeOffsetX")}
+              editingValue={editVal}
+              editText={editTxt}
+              setEditingValue={setEditVal}
+              setEditText={setEditTxt}
+              editingKey="lssepsOX"
+              suffix="px"
+            />
+            <SliderRow
+              icon={<ArrowUpDown className="w-3.5 h-3.5" />}
+              label="Y"
+              value={land.separateBadgeOffsetY ?? ed.defaultSeparateBadgeOffsetY}
+              min={landOffRangeY.min}
+              max={landOffRangeY.max}
+              boundsMin={landOffRangeY.boundsMin}
+              boundsMax={landOffRangeY.boundsMax}
+              step={1}
+              onChange={(v) => set({ separateBadgeOffsetY: v })}
+              onDoubleClick={() => clear("separateBadgeOffsetY")}
+              editingValue={editVal}
+              editText={editTxt}
+              setEditingValue={setEditVal}
+              setEditText={setEditTxt}
+              editingKey="lssepsOY"
+              suffix="px"
+            />
+          </div>
+        ),
+      },
+      {
+        key: "network", active: landNetworkOn, hidden: hideFor("logo"),
+        name: t("ui.networkLogo"), testId: "landscape-geo-network",
+        node: scaleGroup(t("ui.networkLogo"), <Tv className="w-3.5 h-3.5 text-sky-400" />, "networkLogoScale", "networkLogoOffsetX", "networkLogoOffsetY", ed.defaultNetworkLogoScale, ed.defaultNetworkLogoOffsetX, ed.defaultNetworkLogoOffsetY, "lsn", "logo", "networkLogoFollowTitle", isCardAllLand ? "follow-offsets" : undefined),
+      },
+    ]
+    // Inactive elements stay completely hidden (user request supersedes the
+    // legacy disabled-gate disclosure): enabling in Information/Rankings
+    // immediately exposes the applicable geometry; staged values live in the
+    // editor context so hiding never resets them.
+    const ordered = orderActiveFirst(groups.filter((g) => g.active).map((g) => ({ active: g.active, value: g })))
+    return (
+      <>
+        {ordered.map((g, i) => (
+          <div key={g.key} hidden={g.hidden}>
+            <AvailabilityGate
+              active
+              name={g.name}
+              hint=""
+              testId={g.testId}
+            >
+              {g.node}
+            </AvailabilityGate>
+            {i < ordered.length - 1 && <hr className="border-surface2/50 mt-3" />}
+          </div>
+        ))}
+      </>
+    )
+  }
 
   return (
     <div className="space-y-3.5">
@@ -364,7 +639,7 @@ export function LandscapeDefaultsSection({ editVal, editTxt, setEditVal, setEdit
           piatta): Fresh 10..200, Standard 10..100 invariato. L'auto mostrato
           segue lo scope effettivo (`land ?? flat`): Fresh-all = 100,
           altrimenti il flat esplicito o 75 (fallback Standard, mai baked). */}
-      <div {...famAttrs("logo")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-1.5 shadow-sm animate-fade-in">
+      <div {...famAttrs("logo")} hidden={hideFor("logo")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-1.5 shadow-sm animate-fade-in">
         <div className="flex items-center justify-between px-1">
           <span className="font-semibold text-zinc-200 flex items-center gap-1.5">
             <ImageIcon className="w-3.5 h-3.5 text-accent-orange" />
@@ -412,6 +687,8 @@ export function LandscapeDefaultsSection({ editVal, editTxt, setEditVal, setEdit
         />
           )
         })()}
+        <div title={isCardAllLand ? landCardNote : (isCardRankedLand ? landFallbackNote : undefined)} aria-disabled={isCardAllLand || undefined}>
+        <fieldset disabled={isCardAllLand} className="contents">
         <SliderRow
           icon={<ArrowLeftRight className="w-3.5 h-3.5" />}
           label="X"
@@ -448,22 +725,81 @@ export function LandscapeDefaultsSection({ editVal, editTxt, setEditVal, setEdit
           editingKey="lslogoOY"
           suffix="px"
         />
+        </fieldset>
+        </div>
+        {isCardAllLand && (
+          <p className="text-[10px] text-muted italic leading-tight px-1">{t("ui.posterLayoutCardControlsNote")}</p>
+        )}
+        {isCardRankedLand && (
+          <p className="text-[10px] text-muted italic leading-tight px-1">{t("ui.posterLayoutCardFallbackNote")}</p>
+        )}
       </div>
 
+      {/* Network position override (moved home from the Badge tab):
+          title-logo alignment is Auto-only (no selector). Reset follows the
+          flat. Rendered only while the network logo is enabled — never an
+          empty Position card. */}
+      {geometryOnly && landNetworkOn && (
+      <div className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-2.5 shadow-sm animate-fade-in">
+        <div className="flex items-center justify-between px-1">
+          <span className="font-semibold text-zinc-200">{t("ui.position")}</span>
+          {isOver("networkLogoPosition") && (
+            <button
+              type="button"
+              title={resetLabel}
+              aria-label={resetLabel}
+              onClick={() => set({ networkLogoPosition: undefined })}
+              className="text-xs text-muted hover:text-accent transition-colors px-2 py-0.5 rounded-md border border-border/50 hover:border-accent/30 cursor-pointer"
+            >
+              {resetLabel}
+            </button>
+          )}
+        </div>
+        <div className="space-y-1.5" title={t("ui.networkLogoPosition")} data-testid="landscape-netpos-group">
+          <span className="text-[11px] text-muted font-medium block">{t("ui.networkLogoPosition")}</span>
+          <div className="flex gap-1">
+            {(["auto", "top"] as const).map((pos) => (
+              <button
+                key={pos}
+                type="button"
+                onClick={() => set({ networkLogoPosition: pos })}
+                aria-pressed={(land.networkLogoPosition ?? ed.defaultNetworkLogoPosition) === pos}
+                className={`flex-1 py-1 rounded-lg text-[11px] font-semibold transition-all duration-150 cursor-pointer ${
+                  (land.networkLogoPosition ?? ed.defaultNetworkLogoPosition) === pos
+                    ? "bg-white/20 text-foreground shadow-sm"
+                    : "bg-white/5 text-muted hover:bg-white/10 hover:text-zinc-200"
+                }`}
+              >
+                {pos === "auto" ? t("ui.auto") : t("ui.networkLogoPositionTop")}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+      )}
       {/* Stesso ordine del Verticale: badge classifica, extra, genere,
           qualità, network — sfumatura per ultima. */}
       <div className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-3 shadow-sm">
-        {scaleGroup(t("ui.rankFamily"), <Trophy className="w-3.5 h-3.5 text-amber-500" />, "topBadgeScale", "topBadgeOffsetX", "topBadgeOffsetY", ed.defaultTopBadgeScale, ed.defaultTopBadgeOffsetX, ed.defaultTopBadgeOffsetY, "lst", "rank")}
-        <hr className="border-surface2/50" />
+        {geometryOnly ? renderSortedGroups() : (
+        <>
+        {scaleGroup(t("ui.rankFamily"), <Trophy className="w-3.5 h-3.5 text-amber-500" />, "topBadgeScale", "topBadgeOffsetX", "topBadgeOffsetY", ed.defaultTopBadgeScale, ed.defaultTopBadgeOffsetX, ed.defaultTopBadgeOffsetY, "lst", "rank", undefined, isCardAllLand ? "all" : undefined)}
+        <hr hidden={hideFor("rank") && hideFor("info")} className="border-surface2/50" />
         {scaleGroup(t("ui.sash_extra"), <Sparkles className="w-3.5 h-3.5 text-emerald-400" />, "extraBadgeScale", "extraBadgeOffsetX", "extraBadgeOffsetY", ed.defaultExtraBadgeScale ?? land.topBadgeScale ?? ed.defaultTopBadgeScale, ed.defaultExtraBadgeOffsetX ?? land.topBadgeOffsetX ?? ed.defaultTopBadgeOffsetX, ed.defaultExtraBadgeOffsetY ?? land.topBadgeOffsetY ?? ed.defaultTopBadgeOffsetY, "lse", "info")}
-        <hr className="border-surface2/50" />
-        {scaleGroup(t("ui.genreRatingBadge"), <Star className="w-3.5 h-3.5 text-amber-400" />, "genreBadgeScale", "genreBadgeOffsetX", "genreBadgeOffsetY", ed.defaultGenreBadgeScale, ed.defaultGenreBadgeOffsetX, ed.defaultGenreBadgeOffsetY, "lsg", "genre")}
-        <hr className="border-surface2/50" />
+        <hr hidden={hideFor("info") && hideFor("genre")} className="border-surface2/50" />
+        {scaleGroup(t("ui.genreRatingBadge"), <Star className="w-3.5 h-3.5 text-amber-400" />, "genreBadgeScale", "genreBadgeOffsetX", "genreBadgeOffsetY", ed.defaultGenreBadgeScale, ed.defaultGenreBadgeOffsetX, ed.defaultGenreBadgeOffsetY, "lsg", "genre", undefined, isCardAllLand ? "offsets" : undefined)}
+        <hr hidden={hideFor("genre") && hideFor("quality")} className="border-surface2/50" />
         {scaleGroup(t("ui.badgeQuality"), <Sparkles className="w-3.5 h-3.5 text-purple-400" />, "qualityBadgeScale", "qualityBadgeOffsetX", "qualityBadgeOffsetY", ed.defaultQualityBadgeScale, ed.defaultQualityBadgeOffsetX, ed.defaultQualityBadgeOffsetY, "lsq", "quality")}
+        {!effSepGate && geometryOnly && (
+          <p data-testid="landscape-separate-inactive" className="text-[11px] text-zinc-400 italic px-1">{t("ui.activateInTabHint", { name: t("ui.separateRatings"), tab: t("ui.settingsTabInformation") })}</p>
+        )}
+        {/* Standalone and geometryOnly share the same effective separate
+            gate as the Badge tab and the preview (`land ?? flat`): inactive
+            numerics stay hidden (stored overrides preserved, master toggles
+            live in the Badge tab), never a root-leak. */}
         {effSepGate && (
           <>
-            <hr className="border-surface2/50" />
-            <div {...famAttrs("ratings")} className="space-y-1.5">
+            <hr hidden={hideFor("quality") && hideFor("ratings", "sources")} className="border-surface2/50" />
+            <div {...famAttrs("ratings")} hidden={hideFor("ratings", "sources")} className="space-y-1.5">
               <div className="flex items-center justify-between px-1">
                 <span className="font-semibold text-zinc-200 flex items-center gap-1.5">
                   <Star className="w-3.5 h-3.5 text-amber-400" />
@@ -537,15 +873,23 @@ export function LandscapeDefaultsSection({ editVal, editTxt, setEditVal, setEdit
             </div>
           </>
         )}
-        {landNetworkOn && (
+        {!landNetworkOn && geometryOnly && (
+          <p data-testid="landscape-network-inactive" className="text-[11px] text-zinc-400 italic px-1">{t("ui.activateInTabHint", { name: t("ui.networkLogo"), tab: t("ui.settingsTabInformation") })}</p>
+        )}
+        {/* Standalone (non-geometryOnly) keeps the legacy always-rendered
+            network group: the effective gate applies to the geometryOnly
+            presentation only, never a legacy behavior change. */}
+        {(!geometryOnly || landNetworkOn) && (
           <>
-            <hr className="border-surface2/50" />
-            {scaleGroup(t("ui.networkLogo"), <Tv className="w-3.5 h-3.5 text-sky-400" />, "networkLogoScale", "networkLogoOffsetX", "networkLogoOffsetY", ed.defaultNetworkLogoScale, ed.defaultNetworkLogoOffsetX, ed.defaultNetworkLogoOffsetY, "lsn", "logo", "networkLogoFollowTitle")}
+            <hr hidden={hideFor("logo") || (hideFor("rank") && hideFor("info") && hideFor("genre") && hideFor("quality") && hideFor("ratings", "sources"))} className="border-surface2/50" />
+            {scaleGroup(t("ui.networkLogo"), <Tv className="w-3.5 h-3.5 text-sky-400" />, "networkLogoScale", "networkLogoOffsetX", "networkLogoOffsetY", ed.defaultNetworkLogoScale, ed.defaultNetworkLogoOffsetX, ed.defaultNetworkLogoOffsetY, "lsn", "logo", "networkLogoFollowTitle", isCardAllLand ? "follow-offsets" : undefined)}
           </>
+        )}
+        </>
         )}
       </div>
 
-      <div {...famAttrs("gradient")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-2.5 shadow-sm">
+      <div {...famAttrs("gradient")} hidden={hideFor("background")} className="bg-surface/50 border border-surface2/60 rounded-xl p-3.5 space-y-2.5 shadow-sm">
         <div className="flex items-center justify-between">
           <span className="text-zinc-200 font-semibold flex items-center gap-1.5">
             <Cloud className="w-3.5 h-3.5 text-cyan-400" />

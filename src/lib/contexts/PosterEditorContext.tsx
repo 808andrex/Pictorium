@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useState, useMemo, useCallback } from "react"
 import type { TMDBImage, NetworkLogoPosition, PosterLayout, PosterFreshScope, PosterShape } from "@/lib/types"
-import { useDefaults, type DefaultSyncStatus, type DefaultsState } from "@/lib/useDefaults"
+import { useDefaults, type DefaultSyncStatus, type DefaultsState, type StagedSaveResult } from "@/lib/useDefaults"
 import type { LandscapeServerDefaults } from "@/lib/server-defaults"
 import type { DateFormat } from "@/lib/release-badge"
 import type { BadgeStyle, RankingBadgeStyle, ExtraBadgeStyle, ExtraBadgeFollowRank, QualityBadgeStyle, BadgeFont, SeparateRatingsStyle } from "@/lib/badge-styles"
@@ -49,7 +49,7 @@ export const LANDSCAPE_BLUR_DEFAULTS: LandscapeBlurState = {
   blurFade: 70,
   blurDarkness: 30,
   tintStrength: 20,
-  topShade: 50,
+  topShade: 80,
 }
 
 export interface PosterEditorCtx {
@@ -336,6 +336,13 @@ export interface PosterEditorCtx {
   defaultSyncStatus: DefaultSyncStatus
   /** Immediate server retry of the current defaults payload (single PUT). */
   retryDefaultSync: () => Promise<boolean>
+  /**
+   * Authoritative explicit staged save (settings draft foundation): one PUT
+   * of the exact staged default fields via the useDefaults sequence/status
+   * machinery, no auto-effect duplicate. Failure leaves outer defaults and
+   * durable storage unchanged.
+   */
+  saveStagedDefaults: (staged: DefaultsState) => Promise<StagedSaveResult>
 
   // ---- Blur ----
   blurEnabled: boolean
@@ -564,7 +571,7 @@ export function PosterEditorProvider({
     region, defaultRegion, defaultDateFormat,
     loadDefaultsToState, update,
   } = defaults
-  const { defaultSyncStatus, retryDefaultSync } = defaults
+  const { defaultSyncStatus, retryDefaultSync, saveStagedDefaults } = defaults
 
   const setGlobalBadges = useCallback(
     (v: boolean | ((prev: boolean) => boolean)) => {
@@ -1418,9 +1425,19 @@ export function PosterEditorProvider({
       // baked; Standard = single source logoDefaultScale, fallback 75).
       // Never preserve the live scale. Auto marks provenance (preview
       // sentinel, save null); explicit marks explicit.
+      // The auto scale resolves against the APPLIED layout/scope (the staged
+      // bare values when the preset owns them), never the live pre-apply
+      // pair — otherwise applying Fresh to a Standard title (or back) would
+      // bake the outgoing look's scale while the staged recipe says otherwise.
       if (projection.logo.scale === null) {
+        const appliedLayout = typeof projection.bare.posterLayout === "string"
+          ? projection.bare.posterLayout
+          : posterLayout
+        const appliedScope = typeof projection.bare.posterFreshScope === "string"
+          ? projection.bare.posterFreshScope
+          : posterFreshScope
         setLogoScale(
-          logoEffectiveAutoScale(logo, { posterLayout, posterFreshScope, displayedRank: null }),
+          logoEffectiveAutoScale(logo, { posterLayout: appliedLayout, posterFreshScope: appliedScope, displayedRank: null }),
           { auto: true },
         )
       } else {
@@ -1763,6 +1780,7 @@ export function PosterEditorProvider({
       loadDefaultsToState,
       defaultSyncStatus,
       retryDefaultSync,
+      saveStagedDefaults,
 
       // Blur
       blurEnabled,
@@ -1991,7 +2009,7 @@ export function PosterEditorProvider({
       landscapeDefaults, setLandscape, resetLandscape,
       defaultLogoAlign, setDefaultLogoAlign,
       loadDefaultsToState, applyVisualPreset, applyPerTitleVisualPreset, resetPerTitleVisuals,
-      defaultSyncStatus, retryDefaultSync,
+      defaultSyncStatus, retryDefaultSync, saveStagedDefaults,
 
       // Blur
       blurEnabled, setBlurEnabled,
@@ -2061,4 +2079,23 @@ export function PosterEditorProvider({
   )
 
   return <Ctx.Provider value={editorCtx}>{children}</Ctx.Provider>
+}
+
+/**
+ * Value-only PosterEditor override (settings draft foundation): merges a
+ * partial value over the outer provider WITHOUT creating a nested real
+ * provider (no useDefaults, no state, no persistence). Used to preview
+ * staged settings drafts through the existing settings UI.
+ */
+export function PosterEditorValueOverride({
+  value,
+  children,
+}: {
+  value: Partial<PosterEditorCtx>
+  children: React.ReactNode
+}) {
+  const outer = useContext(Ctx)
+  if (!outer) throw new Error("usePosterEditor must be inside PosterEditorProvider")
+  const merged = useMemo(() => ({ ...outer, ...value }), [outer, value])
+  return <Ctx.Provider value={merged}>{children}</Ctx.Provider>
 }

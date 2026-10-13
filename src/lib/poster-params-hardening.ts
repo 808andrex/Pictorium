@@ -110,6 +110,11 @@ export const POSTER_CACHE_ALLOWLIST: ReadonlySet<string> = new Set([
   "badgePreset", "prv", "df",
   // Segui-spazio: politica di rivalidazione (entra in chiave/ETag via serializzazione).
   "live",
+  // Effective-accent display sync (server-only, Stage 1): read-only JSON
+  // branch `?accentmeta=1`. Allowlisted so it reaches the route; the route
+  // strips it before the canonical key (same key as the image). No render
+  // input — never changes poster bytes.
+  "accentmeta",
   // Demo samples (Settings defaults preview only): separa le chiavi con/senza
   // campioni; il valore è fail-closed in normalizePosterCacheParams.
   "demosamples",

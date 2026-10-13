@@ -197,9 +197,9 @@ export interface DefaultsState {
   /** Intensità tinta di scena 0-100 (default 20). */
   tintStrength: number
   /**
-   * Ombra lineare superiore 0-100 in editing (solo per-titolo, default 0 =
-   * spenta). Nessun default globale in Fase 1: parte sempre da 0 e si carica
-   * dal mapping all'apertura titolo.
+   * Ombra lineare superiore 0-100 in editing (per-titolo; assente = default
+   * globale `defaultTopShade`, canonico 80). Si carica dal mapping
+   * all'apertura titolo.
    */
   topShade: number
   badgeStyle: BadgeStyle
@@ -237,7 +237,7 @@ const DEFAULT_FLAT_DEFAULTS: Omit<DefaultsState, "landscape"> = {
   defaultBlurFade: 50,
   defaultBlurDarkness: 30,
   defaultTintStrength: 20,
-  defaultTopShade: 50,
+  defaultTopShade: 80,
   defaultGradientHeight: 30,
   defaultTopBadgeScale: 100,
   defaultTopBadgeOffsetX: 0,
@@ -335,7 +335,7 @@ const DEFAULT_FLAT_DEFAULTS: Omit<DefaultsState, "landscape"> = {
   blurDarkness: 30,
   blurEnabled: true,
   tintStrength: 20,
-  topShade: 50,
+  topShade: 80,
   badgeStyle: "shadow",
   rankingBadgeStyle: "default",
   extraBadgeStyle: null,
@@ -680,7 +680,7 @@ function buildFromStored(d: StoredDefaults | null): DefaultsState {
     defaultBlurFade: d.defaultBlurFade ?? d.blurFade ?? 50,
     defaultBlurDarkness: d.defaultBlurDarkness ?? d.blurDarkness ?? 30,
     defaultTintStrength: d.defaultTintStrength ?? d.tintStrength ?? 20,
-    defaultTopShade: d.defaultTopShade ?? d.topShade ?? 50,
+    defaultTopShade: d.defaultTopShade ?? d.topShade ?? 80,
     defaultGradientHeight: d.defaultGradientHeight ?? d.gradientHeight ?? 30,
     defaultTopBadgeScale: d.defaultTopBadgeScale ?? d.topBadgeScale ?? 100,
     defaultTopBadgeOffsetX: d.defaultTopBadgeOffsetX ?? d.topBadgeOffsetX ?? 0,
@@ -807,7 +807,7 @@ function buildFromStored(d: StoredDefaults | null): DefaultsState {
     tintStrength: d.tintStrength ?? d.defaultTintStrength ?? 20,
     // Solo per-titolo nel localStorage (dal mapping): il default globale vive
     // in defaultTopShade — qui si segue lo stesso per coerenza coi correnti.
-    topShade: d.topShade ?? d.defaultTopShade ?? 50,
+    topShade: d.topShade ?? d.defaultTopShade ?? 80,
     badgeStyle: d.badgeStyle ?? d.defaultBadgeStyle ?? "shadow",
     rankingBadgeStyle: d.rankingBadgeStyle ?? d.defaultRankingBadgeStyle ?? "default",
     extraBadgeStyle: isExtraBadgeStyle(d.extraBadgeStyle) || isExtraFollowRank(d.extraBadgeStyle)
@@ -847,7 +847,7 @@ function buildFromStored(d: StoredDefaults | null): DefaultsState {
  * Non include i valori "corrente" (globalBadges, badgeStyle…) che dipendono
  * dal poster in editing.
  */
-function defaultsToPayload(d: DefaultsState): Record<string, unknown> {
+export function defaultsToPayload(d: DefaultsState): Record<string, unknown> {
   return {
     badgeStyle: d.defaultBadgeStyle,
     rankingBadgeStyle: d.defaultRankingBadgeStyle,
@@ -923,6 +923,33 @@ function defaultsToPayload(d: DefaultsState): Record<string, unknown> {
   }
 }
 
+export interface StagedSaveResult {
+  ok: boolean
+  status: DefaultSyncStatus
+  /** Intentional guest skip that still device-saved (truthful local-only). */
+  localOnly?: boolean
+  /** Payload already matched the persisted truth: no PUT was sent. */
+  duplicate?: boolean
+  /** Machine-readable failure: not-hydrated | storage | server | namespace | conflict | busy. */
+  error?: string
+}
+
+/**
+ * Install exact staged default fields into live state without touching open
+ * per-title bare drafts (same key rule as the hydration live-draft guard:
+ * `default*` + `landscape` only). Pure.
+ */
+function installStagedDefaults(prev: DefaultsState, staged: DefaultsState): DefaultsState {
+  const next: DefaultsState = { ...prev }
+  const src = staged as unknown as Record<string, unknown>
+  const dst = next as unknown as Record<string, unknown>
+  for (const key of Object.keys(src)) {
+    if (key === "defaultSyncStatus") continue
+    if (key === "landscape" || key.startsWith("default")) dst[key] = src[key]
+  }
+  return next
+}
+
 // Total attempts (initial fetch + retries) for hydration GET on 429:
 // explicit spec, bounded -- never endless retries against a hot bucket.
 const HYDRATION_MAX_ATTEMPTS = 3
@@ -966,6 +993,9 @@ export function useDefaults() {
   const syncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Inflight PUT cancellation (superseded send or unmount).
   const syncAbortRef = useRef<AbortController | null>(null)
+  // Staged-save ownership: while a saveStagedDefaults PUT owns the wire,
+  // legacy auto-persist and server refresh stay out (skip, never overwrite).
+  const stagedSavingRef = useRef(false)
   // Pending hydration-retry timer (429 backoff below): cleared on unmount so
   // a retry never fires after teardown (state writes stay mounted-guarded).
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -1000,13 +1030,23 @@ export function useDefaults() {
   // Single server send for an exact payload string. Never reads component
   // state: retry and debounce share it, so they cannot diverge or double-PUT.
   // True only when the server confirmed; never on skip/local/network failure.
-  const syncSend = useCallback(async (payloadStr: string, seq: number): Promise<boolean> => {
+  // Optional owner pins a send to the namespace + storage key captured at
+  // staged-save entry: any mismatch after an async gap (or before the send)
+  // resolves silent WITHOUT touching status, so a profile switch mid-save
+  // can never confirm, fail, or announce cross-namespace truth. Legacy
+  // callers pass no owner and keep byte-identical behavior.
+  const syncSend = useCallback(async (payloadStr: string, seq: number, owner?: { namespace: string | null; storageKey: string }): Promise<boolean> => {
     if (seq !== syncSeqRef.current || !mountedRef.current) return false
+    if (owner && (currentPathUuid() !== owner.namespace || defaultsStorageKey() !== owner.storageKey)) return false
     // Guest guard: guest without session stays local-only by design, never
     // overwriting the owner's instance defaults (existing skip semantics).
     if (await shouldSkipServerSync()) {
       if (seq !== syncSeqRef.current || !mountedRef.current) return false
-      lastPersistRef.current = ""
+      if (owner && (currentPathUuid() !== owner.namespace || defaultsStorageKey() !== owner.storageKey)) return false
+      // Owner-pinned (staged) failure preserves the prior live dedup ref:
+      // clearing it would make the next bare-title update auto-PUT the old
+      // live defaults over the staged truth. Legacy callers keep the reset.
+      if (!owner) lastPersistRef.current = ""
       setSyncStatus("local-only")
       console.debug("[defaults] Server sync skipped (guest without session, or no profile)")
       void isProfilelessOnMultiUser().then((profileless) => {
@@ -1016,6 +1056,7 @@ export function useDefaults() {
     }
     // Slow guard + newer payload: never send a stale PUT after the guard.
     if (seq !== syncSeqRef.current || !mountedRef.current) return false
+    if (owner && (currentPathUuid() !== owner.namespace || defaultsStorageKey() !== owner.storageKey)) return false
     const ctrl = new AbortController()
     syncAbortRef.current = ctrl
     let res: Response
@@ -1029,7 +1070,8 @@ export function useDefaults() {
     } catch (error: unknown) {
       // Superseded, aborted or unmounted sends never announce anything.
       if (seq !== syncSeqRef.current || !mountedRef.current || ctrl.signal.aborted) return false
-      lastPersistRef.current = ""
+      if (owner && (currentPathUuid() !== owner.namespace || defaultsStorageKey() !== owner.storageKey)) return false
+      if (!owner) lastPersistRef.current = ""
       setSyncStatus("failed")
       const message = error instanceof Error ? error.message : String(error)
       console.warn(`[defaults] Auto-sync failed: ${message}`)
@@ -1039,6 +1081,7 @@ export function useDefaults() {
       return false
     }
     if (seq !== syncSeqRef.current || !mountedRef.current) return false
+    if (owner && (currentPathUuid() !== owner.namespace || defaultsStorageKey() !== owner.storageKey)) return false
     if (res.ok) {
       setSyncStatus("synced")
       return true
@@ -1046,7 +1089,9 @@ export function useDefaults() {
     // 401 (admin fail-closed), 403 origin, 5xx persist: il client crede di
     // aver salvato (localStorage) ma i default d'istanza restano vecchi —
     // e su Stremio i poster dei cataloghi usano QUELLI. Segnala il desync.
-    lastPersistRef.current = ""
+    // Owner-pinned sends stay silent on a mid-flight namespace switch.
+    if (owner && (currentPathUuid() !== owner.namespace || defaultsStorageKey() !== owner.storageKey)) return false
+    if (!owner) lastPersistRef.current = ""
     setSyncStatus("failed")
     console.warn(`[defaults] Auto-sync failed: HTTP ${res.status}`)
     void import("sonner").then(({ toast }) =>
@@ -1075,6 +1120,9 @@ export function useDefaults() {
   // network and persistent 429s keep the previous semantics (unconfirmed,
   // never infinite loading). No speculative 5xx: demonstrated case only.
   const refreshFromServer = useCallback(() => {
+    // A staged save owns state while inflight: refresh defers (skips) so a
+    // hydration GET can never overwrite the staged operation.
+    if (stagedSavingRef.current) return
     // New generation invalidates the previous chain first: its retry timer
     // is cancelled and its inflight GET aborted (userFetch already takes an
     // AbortSignal). Late resolutions of the old chain hit the owner guard
@@ -1220,6 +1268,9 @@ export function useDefaults() {
   // Debounce invariato a 500ms; lo stato di sync resta autorevole qui.
   useEffect(() => {
     if (!hydrated) return
+    // A staged save owns the wire while inflight: never bump/abort its
+    // sequence from here (no supersede, no double PUT).
+    if (stagedSavingRef.current) return
     const payload = defaultsToPayload(state)
     const payloadStr = JSON.stringify(payload)
     if (lastPersistRef.current === payloadStr) return
@@ -1328,5 +1379,111 @@ export function useDefaults() {
     return syncSend(payloadStr, seq)
   }, [state, hydrated, syncSend])
 
-  return { ...state, update, loadDefaultsToState, defaultSyncStatus: syncStatus, retryDefaultSync }
+  // Authoritative explicit staged save (settings draft foundation): same
+  // defaultsToPayload serializer + syncSend transport/sequence/status
+  // machinery as auto-sync, exactly one PUT, no subsequent auto-effect
+  // duplicate (lastPersistRef is primed with the staged payload, so the
+  // install below dedups the effect). No dedup shortcut: every call sends
+  // (Save is disabled while clean at the UI layer); concurrent calls
+  // refuse busy and never supersede/abort the inflight first save. No
+  // optimistic device write: the PUT goes first, durable storage + live
+  // install happen ONLY on ACK; a reject leaves storage and live state
+  // exactly as found. A post-ACK storage failure reports truthful
+  // local-failed (the server may hold the update) with the draft retained
+  // for retry — never a rollback illusion. Namespace + storage key are
+  // captured at entry and re-verified after every async guard and before
+  // send/write/install. Intentional guest skip device-saves like auto-sync
+  // and counts as local success with a truthful local-only status (never
+  // a false synced).
+  const saveStagedDefaults = useCallback(async (staged: DefaultsState): Promise<StagedSaveResult> => {
+    if (stagedSavingRef.current) return { ok: false, status: syncStatus, error: "busy" }
+    if (!hydrated || !mountedRef.current) return { ok: false, status: "idle", error: "not-hydrated" }
+    // Ownership capture: namespace + exact storage key at entry. Every async
+    // guard below re-verifies them before any send, write, or install, so a
+    // profile switch mid-save can never persist cross-namespace truth.
+    const namespace = currentPathUuid()
+    const storageKey = defaultsStorageKey()
+    const stillOwned = (): boolean =>
+      mountedRef.current && currentPathUuid() === namespace && defaultsStorageKey() === storageKey
+    const payloadStr = JSON.stringify(defaultsToPayload(staged))
+    // Own the wire + state: invalidate the legacy debounce/inflight PUT and
+    // the active refresh generation first (stale chains resolve silent via
+    // the seq/gen guards). No duplicate shortcut: identical payloads send.
+    stagedSavingRef.current = true
+    const seq = ++syncSeqRef.current
+    if (syncTimerRef.current) {
+      clearTimeout(syncTimerRef.current)
+      syncTimerRef.current = null
+    }
+    syncAbortRef.current?.abort()
+    refreshSeqRef.current += 1
+    refreshAbortRef.current?.abort()
+    if (refreshTimerRef.current) {
+      clearTimeout(refreshTimerRef.current)
+      refreshTimerRef.current = null
+    }
+    const done = (): void => {
+      stagedSavingRef.current = false
+    }
+    // Staged lock is released in `finally`: a rejecting guard (first or
+    // second await) must never leave it permanently busy. Failure paths
+    // preserve lastPersistRef (the prior live truth) so a later bare-title
+    // update cannot auto-PUT stale defaults over the staged outcome.
+    try {
+    // Intentional guest skip (namespace/identity guard): device-save only,
+    // never a PUT. Verified owned after the (async) guard.
+    if (await shouldSkipServerSync()) {
+      if (!stillOwned() || seq !== syncSeqRef.current) {
+        return { ok: false, status: "local-only", localOnly: true, error: "namespace" }
+      }
+      if (!safeSetItem(storageKey, payloadStr)) {
+        setSyncStatus("local-failed")
+        return { ok: false, status: "local-failed", localOnly: true, error: "storage" }
+      }
+      lastPersistRef.current = payloadStr
+      setState((prev) => installStagedDefaults(prev, staged))
+      setSyncStatus("local-only")
+      console.debug("[defaults] Staged save kept local (guest without session, or no profile)")
+      void isProfilelessOnMultiUser().then((profileless) => {
+        if (profileless) notifyProfilelessOnce()
+      })
+      return { ok: true, status: "local-only", localOnly: true }
+    }
+    if (!stillOwned() || seq !== syncSeqRef.current || !mountedRef.current) {
+      return { ok: false, status: syncStatus, error: "namespace" }
+    }
+    // Non-guest: exactly one PUT first, durable + live writes ONLY on ACK.
+    setSyncStatus("pending")
+    const confirmed = await syncSend(payloadStr, seq, { namespace, storageKey })
+    if (!stillOwned() || seq !== syncSeqRef.current || !mountedRef.current) {
+      return { ok: false, status: "pending", error: "namespace" }
+    }
+    if (!confirmed) {
+      return { ok: false, status: "failed", error: "server" }
+    }
+    // ACKed but not yet durable: a storage failure here is truthful
+    // local-failed (the server may hold the update), live state stays
+    // untouched and the draft is retained for retry — no rollback illusion.
+    // lastPersistRef stays on the prior live truth (never cleared): the
+    // next bare-title update dedups instead of rewriting old defaults.
+    if (!safeSetItem(storageKey, payloadStr)) {
+      setSyncStatus("local-failed")
+      return { ok: false, status: "local-failed", error: "storage" }
+    }
+    lastPersistRef.current = payloadStr
+    setState((prev) => installStagedDefaults(prev, staged))
+    return { ok: true, status: "synced" }
+    } catch {
+      // Guard/fetch rejection: truthful failure, draft retained, no writes.
+      if (!stillOwned() || seq !== syncSeqRef.current || !mountedRef.current) {
+        return { ok: false, status: "pending", error: "namespace" }
+      }
+      setSyncStatus("failed")
+      return { ok: false, status: "failed", error: "server" }
+    } finally {
+      done()
+    }
+  }, [hydrated, syncSend, syncStatus])
+
+  return { ...state, update, loadDefaultsToState, defaultSyncStatus: syncStatus, retryDefaultSync, saveStagedDefaults }
 }

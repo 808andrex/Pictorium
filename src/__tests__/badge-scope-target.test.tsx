@@ -10,6 +10,7 @@ import { createElement } from "react"
 import { SettingsPanel } from "@/components/SettingsPanel"
 import { BadgeDefaultsSection } from "@/components/settings/BadgeDefaultsSection"
 import { usePosterEditor, type PosterEditorCtx } from "@/lib/contexts/PosterEditorContext"
+import { BETTER_POSTER_VISUAL_DEFAULTS } from "@/lib/default-visual-presets"
 import { renderWithCtx } from "@/__tests__/test-utils"
 
 vi.mock("next/navigation", () => ({
@@ -48,7 +49,7 @@ function renderBadge(shape: "portrait" | "landscape") {
     return null
   }
   renderWithCtx(createElement("div", null, createElement(BadgeDefaultsSection, { active: true, shape }), createElement(Probe)))
-  openBadgeGroup("overlay")
+  openBadgeGroup("style", "base", "overlay", "quality")
   return { ctx: () => ctx as PosterEditorCtx }
 }
 
@@ -66,7 +67,7 @@ function renderSettings() {
       createElement(Probe),
     ),
   )
-  openBadgeGroup("overlay")
+  openBadgeGroup("style", "base", "overlay", "quality")
   return { ctx: () => ctx as PosterEditorCtx }
 }
 
@@ -78,13 +79,57 @@ function badgeSwitch(name: string): HTMLElement {
   return screen.getByRole("switch", { name })
 }
 
-// T3 macro-groups: overlay/quality start collapsed (bodies mounted + hidden).
-// Open disclosures before touching their controls; assertions unchanged.
+// Five-tab settings: macro-groups are bare/always-open inside mode-filtered
+// tabs (no disclosures) — navigate to the tab owning the first requested
+// group (style -> Badge, base/quality -> Information, overlay -> Rankings).
+// Standalone legacy (BadgeDefaultsSection default) keeps opening the Advanced
+// disclosure + groups (the summary link has no aria-controls). Assertions
+// unchanged.
+const GROUP_TAB: Record<"style" | "base" | "overlay" | "quality", string> = {
+  style: "ui.settingsTabBadge",
+  base: "ui.settingsTabInformation",
+  overlay: "ui.settingsTabRankings",
+  quality: "ui.settingsTabInformation",
+}
 function openBadgeGroup(...ids: Array<"style" | "base" | "overlay" | "quality">) {
-  for (const id of ids) {
-    const t = screen.getByTestId(`badge-group-${id}-toggle`)
-    if (t.getAttribute("aria-expanded") !== "true") fireEvent.click(t)
+  // Standalone legacy (BadgeDefaultsSection default): open the Advanced
+  // disclosure + groups (the summary link has no aria-controls).
+  // Unified SettingsPanel: go to the tab owning the requested groups.
+  const adv = screen.queryByTestId("badge-advanced-toggle")
+  if (adv && adv.hasAttribute("aria-controls")) {
+    if (adv.getAttribute("aria-expanded") !== "true") fireEvent.click(adv)
+    for (const id of ids) {
+      const t = screen.getByTestId(`badge-group-${id}-toggle`)
+      if (t.getAttribute("aria-expanded") !== "true") fireEvent.click(t)
+    }
+    return
   }
+  const tab = screen.getByRole("tab", { name: GROUP_TAB[ids[0]] })
+  if (tab.getAttribute("aria-selected") !== "true") fireEvent.click(tab)
+}
+
+// Element-workspace nav was removed by the five-tab redesign
+// (PosterElementNavigation no longer rendered): each control lives in exactly
+// one primary tab via the BadgeDefaultsSection mode filter, so open the
+// owning tab. UI-only navigation, never writes defaults.
+const ELEMENT_TAB: Record<string, string> = {
+  genre: "ui.settingsTabInformation",
+  logo: "ui.settingsTabInformation",
+  rank: "ui.settingsTabRankings",
+  ratings: "ui.settingsTabInformation",
+}
+function openElement(id: string) {
+  const tab = screen.getByRole("tab", { name: ELEMENT_TAB[id] })
+  if (tab.getAttribute("aria-selected") !== "true") fireEvent.click(tab)
+}
+
+// Staged five-tab session: edits stage with zero durable writes; the single
+// global Save installs them into the outer truth the Probe reads.
+async function saveStaged() {
+  fireEvent.click(screen.getByTestId("settings-save"))
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(600)
+  })
 }
 
 describe("badge target scope", () => {
@@ -94,10 +139,13 @@ describe("badge target scope", () => {
       await vi.advanceTimersByTimeAsync(600)
     })
     fireEvent.click(within(screen.getByTestId("format-target-selector")).getByText("ui.posterShapeLandscape"))
+    openElement("genre")
     fireEvent.click(badgeSwitch("ui.genreRatingBadge"))
     await act(async () => {
       await vi.advanceTimersByTimeAsync(600)
     })
+    // Staged session: the explicit Save installs the draft into outer truth.
+    await saveStaged()
     expect(ctx().landscape.globalBadges).toBe(false)
     expect(ctx().defaultGlobalBadges).toBe(true)
     const p = paramsOf(opened[opened.length - 1])
@@ -121,7 +169,10 @@ describe("badge target scope", () => {
     })
     const target = screen.getByTestId("format-target-selector")
     fireEvent.click(within(target).getByText("ui.posterShapeLandscape"))
+    openElement("logo")
     fireEvent.click(badgeSwitch("ui.networkLogo"))
+    // Staged session: the explicit Save installs the draft into outer truth.
+    await saveStaged()
     expect(ctx().landscape.networkLogo).toBe(false)
     expect(badgeSwitch("ui.networkLogo").getAttribute("aria-checked")).toBe("false")
     fireEvent.click(within(target).getByText("ui.posterShapePortrait"))
@@ -138,17 +189,24 @@ describe("badge target scope", () => {
       await vi.advanceTimersByTimeAsync(100)
     })
     fireEvent.click(within(screen.getByTestId("format-target-selector")).getByText("ui.posterShapeLandscape"))
+    openElement("rank")
     // Rank look lives in the Classifica card (no duplicated switch in Stili):
     // Badge appearance, then the corner variant.
     const appearance = screen.getByRole("radiogroup", { name: "ui.rankFamily" })
     fireEvent.click(within(appearance).getByRole("radio", { name: "ui.badgeSection" }))
     const variants = screen.getByRole("radiogroup", { name: "ui.styleRankingDefault" })
     fireEvent.click(within(variants).getByRole("radio", { name: "ui.corner" }))
+    // Staged session: the explicit Save installs the draft into outer truth.
+    await saveStaged()
     expect(ctx().landscape.rankingBadgeStyle).toBe("corner")
     expect(ctx().defaultRankingBadgeStyle).toBe("default")
     // Separate style pills in landscape (column stays the portrait flat).
+    openElement("ratings")
     fireEvent.click(badgeSwitch("ui.separateRatings"))
+    // The separate-style picker lives on the Badge (appearance) tab.
+    fireEvent.click(screen.getByRole("tab", { name: "ui.settingsTabBadge" }))
     fireEvent.click(screen.getByText("ui.separateRatingsBottomPills"))
+    await saveStaged()
     expect(ctx().landscape.separateRatingsStyle).toBe("bottom-pills")
     expect(ctx().defaultSeparateRatingsStyle).toBe("column")
     await act(async () => {
@@ -194,8 +252,11 @@ describe("badge target scope", () => {
       await vi.advanceTimersByTimeAsync(100)
     })
     fireEvent.click(within(screen.getByTestId("format-target-selector")).getByText("ui.posterShapeLandscape"))
+    openElement("ratings")
     const sepSwitch = badgeSwitch("ui.separateRatings")
     if (sepSwitch.getAttribute("aria-checked") !== "true") fireEvent.click(sepSwitch)
+    // The separate-style picker lives on the Badge (appearance) tab.
+    fireEvent.click(screen.getByRole("tab", { name: "ui.settingsTabBadge" }))
     for (const legacy of [
       "ui.separateRatingsColumn",
       "ui.separateRatingsBottomBar",
@@ -208,6 +269,8 @@ describe("badge target scope", () => {
     // Le nuove voci bare restano abilitate in landscape (solo la barra è off).
     expect(screen.getByText(label).hasAttribute("disabled")).toBe(false)
     fireEvent.click(screen.getByText(label))
+    // Staged session: the explicit Save installs the draft into outer truth.
+    await saveStaged()
     expect(ctx().landscape.separateRatingsStyle).toBe(id)
     expect(ctx().defaultSeparateRatingsStyle).toBe("column")
     await act(async () => {
@@ -263,10 +326,17 @@ describe("badge target scope", () => {
       await vi.advanceTimersByTimeAsync(100)
     })
     fireEvent.click(within(screen.getByTestId("format-target-selector")).getByText("ui.posterShapeLandscape"))
+    openElement("logo")
     fireEvent.click(badgeSwitch("ui.networkLogo"))
-    const badgePanel = screen.getByRole("tabpanel", { name: "ui.badgeSection" })
-    const reset = within(badgePanel).getByRole("button", { name: "ui.reset · ui.posterShapeLandscape" })
+    // The scoped reset renders in every five-tab instance: scope to the
+    // visible Badge panel (the three instances stay mounted + hidden).
+    const panels = screen.getAllByRole("tabpanel", { name: "ui.badgeSection" })
+    const panel = panels.find((p) => p.getAttribute("hidden") === null)
+    expect(panel).toBeDefined()
+    const reset = within(panel!).getByRole("button", { name: "ui.reset · ui.posterShapeLandscape" })
     fireEvent.click(reset)
+    // Staged session: the explicit Save installs the draft into outer truth.
+    await saveStaged()
     // 3B1: reset materializes the current portrait effective (independent),
     // never clear-to-follow.
     expect(ctx().landscape.networkLogo).toBe(true)
@@ -281,36 +351,60 @@ describe("badge target scope", () => {
       await vi.advanceTimersByTimeAsync(100)
     })
     fireEvent.click(within(screen.getByTestId("format-target-selector")).getByText("ui.posterShapeLandscape"))
-    fireEvent.click(screen.getByText("ui.configPresetEssential"))
+    // The ready-look gallery lives on the Preset tab now.
+    fireEvent.click(screen.getByRole("tab", { name: "ui.settingsTabPreset" }))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100)
+    })
+    // Staged-first: the tile stages a draft (outer truth untouched until the
+    // single global Save below); the explicit Save installs it.
+    fireEvent.click(screen.getByTestId("poster-style-essential"))
+    expect(ctx().landscape.globalBadges).toBeUndefined()
+    expect(ctx().defaultGlobalBadges).toBe(false)
+    await saveStaged()
     expect(ctx().landscape.globalBadges).toBe(true)
     expect(ctx().landscape.badgeStyle).toBe("minimal")
     expect(ctx().defaultGlobalBadges).toBe(false)
     expect(ctx().defaultBadgeStyle).toBe("shadow")
   })
 
-  it("sash stash is per target; portrait keeps the legacy key", async () => {
+  it("sash stash is per target; staged drafts never touch stored keys", async () => {
     const { ctx } = renderSettings()
     await act(async () => {
       await vi.advanceTimersByTimeAsync(100)
     })
     const target = screen.getByTestId("format-target-selector")
     fireEvent.click(within(target).getByText("ui.posterShapeLandscape"))
+    openElement("rank")
     fireEvent.click(badgeSwitch("ui.topBadge"))
-    expect(localStorage.getItem("pictorium_trend_sash_stash:landscape")).not.toBeNull()
+    // Staged five-tab session: the stash lives in memory per target, so a
+    // landscape toggle stages with zero localStorage writes — the legacy key
+    // especially stays untouched (no cross-target resurrection from disk).
+    expect(localStorage.getItem("pictorium_trend_sash_stash:landscape")).toBeNull()
     expect(localStorage.getItem("pictorium_trend_sash_stash")).toBeNull()
     fireEvent.click(badgeSwitch("ui.topBadge"))
+    // Staged session: the explicit Save installs the draft into outer truth.
+    await saveStaged()
     expect(ctx().landscape.sashOrder?.length).toBeGreaterThan(0)
     fireEvent.click(within(target).getByText("ui.posterShapePortrait"))
     fireEvent.click(badgeSwitch("ui.topBadge"))
-    expect(localStorage.getItem("pictorium_trend_sash_stash")).not.toBeNull()
+    // Portrait stages to its own memory slot too — still zero durable writes.
+    expect(localStorage.getItem("pictorium_trend_sash_stash")).toBeNull()
+    expect(localStorage.getItem("pictorium_trend_sash_stash:landscape")).toBeNull()
+    // Functional per-target restore: back ON resurrects this target's order.
+    fireEvent.click(badgeSwitch("ui.topBadge"))
+    await saveStaged()
+    expect(ctx().defaultSashOrder.length).toBeGreaterThan(0)
+    expect(ctx().defaultSashOrder).toContain("rank")
   })
 })
 
 describe("snapshot presets respect the edit target", () => {
-  it("landscape BetterPoster: target visuals applied, preset-absent styles kept, flats intact", async () => {
+  it("landscape BetterPoster: target visuals applied, ready extra reset, flats intact", async () => {
     localStorage.setItem("badgeDefaults", JSON.stringify({
       defaultBadgeStyle: "pill",
       defaultPosterShape: "poster",
+      defaultRatingSources: ["imdb", "trakt", "mal"],
       landscape: { rankingBadgeStyle: "corner", extraBadgeStyle: "vetro", globalBadges: false },
     }))
     const { ctx } = renderSettings()
@@ -318,19 +412,51 @@ describe("snapshot presets respect the edit target", () => {
       await vi.advanceTimersByTimeAsync(100)
     })
     fireEvent.click(within(screen.getByTestId("format-target-selector")).getByText("ui.posterShapeLandscape"))
-    fireEvent.click(screen.getByText("Stile BetterPoster"))
+    // The snapshot gallery lives on the Preset tab now.
+    fireEvent.click(screen.getByRole("tab", { name: "ui.settingsTabPreset" }))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100)
+    })
+    const beforeSources = JSON.stringify(ctx().defaultRatingSources)
+    expect(JSON.parse(beforeSources)).toEqual(["imdb", "trakt", "mal"])
+    // Staged-first: the snapshot stages with zero durable writes until Save.
+    fireEvent.click(screen.getByTestId("poster-style-better-poster"))
+    expect(ctx().landscape.rankingBadgeStyle).toBe("corner")
+    expect(JSON.stringify(ctx().defaultRatingSources)).toBe(beforeSources)
+    await saveStaged()
     // Snapshot values land on the target profile (flat ranking style + own landscape profile win).
     expect(ctx().landscape.rankingBadgeStyle).toBe("default")
     expect(ctx().landscape.globalBadges).toBe(true)
     expect(ctx().landscape.badgeStyle).toBe("minimal")
     expect(ctx().landscape.gradientHeight).toBe(50)
-    // Styles absent from the preset survive on the profile.
-    expect(ctx().landscape.extraBadgeStyle).toBe("vetro")
+    // Ready contract: a landscape-target ready apply takes the explicit
+    // follow-own-rank marker instead of inheriting a tuned style
+    // (withReadyPresetExtraStyleReset on both entry points) — never the
+    // stale profile value.
+    expect(ctx().landscape.extraBadgeStyle).toBe("follow-rank")
     // Root flats and delivery never follow a landscape preset.
     expect(ctx().defaultBadgeStyle).toBe("pill")
     expect(ctx().defaultPosterShape).toBe("poster")
-    // Truly shared globals still apply.
+    // Guide preserves the distinct ordered shared sources (strong contract).
+    expect(JSON.stringify(ctx().defaultRatingSources)).toBe(beforeSources)
+    expect(ctx().defaultRatingSources).toEqual(["imdb", "trakt", "mal"])
+  })
+
+  it("standalone legacy landscape BetterPoster writes exact preset sources (length 16)", async () => {
+    localStorage.setItem("badgeDefaults", JSON.stringify({
+      defaultBadgeStyle: "pill",
+      defaultPosterShape: "poster",
+      defaultRatingSources: ["imdb"],
+      landscape: { rankingBadgeStyle: "corner" },
+    }))
+    const { ctx } = renderBadge("landscape")
+    await act(async () => {})
+    fireEvent.click(screen.getByTestId("poster-style-better-poster"))
     expect(ctx().defaultRatingSources).toHaveLength(16)
+    expect(JSON.stringify(ctx().defaultRatingSources)).toBe(JSON.stringify(BETTER_POSTER_VISUAL_DEFAULTS.defaultRatingSources))
+    expect(ctx().defaultLogoAlign).toBe(BETTER_POSTER_VISUAL_DEFAULTS.defaultLogoAlign)
+    expect(ctx().defaultPortraitFitEnabled).toBe(BETTER_POSTER_VISUAL_DEFAULTS.defaultPortraitFitEnabled)
+    expect(ctx().defaultLandscapeFitEnabled).toBe(BETTER_POSTER_VISUAL_DEFAULTS.defaultLandscapeFitEnabled)
   })
 
   it("portrait RPDB snapshots the pre-edit landscape (no leak, no reseed)", async () => {
@@ -343,8 +469,16 @@ describe("snapshot presets respect the edit target", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(100)
     })
+    fireEvent.click(screen.getByRole("tab", { name: "ui.settingsTabPreset" }))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100)
+    })
     const landBefore = JSON.stringify(ctx().landscape)
-    fireEvent.click(screen.getByText("Stile RPDB"))
+    // Staged-first: zero durable writes until the explicit Save below.
+    fireEvent.click(screen.getByTestId("poster-style-rpdb"))
+    expect(ctx().defaultBadgeStyle).toBe("shadow")
+    expect(JSON.stringify(ctx().landscape)).toBe(landBefore)
+    await saveStaged()
     expect(ctx().defaultPosterShape).toBe("landscape")
     expect(ctx().defaultBadgeStyle).toBe("minimal")
     expect(ctx().landscape.extraBadgeStyle).toBe("vetro")

@@ -1,8 +1,9 @@
 "use client"
 
+import { useEffect, useState } from "react"
 import { useT } from "@/lib/contexts/TranslationContext"
 import { isPosterLayout, isPosterFreshScope, DEFAULT_POSTER_FRESH_SCOPE, type PosterLayout, type PosterFreshScope } from "@/lib/types"
-import { isCardSkin } from "@/lib/card-layout-skins"
+import { isCardSkin, type CardSkin } from "@/lib/card-layout-skins"
 
 // All five cover layouts are selectable in the UI: the historic Standard,
 // full-bleed Fresh, and the three integrated Card skins (Provider Glass,
@@ -20,13 +21,15 @@ const LAYOUT_LABELS: Record<PosterLayout, string> = {
 
 /**
  * Illustrative CSS miniature for a layout option (aria-hidden, no renderer:
- * never the actual poster logic, only a visual cue). Standard shows the
+ * never the actual poster logic, only a visual cue). Also reused by the
+ * settings-only unified ranking presentation (Classifiche) for its Card skin
+ * subgroup — same thumbnails, no second set. Standard shows the
  * historic chrome (top pill + bottom bar); Fresh shows a full-bleed giant
  * numeral with a meta column; each Card skin shows the rank numeral beside
  * the rounded artwork card on its own background (glass gradient / solid
  * black / violet glass).
  */
-function LayoutThumb({ layout }: { layout: PosterLayout }) {
+export function LayoutThumb({ layout }: { layout: PosterLayout }) {
   if (layout === "standard") {
     return (
       <span aria-hidden="true" className="block h-9 w-full rounded-md overflow-hidden relative bg-zinc-800">
@@ -67,24 +70,122 @@ function LayoutThumb({ layout }: { layout: PosterLayout }) {
  * scope (per-title editing state, or the scoped global default for portrait /
  * landscape) and persists the choice. Switching layouts never mutates badge,
  * logo or transform settings — values are preserved and re-apply when
- * switching back. Fresh uses fixed positions for the rank numeral,
- * metadata/provider rows and title logo (their style/position settings don't
- * apply but are kept); Card skins use fully fixed rank/provider/metadata/title
- * geometry (their rank/genre/title-offset/provider-offset settings don't move
- * the Card but are kept — see the Card hint below and the disabled Transform
- * sliders); quality, Coming Soon, extra top badge, blur/shade and logo
- * controls still apply.
+ * switching back. Fresh arranges the rank numeral, metadata/provider rows
+ * and title logo (their size/position settings apply to the live layout);
+ * separate ratings are tuned from the metadata controls. Card skins keep
+ * title/rank/main-metadata/network positions fixed ONLY with scope "all";
+ * with ranked scope unranked titles fall back to Standard (those sliders
+ * stay live for the fallback). Extra/quality/separate-column positioning
+ * stays adjustable; saved values are always kept (see the Card hint and
+ * the scoped Transform locks).
  */
 export function PosterLayoutSelector({
   value,
   onChange,
+  grouped,
 }: {
   value: PosterLayout | string | null | undefined
   onChange: (v: PosterLayout) => void
+  /** Optional grouped presentation (guide only): 3 primary choices
+   *  Classical/Fresh/Card + secondary Card-skin radios. Default legacy
+   *  5-choice presentation is unchanged. */
+  grouped?: boolean
 }) {
   const { t } = useT()
   const effective: PosterLayout = isPosterLayout(value) ? value : "standard"
   const isCard = isCardSkin(effective)
+  // Remembered Card skin (transient UI only, never persisted): survives
+  // Classic/Fresh/Card switching. Saved nuvio/stremio hydrates it with no write.
+  const [rememberedSkin, setRememberedSkin] = useState<CardSkin>(() =>
+    isCardSkin(value) ? (value as CardSkin) : "provider-glass",
+  )
+  useEffect(() => {
+    if (isCardSkin(value)) setRememberedSkin(value as CardSkin)
+  }, [value])
+  if (grouped) {
+    const primary: "standard" | "fresh" | "card" = isCard ? "card" : effective === "fresh" ? "fresh" : "standard"
+    const pickPrimary = (p: "standard" | "fresh" | "card") => {
+      if (p === "card") onChange(rememberedSkin)
+      else onChange(p)
+    }
+    const primaryBtn = (p: "standard" | "fresh" | "card", labelKey: string) => (
+      <button
+        key={p}
+        type="button"
+        role="radio"
+        aria-checked={primary === p}
+        onClick={() => pickPrimary(p)}
+        className={`flex flex-col gap-1 p-1.5 rounded-lg transition-all duration-150 cursor-pointer min-w-0 ${
+          primary === p
+            ? "bg-white/20 text-white shadow-sm ring-1 ring-white/30"
+            : "bg-white/5 text-muted hover:bg-white/10 hover:text-zinc-200"
+        }`}
+      >
+        <LayoutThumb layout={p === "card" ? rememberedSkin : p} />
+        <span className="text-[10px] font-semibold leading-tight text-center truncate">
+          {t(labelKey)}
+        </span>
+      </button>
+    )
+    return (
+      <div className="space-y-1.5">
+        <div
+          className="grid grid-cols-3 gap-1 poster-layout-grid"
+          role="radiogroup"
+          aria-label={t("ui.posterLayout")}
+          data-testid="poster-layout-grouped"
+        >
+          {primaryBtn("standard", "ui.posterLayoutGroupedClassic")}
+          {primaryBtn("fresh", "ui.posterLayoutGroupedFresh")}
+          {primaryBtn("card", "ui.posterLayoutGroupedCard")}
+        </div>
+        {primary === "card" && (
+          <div
+            className="grid grid-cols-3 gap-1"
+            role="radiogroup"
+            aria-label={t("ui.posterLayoutGroupedCard")}
+            data-testid="poster-layout-skins"
+          >
+            {(
+              [
+                ["provider-glass", "ui.posterLayoutSkinProvider"],
+                ["nuvio", "ui.posterLayoutSkinBlack"],
+                ["stremio", "ui.posterLayoutSkinViolet"],
+              ] as const
+            ).map(([skin, labelKey]) => (
+              <button
+                key={skin}
+                type="button"
+                role="radio"
+                aria-checked={effective === skin}
+                onClick={() => { setRememberedSkin(skin); onChange(skin) }}
+                className={`flex flex-col gap-1 p-1.5 rounded-lg transition-all duration-150 cursor-pointer min-w-0 ${
+                  effective === skin
+                    ? "bg-white/20 text-white shadow-sm ring-1 ring-white/30"
+                    : "bg-white/5 text-muted hover:bg-white/10 hover:text-zinc-200"
+                }`}
+              >
+                <LayoutThumb layout={skin} />
+                <span className="text-[10px] font-semibold leading-tight text-center truncate">
+                  {t(labelKey)}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+        <p className="text-[10px] text-zinc-500 leading-relaxed select-none">
+          {primary === "card"
+            ? t("ui.posterLayoutGroupedCardHint")
+            : primary === "fresh"
+              ? t("ui.posterLayoutGroupedFreshHint")
+              : t("ui.posterLayoutGroupedClassicHint")}
+        </p>
+        <p className="text-[10px] text-zinc-500 leading-relaxed select-none">
+          {t("ui.posterLayoutGroupedPreserved")}
+        </p>
+      </div>
+    )
+  }
   return (
     <div className="space-y-1.5">
       <div

@@ -54,8 +54,11 @@ function badgeSwitch(name: string): HTMLElement {
 }
 
 // T3 macro-groups: overlay/quality start collapsed (bodies mounted + hidden).
-// Open disclosures before touching their controls; assertions unchanged.
+// Preset-first: groups live inside the Advanced disclosure (mounted +
+// hidden) — open it before the groups. Assertions unchanged.
 function openBadgeGroup(...ids: Array<"style" | "base" | "overlay" | "quality">) {
+  const adv = screen.getByTestId("badge-advanced-toggle")
+  if (adv.getAttribute("aria-expanded") !== "true") fireEvent.click(adv)
   for (const id of ids) {
     const t = screen.getByTestId(`badge-group-${id}-toggle`)
     if (t.getAttribute("aria-expanded") !== "true") fireEvent.click(t)
@@ -295,10 +298,13 @@ describe("extra/category gating (independent from the genre master)", () => {
   it("portrait: genre master OFF hides genre/year only; extra controls stay", async () => {
     renderBadge("portrait")
     await act(async () => {})
-    expect(screen.getByText("ui.badgeGenre")).toBeInTheDocument()
+    // Detailed labels live in the base group; the What-to-show quick
+    // toggles above keep their own labels regardless of the master.
+    const base = () => within(screen.getByTestId("badge-group-base"))
+    expect(base().getByText("ui.badgeGenre")).toBeInTheDocument()
     fireEvent.click(badgeSwitch("ui.genreRatingBadge"))
-    expect(screen.queryByText("ui.badgeGenre")).toBeNull()
-    expect(screen.queryByText("ui.badgeYear")).toBeNull()
+    expect(base().queryByText("ui.badgeGenre")).toBeNull()
+    expect(base().queryByText("ui.badgeYear")).toBeNull()
     // Extra family stays reachable with the top badge master on.
     expect(screen.getByText("ui.extraBadgeStyle")).toBeInTheDocument()
     expect(screen.getByRole("switch", { name: "ui.sash_rank" })).toBeInTheDocument()
@@ -311,8 +317,9 @@ describe("extra/category gating (independent from the genre master)", () => {
     localStorage.setItem("badgeDefaults", JSON.stringify({ defaultGlobalBadges: true, landscape: { globalBadges: false } }))
     const { ctx } = renderBadge("landscape")
     await act(async () => {})
-    // Scoped land=false hides genre/year even with the flat on (no root leak).
-    expect(screen.queryByText("ui.badgeGenre")).toBeNull()
+    // Scoped land=false hides the detailed genre/year even with the flat on
+    // (no root leak); the quick toggle keeps its own label.
+    expect(within(screen.getByTestId("badge-group-base")).queryByText("ui.badgeGenre")).toBeNull()
     expect(screen.getByText("ui.extraBadgeStyle")).toBeInTheDocument()
     expect(screen.getByRole("switch", { name: "ui.sash_extra" })).toBeInTheDocument()
     expect(ctx().defaultGlobalBadges).toBe(true)
@@ -323,7 +330,7 @@ describe("extra/category gating (independent from the genre master)", () => {
     localStorage.setItem("badgeDefaults", JSON.stringify({ defaultGlobalBadges: false, landscape: { globalBadges: true } }))
     const { ctx } = renderBadge("landscape")
     await act(async () => {})
-    expect(screen.getByText("ui.badgeGenre")).toBeInTheDocument()
+    expect(within(screen.getByTestId("badge-group-base")).getByText("ui.badgeGenre")).toBeInTheDocument()
     expect(ctx().defaultGlobalBadges).toBe(false)
     expect(ctx().landscape.globalBadges).toBe(true)
   })

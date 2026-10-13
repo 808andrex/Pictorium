@@ -109,7 +109,7 @@ describe("format target selector", () => {
     expect(ed.landscape.gradientHeight).toBe(20)
 
     // The target survives tab switches: moving to Transform keeps landscape.
-    fireEvent.click(screen.getByRole("tab", { name: "ui.transform" }))
+    fireEvent.click(screen.getByRole("tab", { name: "ui.settingsTabTransform" }))
     await act(async () => {
       await vi.advanceTimersByTimeAsync(600)
     })
@@ -120,7 +120,7 @@ describe("format target selector", () => {
     expect(ed.defaultPosterShape).toBe("poster")
 
     // Back on the Badge tab: still landscape (persisted target, not the default).
-    fireEvent.click(screen.getByRole("tab", { name: "ui.badgeSection" }))
+    fireEvent.click(screen.getByRole("tab", { name: "ui.settingsTabBadge" }))
     await act(async () => {
       await vi.advanceTimersByTimeAsync(600)
     })

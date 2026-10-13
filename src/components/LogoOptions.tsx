@@ -4,8 +4,11 @@ import React, { useEffect, useState } from "react"
 import type { TMDBImage } from "@/lib/types"
 import { LANG_NAMES, groupBy, limitBest, posterUrl } from "@/lib/utils"
 import { useT } from "@/lib/contexts/TranslationContext"
+import { usePSelector } from "@/lib/context"
 import { usePosterEditor } from "@/lib/contexts/PosterEditorContext"
-import { Check, Trash2, ChevronDown } from "lucide-react"
+import { useTvdbArtworks } from "@/lib/useTvdbArtworks"
+import { RatingSourceIcon } from "@/components/RatingSourceIcon"
+import { Check, Trash2, ChevronDown, Loader2 } from "lucide-react"
 
 interface Props {
   logos: TMDBImage[]
@@ -19,14 +22,19 @@ interface Props {
 export const LogoOptions = React.memo(function LogoOptions({ logos, selectedLogo, lang, selectLogo, removeLogo, disabled }: Props) {
   const { t } = useT()
   const { logoDisabled, setLogoDisabled } = usePosterEditor()
+  const selected = usePSelector((v) => v.selected)
   const [activeLogoGroup, setActiveLogoGroup] = useState("all")
   const [visibleLogoCount, setVisibleLogoCount] = useState(10)
+  // Sorgente provider (TMDB | TVDB): solo a titolo selezionato; TVDB lazy
+  // all'apertura, fetch condivisa con le altre gallery (vedi useTvdbArtworks).
+  const [source, setSource] = useState<"tmdb" | "tvdb">("tmdb")
+  const tvdb = useTvdbArtworks(source === "tvdb" && !!selected, "logos")
 
   useEffect(() => {
     setVisibleLogoCount(10)
-  }, [logos, activeLogoGroup, lang])
+  }, [logos, activeLogoGroup, lang, source])
 
-  if (logos.length === 0) return (
+  if (logos.length === 0 && !selected) return (
     <div className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-4 text-center">
       <p className="text-xs text-zinc-300 font-medium leading-relaxed">{t("ui.noLogosAvailable")}</p>
     </div>
@@ -55,6 +63,80 @@ export const LogoOptions = React.memo(function LogoOptions({ logos, selectedLogo
 
   return (
     <div>
+      {selected && (
+        <div className="flex gap-1 mb-2 overflow-x-auto scrollbar-none">
+          <button type="button"
+            aria-label={t("ui.tmdb")}
+            onClick={() => setSource("tmdb")}
+            className={`tab-chip h-7 px-2.5 rounded-lg text-[11px] font-semibold border transition-all shrink-0 ${source === "tmdb" ? "tab-chip-active bg-accent-orange/15 text-accent-orange border-accent-orange/35" : "bg-white/5 text-muted border-white/10 hover:text-zinc-200 hover:bg-white/10"}`}
+          >
+            {t("ui.tmdb")}
+            <span className="ml-1 text-[10px] opacity-60">{logos.length}</span>
+          </button>
+          <button type="button"
+            aria-label={t("ui.tvdbTitle")}
+            onClick={() => setSource("tvdb")}
+            className={`tab-chip h-7 px-2.5 rounded-lg text-[11px] font-semibold border transition-all shrink-0 ${source === "tvdb" ? "tab-chip-active bg-accent-orange/15 text-accent-orange border-accent-orange/35" : "bg-white/5 text-muted border-white/10 hover:text-zinc-200 hover:bg-white/10"}`}
+          >
+            {t("ui.tvdbTitle")}
+            <span className="ml-1 text-[10px] opacity-60">{tvdb.items.length}</span>
+          </button>
+        </div>
+      )}
+      {source === "tvdb" && selected ? (
+        <div data-testid="tvdb-logos-panel">
+          {(tvdb.status === "idle" || tvdb.status === "loading") && (
+            <p className="flex items-center justify-center gap-1.5 py-12 text-[11px] text-zinc-500" role="status">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden="true" />
+              {t("ui.tvdbLoading")}
+            </p>
+          )}
+          {tvdb.status === "empty" && (
+            <p className="py-12 text-center text-[11px] text-zinc-500">{t("ui.tvdbEmptyLogos")}</p>
+          )}
+          {tvdb.status === "not_configured" && (
+            <p className="py-12 px-2 text-center text-[11px] text-zinc-500 leading-relaxed">{t("ui.tvdbNotConfigured")}</p>
+          )}
+          {tvdb.status === "unavailable" && (
+            <div className="py-8 text-center">
+              <p className="text-[11px] text-zinc-500">{t("ui.tvdbUnavailable")}</p>
+              <button
+                type="button"
+                onClick={() => tvdb.reload()}
+                className="mt-2 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-[11px] font-semibold text-zinc-300 hover:text-white hover:bg-white/10 transition-all"
+              >
+                {t("ui.retry")}
+              </button>
+            </div>
+          )}
+          {tvdb.status === "ready" && (
+            <div className="grid grid-cols-2 gap-2">
+              {tvdb.items.map((img, idx) => {
+                const m = tvdb.meta[idx]
+                const lang = m?.language ?? null
+                const langLabel = !lang ? t("ui.fanartLangUnknown") : lang.toUpperCase()
+                const isActive = selectedLogo?.file_path === img.file_path
+                return (
+                  <button type="button" key={img.file_path} disabled={disabled} onClick={() => selectLogo(img)} className={`poster-tile group relative p-2 rounded-xl transition-all duration-200 ease-out flex items-center justify-center h-20 ${disabled ? "opacity-40 cursor-not-allowed" : ""} ${isActive ? "poster-tile-active bg-accent-orange/10" : ""}`} title={`${t("ui.tvdbTitle")} · ${langLabel}`}>
+                    {/* eslint-disable-next-line @next/next/no-img-element -- TVDB absolute URL */}
+                    <img src={m?.thumbnail ?? img.file_path} alt="" loading="lazy" decoding="async" className="max-h-14 max-w-full object-contain transition-transform duration-200 group-hover:scale-110" />
+                    <span className="absolute top-1 left-1 z-20 flex items-center gap-1 rounded-md bg-black/60 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-200 backdrop-blur-md border border-white/10 pointer-events-none">
+                      <RatingSourceIcon id="tvdb" className="w-3 h-3" />
+                      {t("ui.tvdbTitle")}
+                    </span>
+                    {isActive && <div className="absolute top-1 right-1 rounded-md bg-accent-orange text-white p-0.5 shadow-sm shadow-accent-orange/40"><Check className="w-3 h-3" /></div>}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      ) : logos.length === 0 ? (
+        <div className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-4 text-center">
+          <p className="text-xs text-zinc-300 font-medium leading-relaxed">{t("ui.noLogosAvailable")}</p>
+        </div>
+      ) : (
+        <>
       <div className="flex gap-1 mb-3 overflow-x-auto scrollbar-none">
         {logoTabs.map((tab) => (
           <button type="button"
@@ -112,6 +194,8 @@ export const LogoOptions = React.memo(function LogoOptions({ logos, selectedLogo
           {t("ui.loadMoreLogos", { count: Math.min(10, totalAvailableLogos - visibleLogoCount) })}
           <span className="text-[10px] text-zinc-500 font-normal">{t("ui.xOfY", { current: visibleLogoCount, total: totalAvailableLogos })}</span>
         </button>
+      )}
+        </>
       )}
 
       {selectedLogo && (

@@ -14,7 +14,11 @@
  *   brand accent via the reference's GENERIC ratio branch only. The
  *   reference's large per-provider catalog matcher is deliberately NOT
  *   copied: this helper takes an already-resolved accent and performs no
- *   queries, fetches, or provider resolution of its own.
+ *   queries, fetches, or provider resolution of its own. The accent itself
+ *   comes from the fixed 8-provider palette
+ *   (`provider-brand-palette.ts`, resolved by brand identity — never from
+ *   logo/artwork pixels); a missing/invalid accent renders the
+ *   provider-glass neutral (`#707780`), NOT the generic `#555555`.
  * - `nuvio` = solid opaque black (reference `black`/`nero` mode).
  * - `stremio` = fixed violet glass (reference non-provider palette),
  *   independent of any passed accent.
@@ -22,7 +26,9 @@
  * Missing/unresolved brand -> documented neutral palette derived from the
  * existing project unresolved-accent default (`#555555`, the same sentinel
  * used by `poster-render-helpers.ts` and `badges.ts` GENRE_FALLBACK
- * fallbacks) through the same generic ratio branch.
+ * fallbacks) through the same generic ratio branch — except
+ * `provider-glass`, which uses its own neutral (`#707780`, see
+ * `resolveProviderGlassSkinAccent`).
  *
  * Safety: the only caller-controlled string that reaches the SVG is the
  * accent, and it passes strict `#rrggbb` validation first (anything else
@@ -36,6 +42,7 @@ import {
   isCardRankDisplayable,
   type CardCoverLayout,
 } from "./card-layout-geometry"
+import { PROVIDER_GLASS_NEUTRAL_ACCENT } from "./provider-brand-palette"
 
 /** Cover skins sharing the single Card composition (no new query params). */
 export type CardSkin = CardCoverLayout
@@ -156,6 +163,19 @@ export function resolveCardSkinAccent(accent: unknown): string {
   return CARD_SKIN_NEUTRAL_ACCENT
 }
 
+/**
+ * Resolve a caller-provided accent for the `provider-glass` skin ONLY:
+ * valid `#rrggbb` passes through (already the fixed brand color or an
+ * explicit manual override, both resolved upstream), anything else renders
+ * the provider-glass neutral (`#707780`) — never the generic `#555555`,
+ * which stays reserved for the other skins and the non-Card paths. The
+ * rank numeral is unaffected (neutral crystal by contract, accent ignored).
+ */
+export function resolveProviderGlassSkinAccent(accent: unknown): string {
+  if (isValidCardAccentHex(accent)) return accent.toUpperCase()
+  return PROVIDER_GLASS_NEUTRAL_ACCENT
+}
+
 function hexToRgb(hex: string): { r: number; g: number; b: number } {
   return {
     r: parseInt(hex.slice(1, 3), 16),
@@ -210,8 +230,8 @@ function brandTintPalette(accentHex: string): CardSkinPalette {
  * Palette for a glass skin. `nuvio` has no glass palette (solid black) and
  * yields null; `stremio` yields the fixed violet palette regardless of the
  * accent; `provider-glass` derives the brand tint from the already-resolved
- * accent (missing/invalid -> neutral fallback). Unknown skins yield null —
- * never an invented palette.
+ * accent (missing/invalid -> its own neutral `#707780`, NOT the generic
+ * `#555555`). Unknown skins yield null — never an invented palette.
  */
 export function cardSkinPalette(
   skin: CardSkin,
@@ -220,7 +240,7 @@ export function cardSkinPalette(
   if (skin === "nuvio") return null
   if (skin === "stremio") return STREMIO_CARD_SKIN_PALETTE
   if (skin === "provider-glass")
-    return brandTintPalette(resolveCardSkinAccent(accent))
+    return brandTintPalette(resolveProviderGlassSkinAccent(accent))
   return null
 }
 
@@ -263,7 +283,7 @@ export function cardSkinBackgroundSvg(
   const pal =
     skin === "stremio"
       ? STREMIO_CARD_SKIN_PALETTE
-      : brandTintPalette(resolveCardSkinAccent(accent))
+      : brandTintPalette(resolveProviderGlassSkinAccent(accent))
 
   const pad = Math.max(1, Math.min(12, Math.floor(Math.min(w, h) / 8)))
   const rw = w - pad * 2

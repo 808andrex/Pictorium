@@ -3,6 +3,7 @@
 import { useCallback } from "react"
 import type { SearchResult, TMDBImage, Mapping, NetworkLogoPosition, PosterShape } from "./types"
 import { titleOf, isCustomPosterUrl, splitCustomPosterSave } from "./utils"
+import { isTvdbArtworkUrl } from "./tvdb-gallery-types"
 import { buildCoverOnlyPayload } from "./cover-only-save"
 import { computeTopBadge, resolveSavedBadgeExtra, type BadgeInput } from "./poster-badge"
 import type { SashBucket } from "./badge-priority"
@@ -255,7 +256,14 @@ export function usePosterSave(deps: PosterSaveDeps) {
           ? existing.customPosterUrl
           : null
         const filePath = customFile ?? existing.posterPath
-        setPreviewPoster({ file_path: filePath, iso_639_1: customFile ? null : existing.language, vote_average: 0, width: 0, height: 0 })
+        // Saved TVDB base reuses the stored mapping language (no new schema):
+        // a with-text portrait restages honestly non-clean so save/reopen
+        // never overlay an auto logo on baked-in text. Legacy-ambiguous
+        // (null) and generic custom URLs keep the historical null.
+        const stagedLang = customFile
+          ? (isTvdbArtworkUrl(customFile) ? (existing.language ?? null) : null)
+          : existing.language
+        setPreviewPoster({ file_path: filePath, iso_639_1: stagedLang, vote_average: 0, width: 0, height: 0 })
       } else if (posters.length > 0) {
         setPreviewPoster(posters[0])
       }

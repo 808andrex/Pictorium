@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { fireEvent, screen, within } from "@testing-library/react"
+import { fireEvent, screen, within, act } from "@testing-library/react"
+import { createElement } from "react"
 import { SettingsPanel } from "@/components/SettingsPanel"
+import { usePosterEditor, type PosterEditorCtx } from "@/lib/contexts/PosterEditorContext"
 import { renderWithCtx } from "@/__tests__/test-utils"
 import { resetGuestGuardForTests } from "@/lib/guest-guard"
 import {
@@ -9,523 +11,578 @@ import {
   setAdminToken,
 } from "@/lib/admin-token"
 
-// UserSpaceSection (renderizzato dal pannello) richiede l'app router di Next:
-// in jsdom non è montato (stesso mock usato in EditViewGate.test.tsx).
+// UserSpaceSection requires the Next app router: same mock as EditViewGate.
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }),
 }))
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() } }))
 
-beforeEach(() => {
-  __resetAdminTokenForTests()
-  vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, json: async () => ({}) })))
-})
+import { toast } from "sonner"
 
-// T3 macro-groups: overlay/quality start collapsed (bodies mounted + hidden).
-// Open disclosures before touching their controls; assertions unchanged.
-function openBadgeGroup(...ids: Array<"style" | "base" | "overlay" | "quality">) {
-  for (const id of ids) {
-    const t = screen.getByTestId(`badge-group-${id}-toggle`)
-    if (t.getAttribute("aria-expanded") !== "true") fireEvent.click(t)
-  }
+let puts: { url: string; body: Record<string, unknown> }[]
+let putOk = true
+let presetList: unknown[] = []
+
+function stubFetch() {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: unknown, init?: { method?: string; body?: string }) => {
+      const u = String(url)
+      if (init?.method === "PUT" && u.includes("/api/defaults")) {
+        puts.push({ url: u, body: JSON.parse(init.body as string) })
+        return {
+          ok: putOk,
+          status: putOk ? 200 : 500,
+          headers: { get: () => null },
+          json: async () => ({}),
+        }
+      }
+      if (u.includes("/api/defaults/presets")) {
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: () => null },
+          json: async () => ({ presets: presetList }),
+        }
+      }
+      if (u.includes("/api/custom-rating/test")) {
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: () => null },
+          json: async () => ({ ok: true, status: 200, ms: 3, ratings: [] }),
+        }
+      }
+      return { ok: false, status: 404, headers: { get: () => null }, json: async () => ({}) }
+    }),
+  )
 }
 
-describe("SettingsPanel", () => {
-  it("renders genre/rating badge toggle and mirror card", () => {
-    renderWithCtx(
-      <SettingsPanel
-        setSettingsOpen={() => {}}
-        exportData={() => {}}
-        importData={() => {}}
-      />
-    )
-    // Toggle nella card Badge + titolo della card specchio nel tab Trasforma.
-    expect(screen.getAllByText("ui.genreRatingBadge")).toHaveLength(2)
+function storageSnapshot(): string {
+  const out: Record<string, string | null> = {}
+  for (let i = 0; i < localStorage.length; i += 1) {
+    const k = localStorage.key(i)!
+    if (k.includes("badgeDefaults") || k.includes("pictorium")) out[k] = localStorage.getItem(k)
+  }
+  return JSON.stringify(out)
+}
+
+function renderPanel(props?: { setSettingsOpen?: () => void; onOpenInstall?: () => void }) {
+  let ctx: PosterEditorCtx | null = null
+  function Probe() {
+    ctx = usePosterEditor()
+    return null
+  }
+  const setSettingsOpen = props?.setSettingsOpen ?? (() => {})
+  const rendered = renderWithCtx(
+    createElement(
+      "div",
+      null,
+      createElement(SettingsPanel, {
+        setSettingsOpen,
+        exportData: () => {},
+        importData: () => {},
+        onOpenInstall: props?.onOpenInstall,
+      }),
+      createElement(Probe),
+    ),
+  )
+  return { ctx: () => ctx as unknown as PosterEditorCtx, setSettingsOpen, container: rendered.container }
+}
+
+function primaryTabs() {
+  return screen.getAllByRole("tab")
+}
+
+function clickTab(name: string) {
+  fireEvent.click(screen.getByRole("tab", { name }))
+}
+
+beforeEach(() => {
+  localStorage.clear()
+  puts = []
+  putOk = true
+  presetList = []
+  vi.clearAllMocks()
+  __resetAdminTokenForTests()
+  resetGuestGuardForTests()
+  stubFetch()
+  Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 1280 })
+})
+
+describe("SettingsPanel five-tab navigation", () => {
+  it("shows five primary tabs in order with Preset first and selected by default", async () => {
+    renderPanel()
+    await screen.findByTestId("presets-panel")
+    const tabs = primaryTabs()
+    expect(tabs.map((b) => b.textContent)).toEqual([
+      "ui.settingsTabPreset",
+      "ui.settingsTabRankings",
+      "ui.settingsTabInformation",
+      "ui.settingsTabBadge",
+      "ui.settingsTabTransform",
+    ])
+    expect(tabs[0]).toHaveAttribute("aria-selected", "true")
+    for (const other of tabs.slice(1)) expect(other).toHaveAttribute("aria-selected", "false")
   })
 
-  it("renders top badge toggle", () => {
-    renderWithCtx(
-      <SettingsPanel
-        setSettingsOpen={() => {}}
-        exportData={() => {}}
-        importData={() => {}}
-      />
-    )
-    openBadgeGroup("overlay")
-    expect(screen.getAllByText("ui.topBadge").length).toBeGreaterThan(0)
-    expect(screen.getByRole("switch", { name: "ui.topBadge" })).toBeInTheDocument()
-    // Hint: il default non muove i salvati, il kill-switch globale è la sash Classifiche.
-    expect(screen.getByText("ui.trendDefaultHint")).toBeInTheDocument()
-  })
-
-  it("top badge master toggle turns all sash categories off and restores them on", () => {
-    renderWithCtx(
-      <SettingsPanel
-        setSettingsOpen={() => {}}
-        exportData={() => {}}
-        importData={() => {}}
-      />
-    )
-    openBadgeGroup("overlay")
-    const trend = screen.getByRole("switch", { name: "ui.topBadge" })
-    const sashNames = ["ui.sash_upcoming", "ui.sash_rank", "ui.sash_new", "ui.sash_award", "ui.sash_extra"]
-    const sashSwitches = () => sashNames.map((n) => screen.getByRole("switch", { name: n }))
-    // Precondizione: master ON e categorie tutte ON (default).
-    if (trend.getAttribute("aria-checked") !== "true") fireEvent.click(trend)
-    sashSwitches().forEach((s) => expect(s.getAttribute("aria-checked")).toBe("true"))
-    // Master OFF → tutte le categorie spente.
-    fireEvent.click(trend)
-    expect(trend.getAttribute("aria-checked")).toBe("false")
-    sashSwitches().forEach((s) => expect(s.getAttribute("aria-checked")).toBe("false"))
-    // Master ON → categorie ripristinate.
-    fireEvent.click(trend)
-    expect(trend.getAttribute("aria-checked")).toBe("true")
-    sashSwitches().forEach((s) => expect(s.getAttribute("aria-checked")).toBe("true"))
-  })
-
-  it("renders separate ratings toggle at top level without opening the accordion", () => {
-    renderWithCtx(
-      <SettingsPanel
-        setSettingsOpen={() => {}}
-        exportData={() => {}}
-        importData={() => {}}
-      />
-    )
-    // Accordion chiuso di default: il toggle ora vive al livello di Voto.
-    expect(screen.getByText("ui.separateRatings")).toBeInTheDocument()
-    expect(screen.getByRole("switch", { name: "ui.separateRatings" })).toBeInTheDocument()
-  })
-
-  it("hides custom rating endpoint block when its master toggle is off", () => {
-    renderWithCtx(
-      <SettingsPanel
-        setSettingsOpen={() => {}}
-        exportData={() => {}}
-        importData={() => {}}
-      />
-    )
-    // Default ON: blocco visibile.
-    expect(screen.getByText("ui.customRatingEndpoint")).toBeInTheDocument()
-    fireEvent.click(screen.getByRole("switch", { name: "ui.customRatings" }))
-    expect(screen.queryByText("ui.customRatingEndpoint")).not.toBeInTheDocument()
-  })
-
-  it("shows preRelease hint and honest sources button label", async () => {
-    renderWithCtx(
-      <SettingsPanel
-        setSettingsOpen={() => {}}
-        exportData={() => {}}
-        importData={() => {}}
-      />
-    )
-    openBadgeGroup("overlay")
-    expect(screen.getByTitle("ui.preReleaseHint")).toBeInTheDocument()
-    // Accordion provider: il bottone dice il vero (reset a solo IMDb).
-    fireEvent.click(screen.getByRole("button", { name: /ui\.ratingSources/ }))
-    expect(await screen.findByText("ui.sourcesImdbOnly")).toBeInTheDocument()
-    expect(screen.queryByText("ui.disableAll")).not.toBeInTheDocument()
-  })
-
-  it("renders clear cache button inside the diagnostics disclosure", () => {    renderWithCtx(
-      <SettingsPanel
-        setSettingsOpen={() => {}}
-        exportData={() => {}}
-        importData={() => {}}
-      />
-    )
-    // Disclosure chiusa di default: il bottone si monta solo aprendola.
-    expect(screen.queryByText("ui.clearCache")).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole("button", { name: /ui\.cacheDiagnostics/ }))
-    const buttons = screen.getAllByRole("button")
-    const clearBtn = buttons.find((b) => b.textContent === "ui.clearCache")
-    expect(clearBtn).toBeTruthy()
-  })
-
-  it("renders export and import buttons", () => {
-    renderWithCtx(
-      <SettingsPanel
-        setSettingsOpen={() => {}}
-        exportData={() => {}}
-        importData={() => {}}
-      />
-    )
+  it("secondary Prefs/Data links live outside the primary tablist; Space only with content", async () => {
+    renderPanel()
+    await screen.findByTestId("presets-panel")
+    expect(primaryTabs()).toHaveLength(5)
+    expect(screen.getByTestId("settings-secondary-prefs")).toBeInTheDocument()
+    expect(screen.getByTestId("settings-secondary-data")).toBeInTheDocument()
+    expect(screen.queryByTestId("settings-secondary-spazio")).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId("settings-secondary-prefs"))
+    expect(screen.getByRole("tabpanel", { name: "ui.settingsTabPrefs" })).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId("settings-secondary-data"))
     expect(screen.getByText("ui.exportJson")).toBeInTheDocument()
-    expect(screen.getByText("ui.importJson")).toBeInTheDocument()
   })
 
-  it("renders badge style selector", () => {
-    renderWithCtx(
-      <SettingsPanel
-        setSettingsOpen={() => {}}
-        exportData={() => {}}
-        importData={() => {}}
-      />
-    )
-    expect(screen.getByText("ui.styleDefault")).toBeInTheDocument()
-  })
-
-  it("does not render API key inputs", () => {
-    renderWithCtx(
-      <SettingsPanel
-        setSettingsOpen={() => {}}
-        exportData={() => {}}
-        importData={() => {}}
-      />
-    )
-    expect(screen.queryByPlaceholderText("ui.tmdbKeyPlaceholder")).toBeNull()
-    expect(screen.queryByPlaceholderText("ui.mdblistKeyPlaceholder")).toBeNull()
-    expect(screen.queryByPlaceholderText("ui.tvdbKeyPlaceholder")).toBeNull()
-  })
-
-  it("renders 4 tabs and switches active tab on click", async () => {
-    const { fireEvent } = await import("@testing-library/react")
-    renderWithCtx(
-      <SettingsPanel
-        setSettingsOpen={() => {}}
-        exportData={() => {}}
-        importData={() => {}}
-      />
-    )
-    const badgeTab = screen.getByRole("tab", { name: "ui.badgeSection" })
-    const transformTab = screen.getByRole("tab", { name: "ui.transform" })
-    const prefsTab = screen.getByRole("tab", { name: "ui.settingsTabPrefs" })
-    const dataTab = screen.getByRole("tab", { name: "ui.settingsTabData" })
-
-    expect(badgeTab).toHaveAttribute("aria-selected", "true")
-    expect(transformTab).toHaveAttribute("aria-selected", "false")
-    expect(prefsTab).toHaveAttribute("aria-selected", "false")
-    expect(dataTab).toHaveAttribute("aria-selected", "false")
-
-    fireEvent.click(prefsTab)
-    expect(badgeTab).toHaveAttribute("aria-selected", "false")
-    expect(prefsTab).toHaveAttribute("aria-selected", "true")
-    expect(dataTab).toHaveAttribute("aria-selected", "false")
-    expect(screen.getByText("ui.settingsAutomationTitle")).toBeInTheDocument()
-
-    fireEvent.click(dataTab)
-    expect(dataTab).toHaveAttribute("aria-selected", "true")
-    expect(prefsTab).toHaveAttribute("aria-selected", "false")
-
-    fireEvent.click(transformTab)
-    expect(transformTab).toHaveAttribute("aria-selected", "true")
-    expect(badgeTab).toHaveAttribute("aria-selected", "false")
-  })
-
-  it("calls setSettingsOpen(false) when Fine button is clicked", async () => {
-    const { fireEvent } = await import("@testing-library/react")
-    const closeSpy = vi.fn()
-    renderWithCtx(
-      <SettingsPanel
-        setSettingsOpen={closeSpy}
-        exportData={() => {}}
-        importData={() => {}}
-      />
-    )
-    const closeButtons = screen.getAllByRole("button", { name: /Fine|ui\.settingsDone/i })
-    expect(closeButtons.length).toBeGreaterThan(0)
-    fireEvent.click(closeButtons[0])
-    expect(closeSpy).toHaveBeenCalledWith(false)
-  })
-
-  it("mostra la sezione PIN con multi-user spento", async () => {
+  it("space tab appears with multi-user on and keeps prefs/data reachable", async () => {
     resetGuestGuardForTests()
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (url: unknown) =>
-        String(url).includes("/api/status")
-          ? { ok: true, json: async () => ({ multiUser: false }) }
-          : { ok: false, json: async () => ({}) },
-      ),
+      vi.fn(async (url: unknown, init?: { method?: string; body?: string }) => {
+        const u = String(url)
+        if (u.includes("/api/status")) {
+          return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ multiUser: true }) }
+        }
+        if (init?.method === "PUT" && u.includes("/api/defaults")) {
+          puts.push({ url: u, body: JSON.parse(init.body as string) })
+          return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({}) }
+        }
+        if (u.includes("/api/defaults/presets")) {
+          return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ presets: [] }) }
+        }
+        return { ok: false, status: 404, headers: { get: () => null }, json: async () => ({}) }
+      }),
     )
-    renderWithCtx(
-      <SettingsPanel
-        setSettingsOpen={() => {}}
-        exportData={() => {}}
-        importData={() => {}}
-      />
-    )
-    expect(await screen.findByText("ui.pinSecurityTitle")).toBeInTheDocument()
-    resetGuestGuardForTests()
-  })
-
-  it("nasconde la sezione PIN con multi-user attivo (niente doppio lucchetto)", async () => {
-    resetGuestGuardForTests()
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (url: unknown) =>
-        String(url).includes("/api/status")
-          ? { ok: true, json: async () => ({ multiUser: true }) }
-          : { ok: false, json: async () => ({}) },
-      ),
-    )
-    renderWithCtx(
-      <SettingsPanel
-        setSettingsOpen={() => {}}
-        exportData={() => {}}
-        importData={() => {}}
-      />
-    )
-    // Il pannello c'è (altro contenuto stabile), la sezione PIN sparisce.
-    expect(await screen.findAllByText("ui.genreRatingBadge")).not.toHaveLength(0)
-    expect(screen.queryByText("ui.pinSecurityTitle")).not.toBeInTheDocument()
-    resetGuestGuardForTests()
-  })
-
-  it("tiene il corpo PIN smontato finché la disclosure è chiusa", () => {
-    renderWithCtx(
-      <SettingsPanel
-        setSettingsOpen={() => {}}
-        exportData={() => {}}
-        importData={() => {}}
-      />
-    )
-    expect(screen.getByText("ui.pinSecurityTitle")).toBeInTheDocument()
-    expect(screen.queryByText("ui.pinSecurityDesc")).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole("button", { name: /ui\.pinSecurityTitle/ }))
-    expect(screen.getByText("ui.pinSecurityDesc")).toBeInTheDocument()
-  })
-
-  it("tab Spazio dedicato: fuori da Dati & Cache, solo con contenuto", async () => {
-    resetGuestGuardForTests()
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (url: unknown) =>
-        String(url).includes("/api/status")
-          ? { ok: true, json: async () => ({ multiUser: true }) }
-          : { ok: false, json: async () => ({}) },
-      ),
-    )
-    renderWithCtx(
-      <SettingsPanel
-        setSettingsOpen={() => {}}
-        exportData={() => {}}
-        importData={() => {}}
-      />
-    )
-    // Quinto tab; il gate vive lì dentro (divider crea/entri).
-    const tab = await screen.findByRole("tab", { name: "ui.settingsTabSpace" })
-    expect(screen.getAllByRole("tab")).toHaveLength(5)
-    fireEvent.click(tab)
-    expect(tab).toHaveAttribute("aria-selected", "true")
+    renderPanel()
+    await screen.findByTestId("presets-panel")
+    const space = await screen.findByTestId("settings-secondary-spazio")
+    expect(primaryTabs()).toHaveLength(5)
+    fireEvent.click(space)
     expect(await screen.findByText("ui.userSpaceOr")).toBeInTheDocument()
     resetGuestGuardForTests()
   })
 
-  it("senza multi-user né /u/ il tab Spazio non esiste (restano 4)", async () => {
-    resetGuestGuardForTests()
-    renderWithCtx(
-      <SettingsPanel
-        setSettingsOpen={() => {}}
-        exportData={() => {}}
-        importData={() => {}}
-      />
-    )
-    expect(await screen.findAllByText("ui.genreRatingBadge")).not.toHaveLength(0)
-    expect(screen.queryByRole("tab", { name: "ui.settingsTabSpace" })).not.toBeInTheDocument()
-    expect(screen.getAllByRole("tab")).toHaveLength(4)
-    resetGuestGuardForTests()
+  it("mobile category selector groups primary and secondary via optgroups", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 390 })
+    const { container } = renderPanel()
+    await screen.findByTestId("presets-panel")
+    const select = container.querySelector("#mobile-settings-category") as HTMLSelectElement
+    expect(select).toBeInTheDocument()
+    const groups = Array.from(select.querySelectorAll("optgroup")).map((g) => g.getAttribute("label"))
+    expect(groups).toEqual(["ui.settingsGroupPrimary", "ui.settingsGroupSecondary"])
+    const values = Array.from(select.querySelectorAll("option")).map((o) => o.getAttribute("value"))
+    expect(values).toEqual(["preset", "rankings", "information", "badge", "transform", "prefs", "data"])
   })
 
-  it("trasforma tab has Portrait/Landscape sub-tabs with separate tuning", async () => {
-    renderWithCtx(
-      <SettingsPanel
-        setSettingsOpen={() => {}}
-        exportData={() => {}}
-        importData={() => {}}
-      />
+  it("does not render API key inputs", async () => {
+    renderPanel()
+    await screen.findByTestId("presets-panel")
+    expect(screen.queryByPlaceholderText("ui.tmdbKeyPlaceholder")).toBeNull()
+    expect(screen.queryByPlaceholderText("ui.mdblistKeyPlaceholder")).toBeNull()
+    expect(screen.queryByPlaceholderText("ui.tvdbKeyPlaceholder")).toBeNull()
+  })
+})
+
+describe("SettingsPanel staged session + global save", () => {
+  it("preset clicks stage locally: no PUT and no local writes until Save", async () => {
+    const { ctx } = renderPanel()
+    await screen.findByTestId("poster-style-apple")
+    const before = storageSnapshot()
+    const putsBefore = puts.length
+    fireEvent.click(screen.getByTestId("poster-style-apple"))
+    // Staged highlight, still on the same tab.
+    expect(screen.getByTestId("poster-style-apple")).toHaveAttribute("aria-pressed", "true")
+    expect(screen.getByTestId("presets-panel")).toBeInTheDocument()
+    expect(puts).toHaveLength(putsBefore)
+    expect(storageSnapshot()).toBe(before)
+    // Outer live truth untouched (staged only).
+    expect(ctx().defaultBadgeStyle).not.toBe("minimal")
+    // Save is now enabled with an unsaved status.
+    expect(screen.getByTestId("settings-save")).not.toBeDisabled()
+    expect(screen.getByTestId("settings-save-status")).toHaveTextContent("ui.unsavedChanges")
+  })
+
+  it("one Save persists every tab value with a single PUT and stays on the tab", async () => {
+    const { ctx } = renderPanel()
+    await screen.findByTestId("poster-style-apple")
+    fireEvent.click(screen.getByTestId("poster-style-apple"))
+    clickTab("ui.settingsTabInformation")
+    // Visibility switch on the Information tab (staged, same session).
+    const ratingSwitch = screen.getByRole("switch", { name: "ui.badgeRating" });
+    if (ratingSwitch.getAttribute("aria-checked") !== "true") fireEvent.click(ratingSwitch)
+    expect(puts).toHaveLength(0)
+    fireEvent.click(screen.getByTestId("settings-save"))
+    await screen.findByText("ui.synced")
+    expect(puts).toHaveLength(1)
+    // Same tab, still on the page (no close, no navigation).
+    expect(screen.getByRole("tab", { name: "ui.settingsTabInformation" })).toHaveAttribute(
+      "aria-selected",
+      "true",
     )
-    fireEvent.click(screen.getByRole("tab", { name: "ui.transform" }))
-    const panel = screen.getByRole("tabpanel", { name: "ui.transform" })
-    // Default: sezione Verticale, quella Orizzontale non è nel DOM.
-    expect(within(panel).queryByText("ui.landscapeDefaultsHint")).not.toBeInTheDocument()
-    // Single edit-target selector lives outside the tabpanel (shared with Badge).
+    expect(screen.getByTestId("settings-save")).toBeDisabled()
+    expect(toast.success).toHaveBeenCalledWith("ui.saved")
+    // Outer truth converged on the staged values.
+    expect(ctx().defaultBadgeRating).toBe(true)
+  })
+
+  it("failed save keeps the editable draft and the global Save retries on the same page", async () => {
+    renderPanel()
+    await screen.findByTestId("poster-style-apple")
+    fireEvent.click(screen.getByTestId("poster-style-full"))
+    expect(screen.getByTestId("poster-style-full")).toHaveAttribute("aria-pressed", "true")
+    putOk = false
+    fireEvent.click(screen.getByTestId("settings-save"))
+    await screen.findByText("ui.saveError")
+    expect(toast.error).toHaveBeenCalledWith("ui.saveError")
+    expect(puts).toHaveLength(1)
+    // Draft retained and still editable: still dirty, selection kept, no
+    // extra retry button — the single global Save retries.
+    expect(screen.queryByTestId("settings-retry")).not.toBeInTheDocument()
+    expect(screen.getByTestId("settings-save")).not.toBeDisabled()
+    expect(screen.getByTestId("poster-style-full")).toHaveAttribute("aria-pressed", "true")
+    expect(screen.getByTestId("settings-save-status")).toHaveTextContent("ui.saveError")
+    // Retry via the same global Save persists and clears the error.
+    putOk = true
+    fireEvent.click(screen.getByTestId("settings-save"))
+    await screen.findByText("ui.synced")
+    expect(puts).toHaveLength(2)
+    expect(toast.success).toHaveBeenCalledWith("ui.saved")
+  })
+
+  it("save is disabled while clean with an honest pre-save status", async () => {
+    renderPanel()
+    await screen.findByTestId("presets-panel")
+    expect(screen.getByTestId("settings-save")).toBeDisabled()
+    expect(screen.getByTestId("settings-save-status")).toHaveTextContent("ui.settingsNotSavedYet")
+    expect(screen.queryByTestId("settings-retry")).not.toBeInTheDocument()
+  })
+
+  it("custom rating test is disabled while dirty and never flushes the draft", async () => {
+    renderPanel()
+    await screen.findByTestId("poster-style-apple")
+    fireEvent.click(screen.getByTestId("poster-style-apple"))
+    clickTab("ui.settingsTabInformation")
+    const customSwitch = screen.getByRole("switch", { name: "ui.customRatings" })
+    if (customSwitch.getAttribute("aria-checked") !== "true") fireEvent.click(customSwitch)
+    fireEvent.change(screen.getByPlaceholderText("https://example.com/ratings/{imdbId}"), {
+      target: { value: "https://example.com/ratings/{imdbId}" },
+    })
+    const testBtn = screen.getByRole("button", { name: "ui.customRatingTest" })
+    expect(testBtn).toBeDisabled()
+    expect(screen.getByText("ui.customRatingSaveFirstHint")).toBeInTheDocument()
+    // The endpoint writes nothing and the staged draft was never flushed.
+    expect(puts).toHaveLength(0)
+    fireEvent.click(screen.getByTestId("settings-save"))
+    await screen.findByText("ui.synced")
+    expect(puts).toHaveLength(1)
+    // Clean session: testing is available again.
+    expect(screen.getByRole("button", { name: "ui.customRatingTest" })).not.toBeDisabled()
+  })
+})
+
+describe("SettingsPanel dirty-guard close paths", () => {
+  it("tab switch with a dirty draft navigates freely with no dialog (edits retained)", async () => {
+    renderPanel()
+    await screen.findByTestId("poster-style-apple")
+    fireEvent.click(screen.getByTestId("poster-style-apple"))
+    clickTab("ui.settingsTabRankings")
+    // Free navigation: the tab applied immediately, no guard dialog.
+    expect(screen.queryByTestId("settings-dirty-dialog")).not.toBeInTheDocument()
+    expect(screen.getByRole("tab", { name: "ui.settingsTabRankings" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    )
+    // Draft retained across the switch: still dirty, Save enabled.
+    expect(screen.getByTestId("settings-save")).not.toBeDisabled()
+    clickTab("ui.settingsTabPreset")
+    expect(screen.getByTestId("poster-style-apple")).toHaveAttribute("aria-pressed", "true")
+  })
+
+  it("X, Escape and the external toolbar path all warn when dirty; backdrop clicks are blocked", async () => {
+    const closeSpy = vi.fn()
+    renderPanel({ setSettingsOpen: closeSpy })
+    await screen.findByTestId("poster-style-apple")
+    fireEvent.click(screen.getByTestId("poster-style-apple"))
+    // X close.
+    fireEvent.click(screen.getByRole("button", { name: /Chiudi|Close|ui\.close/i }))
+    expect(screen.getByTestId("settings-dirty-dialog")).toBeInTheDocument()
+    expect(closeSpy).not.toHaveBeenCalled()
+    // Backdrop click on the centered overlay never resolves (no silent
+    // discard): the modal stays open with the draft intact. The settings
+    // shell underneath is aria-hidden while the modal owns the dialog role.
+    fireEvent.click(screen.getByRole("dialog"))
+    expect(screen.getByTestId("settings-dirty-dialog")).toBeInTheDocument()
+    expect(closeSpy).not.toHaveBeenCalled()
+    expect(puts).toHaveLength(0)
+    fireEvent.click(screen.getByTestId("settings-dirty-continue"))
+    // Escape close.
+    fireEvent.keyDown(window, { key: "Escape" })
+    expect(screen.getByTestId("settings-dirty-dialog")).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId("settings-dirty-continue"))
+    // External toolbar toggle path (shell event, never a direct unmount).
+    act(() => { window.dispatchEvent(new CustomEvent("pictorium:settings-close-request")) })
+    expect(screen.getByTestId("settings-dirty-dialog")).toBeInTheDocument()
+    // Confirmed discard closes exactly once with no PUT.
+    fireEvent.click(screen.getByTestId("settings-dirty-discard"))
+    expect(closeSpy).toHaveBeenCalledTimes(1)
+    expect(closeSpy).toHaveBeenCalledWith(false)
+    expect(puts).toHaveLength(0)
+  })
+
+  it("clean close needs no warning on any path", async () => {
+    const closeSpy = vi.fn()
+    renderPanel({ setSettingsOpen: closeSpy })
+    await screen.findByTestId("presets-panel")
+    fireEvent.click(screen.getByRole("button", { name: /Chiudi|Close|ui\.close/i }))
+    expect(closeSpy).toHaveBeenCalledWith(false)
+    expect(screen.queryByTestId("settings-dirty-dialog")).not.toBeInTheDocument()
+  })
+
+  it("install runs only on confirmed close, never implicitly", async () => {
+    const closeSpy = vi.fn()
+    const installSpy = vi.fn()
+    renderPanel({ setSettingsOpen: closeSpy, onOpenInstall: installSpy })
+    await screen.findByTestId("poster-style-apple")
+    fireEvent.click(screen.getByTestId("poster-style-apple"))
+    fireEvent.click(screen.getByTestId("settings-install"))
+    // Guarded: nothing ran yet.
+    expect(installSpy).not.toHaveBeenCalled()
+    expect(closeSpy).not.toHaveBeenCalled()
+    expect(screen.getByTestId("settings-dirty-dialog")).toBeInTheDocument()
+    // Continue: pending action dropped, still open.
+    fireEvent.click(screen.getByTestId("settings-dirty-continue"))
+    expect(installSpy).not.toHaveBeenCalled()
+    expect(closeSpy).not.toHaveBeenCalled()
+    // Confirmed: close first, then the action.
+    fireEvent.click(screen.getByTestId("settings-install"))
+    fireEvent.click(screen.getByTestId("settings-dirty-discard"))
+    expect(closeSpy).toHaveBeenCalledWith(false)
+    expect(installSpy).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe("SettingsPanel shape, resize and tab homes", () => {
+  it("edit target survives tab switches and never touches the delivery format", async () => {
+    const { ctx } = renderPanel()
+    await screen.findByTestId("presets-panel")
+    const deliveryBefore = ctx().defaultPosterShape
     fireEvent.click(within(screen.getByTestId("format-target-selector")).getByText("ui.posterShapeLandscape"))
-    expect(await within(panel).findByText("ui.landscapeDefaultsHint")).toBeInTheDocument()
+    // Preset apply on landscape: portrait flats untouched, delivery intact.
+    fireEvent.click(screen.getByTestId("poster-style-apple"))
+    expect(puts).toHaveLength(0)
+    expect(ctx().defaultPosterShape).toBe(deliveryBefore)
+    clickTab("ui.settingsTabRankings")
+    const landscapeBtn = within(screen.getByTestId("format-target-selector")).getByText(
+      "ui.posterShapeLandscape",
+    ).closest("button")
+    expect(landscapeBtn).toHaveAttribute("aria-pressed", "true")
+    clickTab("ui.settingsTabPreset")
+    expect(
+      within(screen.getByTestId("format-target-selector")).getByText("ui.posterShapeLandscape").closest("button"),
+    ).toHaveAttribute("aria-pressed", "true")
   })
 
-  it("trasforma tab has split blur toggles for Portrait and Landscape", async () => {
-    renderWithCtx(
-      <SettingsPanel
-        setSettingsOpen={() => {}}
-        exportData={() => {}}
-        importData={() => {}}
-      />
-    )
-    fireEvent.click(screen.getByRole("tab", { name: "ui.transform" }))
-    const panel = screen.getByRole("tabpanel", { name: "ui.transform" })
-    expect(within(panel).getByRole("switch", { name: "ui.blurSection" })).toBeInTheDocument()
-    fireEvent.click(within(screen.getByTestId("format-target-selector")).getByText("ui.posterShapeLandscape"))
-    expect(within(panel).getByRole("switch", { name: "ui.blurSection · ui.posterShapeLandscape" })).toBeInTheDocument()
+  it("single responsive owner: tab and draft survive resize with one dialog", async () => {
+    renderPanel()
+    await screen.findByTestId("poster-style-apple")
+    fireEvent.click(screen.getByTestId("poster-style-apple"))
+    clickTab("ui.settingsTabBadge")
+    expect(screen.getAllByRole("dialog")).toHaveLength(1)
+    Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 390 })
+    act(() => { window.dispatchEvent(new Event("resize")) })
+    expect(screen.getAllByRole("dialog")).toHaveLength(1)
+    // Same tab, same staged draft after the form-factor switch.
+    expect(screen.getByRole("tab", { name: "ui.settingsTabBadge" })).toBeInTheDocument()
+    expect(screen.getByTestId("settings-save")).not.toBeDisabled()
+    Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 1280 })
+    act(() => { window.dispatchEvent(new Event("resize")) })
+    expect(screen.getAllByRole("dialog")).toHaveLength(1)
+    expect(screen.getByTestId("settings-save")).not.toBeDisabled()
   })
 
-  it("landscape logo card follows the Orizzontale override, portrait the flat default", async () => {
-    localStorage.setItem(
-      "badgeDefaults",
-      JSON.stringify({ landscape: { logoScale: 60 }, logoScale: 80 }),
+  it("rank switch lives only in Rankings; Information holds visibility without duplicates", async () => {
+    renderPanel()
+    await screen.findByTestId("presets-panel")
+    clickTab("ui.settingsTabRankings")
+    expect(screen.getByRole("switch", { name: "ui.sash_rank" })).toBeInTheDocument()
+    // Scoped to the active Rankings tabpanel (never a global getAll count).
+    // Several Badge tabpanels mount simultaneously (siblings hidden); scope
+    // through the Rankings-only switch to the visible panel.
+    const rankSwitch = screen.getByRole("switch", { name: "ui.sash_rank" })
+    const rankingsPanel = rankSwitch.closest('[role="tabpanel"]') as HTMLElement
+    expect(within(rankingsPanel).getAllByText("ui.rankFamily").length).toBeGreaterThanOrEqual(1)
+    clickTab("ui.settingsTabInformation")
+    // No rank appearance or priority controls on the visibility tab.
+    expect(screen.queryByRole("switch", { name: "ui.sash_rank" })).not.toBeInTheDocument()
+    expect(screen.getByRole("switch", { name: "ui.badgeGenre" })).toBeInTheDocument()
+    expect(screen.getByRole("switch", { name: "ui.badgeYear" })).toBeInTheDocument()
+    expect(screen.getByRole("switch", { name: "ui.badgeRating" })).toBeInTheDocument()
+    expect(screen.getByRole("switch", { name: "ui.badgeQuality" })).toBeInTheDocument()
+    expect(screen.getByRole("switch", { name: "ui.ageBadge" })).toBeInTheDocument()
+    expect(screen.getByRole("switch", { name: "ui.networkLogo" })).toBeInTheDocument()
+  })
+
+  it("appearance shows styles with compact inactive hints instead of switches", async () => {
+    renderPanel()
+    await screen.findByTestId("presets-panel")
+    clickTab("ui.settingsTabBadge")
+    // Style homes scoped via their unique gates (several Badge tabpanels
+    // mount simultaneously with siblings hidden; global text queries would
+    // false-positive on hidden instances and on gate+label duplicates).
+    const genreGate = screen.getByTestId("badge-genre-style")
+    expect(within(genreGate).getAllByText("ui.styleGenreBadge").length).toBeGreaterThanOrEqual(1)
+    expect(screen.getByTestId("badge-common-font")).toBeInTheDocument()
+    const extraGate = screen.getByTestId("badge-extra-style")
+    expect(within(extraGate).getAllByText("ui.extraBadgeStyle").length).toBeGreaterThanOrEqual(1)
+    expect(screen.queryByRole("switch", { name: "ui.badgeGenre" })).not.toBeInTheDocument()
+    expect(screen.queryByRole("switch", { name: "ui.badgeRating" })).not.toBeInTheDocument()
+  })
+
+  it("transform is geometry-only: sliders plus moved position controls, no style picker", async () => {
+    renderPanel()
+    await screen.findByTestId("presets-panel")
+    clickTab("ui.settingsTabTransform")
+    const transformPanel = screen.getByRole("tabpanel", { name: "ui.transform" })
+    expect(transformPanel).toBeInTheDocument()
+    // Position hosts the network-position override only (logo alignment is
+    // Auto-only: no selector, no subgroup, no card anywhere).
+    expect(within(transformPanel).getByText("ui.position")).toBeInTheDocument()
+    expect(within(transformPanel).getByText("ui.networkLogoPosition")).toBeInTheDocument()
+    expect(within(transformPanel).queryByText("ui.logoAlign")).toBeNull()
+    // Scoped to the visible transform panel: hidden Badge instances still
+    // mount the picker, so a global query would false-positive.
+    expect(within(transformPanel).queryByText("ui.separateRatingsStyle")).toBeNull()
+  })
+
+  it("header slot is shared: selector on primary tabs, title card on secondary", async () => {
+    renderPanel()
+    await screen.findByTestId("presets-panel")
+    const slot = screen.getByTestId("settings-tab-header-slot")
+    expect(screen.getByTestId("format-target-selector")).toBeInTheDocument()
+    // No explanatory paragraph next to the compact selector.
+    expect(screen.queryByText("ui.formatTargetHint")).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId("settings-secondary-prefs"))
+    expect(screen.queryByTestId("format-target-selector")).not.toBeInTheDocument()
+    expect(screen.getByTestId("settings-tab-header-slot")).toBe(slot)
+    expect(within(slot).getByText("ui.settingsTabPrefs")).toBeInTheDocument()
+  })
+
+  it("traps focus inside the desktop dialog on Tab and Shift+Tab", async () => {
+    renderPanel()
+    await screen.findByTestId("presets-panel")
+    const dialog = screen.getByRole("dialog")
+    const focusable = dialog.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
     )
-    try {
-      renderWithCtx(
-        <SettingsPanel
-          setSettingsOpen={() => {}}
-          exportData={() => {}}
-          importData={() => {}}
-        />
-      )
-      fireEvent.click(screen.getByRole("tab", { name: "ui.transform" }))
-      const panel = screen.getByRole("tabpanel", { name: "ui.transform" })
-      // Verticale: default flat 80%.
-      const portraitSliders = within(panel).getAllByRole("slider", { name: "ui.scale" })
-      expect(portraitSliders.some((s) => s.getAttribute("aria-valuetext") === "80%")).toBe(true)
-      // Orizzontale via the single external selector: override 60%.
-      fireEvent.click(within(screen.getByTestId("format-target-selector")).getByText("ui.posterShapeLandscape"))
-      const landscapeSliders = within(panel).getAllByRole("slider", { name: "ui.scale" })
-      expect(landscapeSliders.some((s) => s.getAttribute("aria-valuetext") === "60%")).toBe(true)
-    } finally {
-      localStorage.removeItem("badgeDefaults")
-    }
+    expect(focusable.length).toBeGreaterThan(1)
+    const first = focusable[0]
+    const last = focusable[focusable.length - 1]
+    last.focus()
+    fireEvent.keyDown(window, { key: "Tab", shiftKey: false })
+    expect(document.activeElement).toBe(first)
+    first.focus()
+    fireEvent.keyDown(window, { key: "Tab", shiftKey: true })
+    expect(document.activeElement).toBe(last)
+  })
+
+  it("dirty dialog traps focus and restores it on resolve", async () => {
+    renderPanel()
+    await screen.findByTestId("poster-style-apple")
+    fireEvent.click(screen.getByTestId("poster-style-apple"))
+    // Close path (not tab navigation) owns the guard dialog.
+    fireEvent.click(screen.getByRole("button", { name: /Chiudi|Close|ui\.close/i }))
+    const dialog = screen.getByTestId("settings-dirty-dialog")
+    expect(document.activeElement).toBe(screen.getByTestId("settings-dirty-continue"))
+    const buttons = within(dialog).getAllByRole("button")
+    // Three actions: save first (primary), safe continue, exit-discard.
+    expect(buttons.map((b) => b.getAttribute("data-testid"))).toEqual([
+      "settings-dirty-save",
+      "settings-dirty-continue",
+      "settings-dirty-discard",
+    ])
+    const last = buttons[buttons.length - 1]
+    last.focus()
+    fireEvent.keyDown(window, { key: "Tab", shiftKey: false })
+    expect(document.activeElement).toBe(screen.getByTestId("settings-dirty-save"))
+    fireEvent.click(screen.getByTestId("settings-dirty-continue"))
+    expect(screen.queryByTestId("settings-dirty-dialog")).not.toBeInTheDocument()
+  })
+})
+
+describe("SettingsPanel prefs/data panels", () => {
+  it("prefs keeps delivery format, region and episode source staged under Save", async () => {
+    const { ctx } = renderPanel()
+    await screen.findByTestId("presets-panel")
+    fireEvent.click(screen.getByTestId("settings-secondary-prefs"))
+    const prefsPanel = screen.getByRole("tabpanel", { name: "ui.settingsTabPrefs" })
+    const landscapeBtn = within(prefsPanel).getByRole("button", { name: "ui.posterShapeLandscape" })
+    fireEvent.click(landscapeBtn)
+    expect(puts).toHaveLength(0)
+    expect(ctx().defaultPosterShape).not.toBe("landscape")
+    fireEvent.click(screen.getByTestId("settings-save"))
+    await screen.findByText("ui.synced")
+    expect(puts).toHaveLength(1)
+    expect(ctx().defaultPosterShape).toBe("landscape")
   })
 
   it("allows selecting TVDB as episode metadata source in prefs tab", async () => {
-    renderWithCtx(
-      <SettingsPanel
-        setSettingsOpen={() => {}}
-        exportData={() => {}}
-        importData={() => {}}
-      />
-    )
-    const prefsTab = screen.getByRole("tab", { name: "ui.settingsTabPrefs" })
-    fireEvent.click(prefsTab)
-
+    renderPanel()
+    await screen.findByTestId("presets-panel")
+    fireEvent.click(screen.getByTestId("settings-secondary-prefs"))
     const tvdbBtn = screen.getByRole("button", { name: "TVDB" })
     const tmdbBtn = screen.getByRole("button", { name: "TMDB" })
-
-    // TMDB default: highlighted with bg-white/20
     expect(tmdbBtn.className).toContain("bg-white/20")
-    expect(tvdbBtn.className).not.toContain("bg-white/20")
-
-    // Click TVDB
     fireEvent.click(tvdbBtn)
     expect(tvdbBtn.className).toContain("bg-white/20")
-    expect(tmdbBtn.className).not.toContain("bg-white/20")
-
-    // Click TMDB back
-    fireEvent.click(tmdbBtn)
-    expect(tmdbBtn.className).toContain("bg-white/20")
-    expect(tvdbBtn.className).not.toContain("bg-white/20")
+    expect(screen.getByTestId("settings-save")).not.toBeDisabled()
   })
 
-  it("mostra Formato poster nel tab Preferenze (non nel tab Badge)", async () => {
-    renderWithCtx(
-      <SettingsPanel
-        setSettingsOpen={() => {}}
-        exportData={() => {}}
-        importData={() => {}}
-      />
-    )
-    // Tab Badge: nessun controllo formato.
-    const badgePanel = screen.getByRole("tabpanel", { name: "ui.badgeSection" })
-    expect(within(badgePanel).queryByRole("button", { name: "ui.posterShapeLandscape" })).not.toBeInTheDocument()
-    // Tab Preferenze: il controllo c'è e commuta il default.
-    fireEvent.click(screen.getByRole("tab", { name: "ui.settingsTabPrefs" }))
-    const prefsPanel = screen.getByRole("tabpanel", { name: "ui.settingsTabPrefs" })
-    const portraitBtn = within(prefsPanel).getByRole("button", { name: "ui.posterShapePortrait" })
-    const landscapeBtn = within(prefsPanel).getByRole("button", { name: "ui.posterShapeLandscape" })
-    expect(portraitBtn.className).toContain("bg-white/20")
-    fireEvent.click(landscapeBtn)
-    expect(landscapeBtn.className).toContain("bg-white/20")
-    expect(portraitBtn.className).not.toContain("bg-white/20")
+  it("renders export/import and the diagnostics disclosure on data", async () => {
+    renderPanel()
+    await screen.findByTestId("presets-panel")
+    fireEvent.click(screen.getByTestId("settings-secondary-data"))
+    expect(screen.getByText("ui.exportJson")).toBeInTheDocument()
+    expect(screen.getByText("ui.importJson")).toBeInTheDocument()
+    expect(screen.queryByText("ui.clearCache")).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: /ui\.cacheDiagnostics/ }))
+    const buttons = screen.getAllByRole("button")
+    expect(buttons.find((b) => b.textContent === "ui.clearCache")).toBeTruthy()
   })
 
-  it("mostra la card Token admin solo quando il server ha ADMIN_TOKEN", async () => {
+  it("shows the admin token card only when the server has ADMIN_TOKEN", async () => {
     resetGuestGuardForTests()
     vi.stubGlobal(
       "fetch",
       vi.fn(async (url: unknown) =>
         String(url).includes("/api/auth/pin")
-          ? { ok: true, json: async () => ({ hasPin: false, hasAdminToken: true }) }
-          : { ok: false, json: async () => ({}) },
+          ? { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ hasPin: false, hasAdminToken: true }) }
+          : { ok: false, status: 404, headers: { get: () => null }, json: async () => ({}) },
       ),
     )
-    renderWithCtx(
-      <SettingsPanel
-        setSettingsOpen={() => {}}
-        exportData={() => {}}
-        importData={() => {}}
-      />
-    )
+    renderPanel()
+    await screen.findByTestId("presets-panel")
+    fireEvent.click(screen.getByTestId("settings-secondary-data"))
     expect(await screen.findByText("ui.adminTokenTitle")).toBeInTheDocument()
     resetGuestGuardForTests()
   })
 
-  it("nasconde la card Token admin quando il server non ha ADMIN_TOKEN", async () => {
-    resetGuestGuardForTests()
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (url: unknown) =>
-        String(url).includes("/api/auth/pin")
-          ? { ok: true, json: async () => ({ hasPin: false, hasAdminToken: false }) }
-          : { ok: false, json: async () => ({}) },
-      ),
-    )
-    renderWithCtx(
-      <SettingsPanel
-        setSettingsOpen={() => {}}
-        exportData={() => {}}
-        importData={() => {}}
-      />
-    )
-    // Flush del fetch async, poi la card deve mancare (niente rumore UI).
-    expect(await screen.findAllByText("ui.genreRatingBadge")).not.toHaveLength(0)
-    expect(screen.queryByText("ui.adminTokenTitle")).not.toBeInTheDocument()
-    resetGuestGuardForTests()
-  })
-
-  it("mostra la riga risorse server solo con admin token quando /api/cache/status risponde", async () => {
+  it("shows server resources only with admin token when cache status answers", async () => {
     setAdminToken("test-token")
     try {
       vi.stubGlobal(
         "fetch",
-        vi.fn(async (url: unknown) =>
-          String(url).includes("/api/cache/status")
-            ? {
-                ok: true,
-                json: async () => ({
-                  totalEntries: 7,
-                  system: {
-                    memory: { rssMb: 110, heapUsedMb: 54, heapTotalMb: 78 },
-                    uptimeSeconds: 195,
-                  },
-                }),
-              }
-            : { ok: false, json: async () => ({}) },
-        ),
-      )
-      renderWithCtx(
-        <SettingsPanel
-          setSettingsOpen={() => {}}
-          exportData={() => {}}
-          importData={() => {}}
-        />
-      )
-      // Disclosure chiusa di default: vai al tab Dati & Cache, aprila, il fetch parte.
-      fireEvent.click(screen.getByRole("tab", { name: "ui.settingsTabData" }))
-      fireEvent.click(screen.getByRole("button", { name: /ui\.cacheDiagnostics/ }))
-      expect(await screen.findByText(/ui\.statusMemoryRss/)).toBeInTheDocument()
-      const link = screen.getByRole("link", { name: /ui\.statusTitle/ })
-      expect(link).toHaveAttribute("href", "/status")
-      expect(link).toHaveAttribute("target", "_blank")
-    } finally {
-      clearAdminToken()
-    }
-  })
-
-  it("nasconde riga e link senza admin token anche se l'endpoint è aperto (istanza pubblica)", async () => {
-    // Niente setAdminToken: simula un visitatore qualunque su istanza pubblica.
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (url: unknown) =>
-        String(url).includes("/api/cache/status")
-          ? {
+        vi.fn(async (url: unknown) => {
+          const u = String(url)
+          if (u.includes("/api/cache/status")) {
+            return {
               ok: true,
+              status: 200,
+              headers: { get: () => null },
               json: async () => ({
                 totalEntries: 7,
                 system: {
@@ -534,231 +591,60 @@ describe("SettingsPanel", () => {
                 },
               }),
             }
-          : { ok: false, json: async () => ({}) },
-      ),
-    )
-    renderWithCtx(
-      <SettingsPanel
-        setSettingsOpen={() => {}}
-        exportData={() => {}}
-        importData={() => {}}
-      />
-    )
-    // Flush del fetch async, poi riga e link devono mancare.
-    expect(await screen.findAllByText("ui.genreRatingBadge")).not.toHaveLength(0)
-    expect(screen.queryByText(/ui\.statusMemoryRss/)).not.toBeInTheDocument()
-    expect(screen.queryByRole("link", { name: /ui\.statusTitle/ })).not.toBeInTheDocument()
-  })
-
-  it("nasconde la riga risorse server su 401 anche con token (fail-closed)", async () => {
-    setAdminToken("test-token")
-    try {
-      vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, json: async () => ({}) })))
-      renderWithCtx(
-        <SettingsPanel
-          setSettingsOpen={() => {}}
-          exportData={() => {}}
-          importData={() => {}}
-        />
+          }
+          return { ok: false, status: 404, headers: { get: () => null }, json: async () => ({}) }
+        }),
       )
-      // Flush del fetch async, poi la riga deve mancare.
-      expect(await screen.findAllByText("ui.genreRatingBadge")).not.toHaveLength(0)
-      expect(screen.queryByText(/ui\.statusMemoryRss/)).not.toBeInTheDocument()
+      renderPanel()
+      await screen.findByTestId("presets-panel")
+      fireEvent.click(screen.getByTestId("settings-secondary-data"))
+      fireEvent.click(screen.getByRole("button", { name: /ui\.cacheDiagnostics/ }))
+      expect(await screen.findByText(/ui\.statusMemoryRss/)).toBeInTheDocument()
+      const link = screen.getByRole("link", { name: /ui\.statusTitle/ })
+      expect(link).toHaveAttribute("href", "/status")
     } finally {
       clearAdminToken()
     }
   })
 
-  it("renders truthful sync status with Fine primary and no SyncNow button", async () => {
-    renderWithCtx(
-      <SettingsPanel
-        setSettingsOpen={() => {}}
-        exportData={() => {}}
-        importData={() => {}}
-      />
+  it("hides server resources without admin token even when the endpoint is open", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: unknown) => {
+        const u = String(url)
+        if (u.includes("/api/cache/status")) {
+          return {
+            ok: true,
+            status: 200,
+            headers: { get: () => null },
+            json: async () => ({
+              totalEntries: 7,
+              system: {
+                memory: { rssMb: 110, heapUsedMb: 54, heapTotalMb: 78 },
+                uptimeSeconds: 195,
+              },
+            }),
+          }
+        }
+        return { ok: false, status: 404, headers: { get: () => null }, json: async () => ({}) }
+      }),
     )
-    expect(screen.getByTestId("defaults-sync-status")).toBeInTheDocument()
-    expect(screen.getByText("ui.settingsDone")).toBeInTheDocument()
-    expect(screen.queryByText("ui.syncNow")).not.toBeInTheDocument()
-    expect(screen.queryByRole("button", { name: /Riprova|ui\.retry/i })).not.toBeInTheDocument()
+    renderPanel()
+    await screen.findByTestId("presets-panel")
+    fireEvent.click(screen.getByTestId("settings-secondary-data"))
+    fireEvent.click(screen.getByRole("button", { name: /ui\.cacheDiagnostics/ }))
+    await screen.findByText("ui.clearCache")
+    expect(screen.queryByText(/ui\.statusMemoryRss/)).not.toBeInTheDocument()
+    expect(screen.queryByRole("link", { name: /ui\.statusTitle/ })).not.toBeInTheDocument()
   })
 
-  it("traps focus inside the desktop dialog on Tab and Shift+Tab", async () => {
-    renderWithCtx(
-      <SettingsPanel
-        setSettingsOpen={() => {}}
-        exportData={() => {}}
-        importData={() => {}}
-      />
-    )
-    const dialog = screen.getByRole("dialog")
-    const focusable = dialog.querySelectorAll<HTMLElement>(
-      'button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
-    )
-    expect(focusable.length).toBeGreaterThan(1)
-    const first = focusable[0]
-    const last = focusable[focusable.length - 1]
-
-    // Tab from last wraps to first
-    last.focus()
-    fireEvent.keyDown(window, { key: "Tab", shiftKey: false })
-    expect(document.activeElement).toBe(first)
-
-    // Shift+Tab from first wraps to last
-    first.focus()
-    fireEvent.keyDown(window, { key: "Tab", shiftKey: true })
-    expect(document.activeElement).toBe(last)
-  })
-
-  it("renders mobile category selector with touch target styling", async () => {
-    const { container } = renderWithCtx(
-      <SettingsPanel
-        mobile
-        setSettingsOpen={() => {}}
-        exportData={() => {}}
-        importData={() => {}}
-      />
-    )
-    const select = container.querySelector("#mobile-settings-category")
-    expect(select).toBeInTheDocument()
-    expect(select?.className).toContain("min-h-[44px]")
-  })
-
-  it("structures mobile layout with body separate from footer", async () => {
-    const { container } = renderWithCtx(
-      <SettingsPanel
-        mobile
-        setSettingsOpen={() => {}}
-        exportData={() => {}}
-        importData={() => {}}
-      />
-    )
-    const scrollBody = container.querySelector(".overflow-y-auto")
-    expect(scrollBody).toBeInTheDocument()
-    // Il footer non è contenuto all'interno del corpo scrollabile
-    expect(within(scrollBody as HTMLElement).queryByText("ui.settingsDone")).not.toBeInTheDocument()
-    // Il footer è presente nel pannello mobile complessivo
-    expect(screen.getByText("ui.settingsDone")).toBeInTheDocument()
-  })
-
-  it("keeps a stable tab header slot: selector only on visual tabs, target preserved", async () => {
-    renderWithCtx(
-      <SettingsPanel
-        setSettingsOpen={() => {}}
-        exportData={() => {}}
-        importData={() => {}}
-      />
-    )
-    // Slot always present on the initial visual tab, selector inside.
-    const slot = screen.getByTestId("settings-tab-header-slot")
-    expect(screen.getByTestId("format-target-selector")).toBeInTheDocument()
-    // Landscape target, then Badge → Trasforma: selector and target kept.
-    fireEvent.click(within(screen.getByTestId("format-target-selector")).getByText("ui.posterShapeLandscape"))
-    fireEvent.click(screen.getByRole("tab", { name: "ui.transform" }))
-    expect(screen.getByTestId("format-target-selector")).toBeInTheDocument()
-    expect(screen.getByTestId("settings-tab-header-slot")).toBe(slot)
-    const landscapeBtn = within(screen.getByTestId("format-target-selector")).getByText("ui.posterShapeLandscape").closest("button")
-    expect(landscapeBtn).toHaveAttribute("aria-pressed", "true")
-    // → Prefs (non-visual): selector unmounted, slot reused for the title.
-    fireEvent.click(screen.getByRole("tab", { name: "ui.settingsTabPrefs" }))
-    expect(screen.queryByTestId("format-target-selector")).not.toBeInTheDocument()
-    expect(screen.getByTestId("settings-tab-header-slot")).toBe(slot)
-    expect(within(slot).getByText("ui.settingsTabPrefs")).toBeInTheDocument()
-    // → Data: same slot, no selector.
-    fireEvent.click(screen.getByRole("tab", { name: "ui.settingsTabData" }))
-    expect(screen.queryByTestId("format-target-selector")).not.toBeInTheDocument()
-    expect(screen.getByTestId("settings-tab-header-slot")).toBe(slot)
-    expect(within(slot).getByText("ui.settingsTabData")).toBeInTheDocument()
-    // Back to Badge: selector visible again, still Landscape target.
-    fireEvent.click(screen.getByRole("tab", { name: "ui.badgeSection" }))
-    expect(screen.getByTestId("format-target-selector")).toBeInTheDocument()
-    const landscapeBack = within(screen.getByTestId("format-target-selector")).getByText("ui.posterShapeLandscape").closest("button")
-    expect(landscapeBack).toHaveAttribute("aria-pressed", "true")
-  })
-
-  it("shares one compact header sizing contract between visual selector and tab title", async () => {
-    renderWithCtx(
-      <SettingsPanel
-        setSettingsOpen={() => {}}
-        exportData={() => {}}
-        importData={() => {}}
-      />
-    )
-    // Selector card chrome: compact on mobile (no floor), desktop 96px floor.
-    const selectorCard = screen.getByTestId("format-target-selector").firstElementChild as HTMLElement | null
-    expect(selectorCard).not.toBeNull()
-    const selectorTokens = selectorCard!.className.split(/\s+/)
-    expect(selectorTokens).toContain("sm:min-h-[96px]")
-    expect(selectorTokens).not.toContain("min-h-[128px]")
-    // Mobile: format hint hidden (desktop-only), keeping the card compact.
-    const hint = screen.getByText("ui.formatTargetHint")
-    expect(hint.className).toContain("hidden")
-    // → Prefs: title card reuses every selector token plus its own layout.
-    fireEvent.click(screen.getByRole("tab", { name: "ui.settingsTabPrefs" }))
-    const titleCard = screen.getByTestId("settings-tab-title")
-    const titleTokens = titleCard.className.split(/\s+/)
-    for (const token of selectorTokens) expect(titleTokens).toContain(token)
-    expect(within(titleCard).getByText("ui.settingsTabPrefs")).toBeInTheDocument()
-    expect(within(titleCard).getByText("ui.settingsSubtitle")).toBeInTheDocument()
-  })
-
-  it("widens the desktop preview column for landscape, keeps portrait proportions", async () => {
-    renderWithCtx(
-      <SettingsPanel
-        setSettingsOpen={() => {}}
-        exportData={() => {}}
-        importData={() => {}}
-      />
-    )
-    const grid = screen.getByTestId("settings-controls").parentElement as HTMLElement
-    // Portrait default: narrow preview column.
-    expect(grid.className).toContain("minmax(220px,32%)")
-    // Landscape target: wider adaptive column (md vs lg steps).
-    fireEvent.click(within(screen.getByTestId("format-target-selector")).getByText("ui.posterShapeLandscape"))
-    expect(grid.className).toContain("lg:grid-cols-")
-    expect(grid.className).not.toContain("minmax(220px,32%)")
-    // Back to portrait: narrow column restored.
-    fireEvent.click(within(screen.getByTestId("format-target-selector")).getByText("ui.posterShapePortrait"))
-    expect(grid.className).toContain("minmax(220px,32%)")
-  })
-
-  it("collapses the mobile preview in place and preserves state across tabs", async () => {
-    const prevWidth = window.innerWidth
-    Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 390 })
-    try {
-      const { container } = renderWithCtx(
-        <SettingsPanel
-          mobile
-          setSettingsOpen={() => {}}
-          exportData={() => {}}
-          importData={() => {}}
-        />
-      )
-      // Expanded by default, toggle owns the body via aria-controls.
-      const toggle = screen.getByTestId("defaults-preview-collapse")
-      expect(toggle).toHaveAttribute("aria-expanded", "true")
-      expect(toggle).toHaveAttribute("aria-label", "ui.previewCollapse")
-      expect(toggle.className).toContain("min-h-[44px]")
-      const bodyId = toggle.getAttribute("aria-controls")
-      expect(bodyId).toBeTruthy()
-      const body = document.getElementById(bodyId!)
-      expect(body).not.toBeNull()
-      // Toggle lives outside the collapsible body.
-      expect(body).not.toContainElement(toggle)
-      // Collapse: same body node hidden, preview stays mounted (no refetch).
-      fireEvent.click(toggle)
-      expect(toggle).toHaveAttribute("aria-expanded", "false")
-      expect(toggle).toHaveAttribute("aria-label", "ui.previewExpand")
-      expect(document.getElementById(bodyId!)).toBe(body)
-      expect(body).toHaveClass("hidden")
-      // Tab switch away and back preserves the collapsed state.
-      const category = container.querySelector("#mobile-settings-category") as HTMLSelectElement
-      fireEvent.change(category, { target: { value: "prefs" } })
-      expect(screen.queryByTestId("defaults-preview-collapse")).not.toBeInTheDocument()
-      fireEvent.change(category, { target: { value: "badge" } })
-      expect(screen.getByTestId("defaults-preview-collapse")).toHaveAttribute("aria-expanded", "false")
-    } finally {
-      Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: prevWidth })
-    }
+  it("pin section shows with multi-user off and stays unmounted until opened", async () => {
+    renderPanel()
+    await screen.findByTestId("presets-panel")
+    fireEvent.click(screen.getByTestId("settings-secondary-data"))
+    expect(screen.getByText("ui.pinSecurityTitle")).toBeInTheDocument()
+    expect(screen.queryByText("ui.pinSecurityDesc")).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: /ui\.pinSecurityTitle/ }))
+    expect(screen.getByText("ui.pinSecurityDesc")).toBeInTheDocument()
   })
 })

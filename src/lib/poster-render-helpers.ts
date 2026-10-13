@@ -1,14 +1,14 @@
 import crypto from "node:crypto"
 import sharp from "sharp"
 import { cacheGet, cacheSet } from "./cache"
-import { findAccentColor, findSceneTint } from "@/lib/accent-color"
+import { findAccentColor, findSceneTint, relativeLuminance, adaptiveAutomaticAccentHex, normalizeAutomaticAccentHex } from "@/lib/accent-color"
 import { GENRE_FALLBACK } from "@/lib/badges"
 import { RENDER_VERSION } from "./render-version"
 import { ARTWORKS_BASE } from "@/lib/tvdb"
 import { cachedImageBytes } from "@/lib/image-bytes-cache"
 import { timedFetch } from "@/lib/outbound-stats"
 // Batch B: STD_W/STD_H ora provengono da image-utils.ts (single source of truth)
-import { STD_W, STD_H, computeRegionStats } from "@/lib/image-utils"
+import { STD_W, STD_H, LAND_W, LAND_H, computeRegionStats } from "@/lib/image-utils"
 
 // Sovrascrivibile via env: nei test E2E punta al mock server locale per
 // rendere il rendering determinista senza dipendere da image.tmdb.org.
@@ -182,6 +182,130 @@ export async function bottomLuminance(buf: Buffer, cacheKey?: string | null): Pr
   const lum = stats ? stats.mean / 255 : 0.5 // fallback: medium luminance
   if (key) cacheSet(key, lum, [ANALYSIS_CACHE_TAG], ANALYSIS_CACHE_TTL)
   return lum
+}
+
+/**
+ * Canvas dimensions for band sampling by poster shape. The route already fits
+ * `posterBuf` to the effective canvas (portrait STD_W × STD_H, landscape
+ * LAND_W × LAND_H) before the service runs, so sampling with these dims is a
+ * near-identity resize — no new fetch, no second full render.
+ */
+export function canvasDimsForShape(shape: string | null | undefined): { width: number; height: number } {
+  return shape === "landscape" ? { width: LAND_W, height: LAND_H } : { width: STD_W, height: STD_H }
+}
+
+/** Mean sRGB channels (0-255) of a badge band. Null when undecodable. */
+export interface BandMeanRGB {
+  readonly r: number
+  readonly g: number
+  readonly b: number
+}
+
+export interface BandSampleOptions {
+  readonly cacheKey?: string | null
+  readonly canvasW?: number
+  readonly canvasH?: number
+}
+
+async function bandMeanRGB(
+  buf: Buffer,
+  band: "top" | "bottom",
+  opts?: BandSampleOptions,
+): Promise<BandMeanRGB | null> {
+  const canvasW = Math.round(opts?.canvasW ?? STD_W)
+  const canvasH = Math.round(opts?.canvasH ?? STD_H)
+  if (canvasW <= 0 || canvasH <= 0) return null
+  const key = opts?.cacheKey ? `accent-band:${band}:${canvasW}x${canvasH}:${opts.cacheKey}` : null
+  const hit = key ? cacheGet<BandMeanRGB>(key) : null
+  if (hit !== null) return hit
+  // Same 8% edge strip as the topLight/bottomLight polarity path: the badge
+  // row lives at the canvas edge, so the strip mean is the documented
+  // two-band approximation of the local badge background (NOT a per-badge
+  // pixel-exact sample — explicit user offsets can move a badge outside its
+  // band; the anchor-nearest policy still applies, see the service call site).
+  const stripH = Math.max(Math.round(canvasH * 0.08), 3)
+  const top = band === "top" ? 0 : canvasH - stripH
+  const stats = await computeRegionStats(buf, 0, top, canvasW, stripH, { width: canvasW, height: canvasH })
+  if (!stats) return null
+  const mean: BandMeanRGB = { r: stats.meanR, g: stats.meanG, b: stats.meanB }
+  if (key) cacheSet(key, mean, [ANALYSIS_CACHE_TAG], ANALYSIS_CACHE_TTL)
+  return mean
+}
+
+/**
+ * Mean sRGB of the top 8% strip (rank/extra badge band) on the effective
+ * canvas. Reuses the computeRegionStats pool + analysis cache: no new fetch,
+ * at most one small crop decode per band per title (24h `poster-extract`).
+ */
+export function topBandMeanRGB(buf: Buffer, opts?: BandSampleOptions): Promise<BandMeanRGB | null> {
+  return bandMeanRGB(buf, "top", opts)
+}
+
+/**
+ * Mean sRGB of the bottom 8% strip (genre badge band) on the effective
+ * canvas. Same pool/cache contract as topBandMeanRGB.
+ */
+export function bottomBandMeanRGB(buf: Buffer, opts?: BandSampleOptions): Promise<BandMeanRGB | null> {
+  return bandMeanRGB(buf, "bottom", opts)
+}
+
+/**
+ * Effective WCAG linear luminance of the top badge background: the band mean
+ * (sRGB) veiled by the black top-shade gradient. The gradient runs full-width
+ * over the top 25% of the canvas (`topShadeSVG`: edge alpha 0.75·s/100,
+ * linear ramp to 0); the badge row sits at the edge, so the edge alpha is the
+ * conservative veil — uniform-black blend, then WCAG relativeLuminance on the
+ * veiled channels (NOT the nonlinear Rec.709 strip mean fed blindly as
+ * linear). `topShade = 0` (falsy) = no veil, never an inherited value.
+ */
+export function effectiveTopBackgroundLuminance(mean: BandMeanRGB, topShade: number): number {
+  const s = Math.max(0, Math.min(100, Number.isFinite(topShade) ? topShade : 0)) / 100
+  const alpha = 0.75 * s
+  const k = 1 - alpha
+  return relativeLuminance(mean.r * k, mean.g * k, mean.b * k)
+}
+
+/**
+ * Effective WCAG linear luminance of the bottom badge background: the band
+ * mean (sRGB) veiled by the bottom blur darkness. The veil applies ONLY when
+ * the bottom blur is actually enabled; otherwise the raw band mean is
+ * measured. Same conservative uniform-veil model as `computeBottomLight`
+ * (the real blur is a non-uniform gradient — documented approximation), but
+ * computed in linear WCAG on the veiled channels instead of scaling the
+ * nonlinear strip mean.
+ */
+export function effectiveBottomBackgroundLuminance(
+  mean: BandMeanRGB,
+  blurDarkness: number,
+  blurEnabled: boolean,
+): number {
+  const d = blurEnabled ? Math.max(0, Math.min(100, Number.isFinite(blurDarkness) ? blurDarkness : 0)) / 100 : 0
+  const k = 1 - d
+  return relativeLuminance(mean.r * k, mean.g * k, mean.b * k)
+}
+
+/**
+ * Adaptive automatic accent for one badge band. Manual overrides never reach
+ * here (the caller gates on `accentOverride` — manual stays byte-identical).
+ * With an extracted scene tint AND a known local background, the bounded
+ * solver (`adaptiveAutomaticAccentHex`: same hue/saturation, L in
+ * [0.24, 0.60], text 4.5:1 first, 3:1 separation second, best-effort
+ * documented when infeasible) adapts the fill to its band. Without extraction
+ * (genre/gray fallback) or without a background sample, the legacy fixed
+ * 5/12 normalization applies byte-identically — including every
+ * GENRE_FALLBACK entry (Comedy included). Malformed input passes through
+ * untouched (never an invented color).
+ */
+export function adaptiveAccentHexForBand(
+  sceneTintHex: string | null | undefined,
+  fallbackHex: string,
+  backgroundLuminance: number | null | undefined,
+): string {
+  if (!sceneTintHex) return normalizeAutomaticAccentHex(fallbackHex)
+  if (backgroundLuminance === null || backgroundLuminance === undefined || !Number.isFinite(backgroundLuminance)) {
+    return normalizeAutomaticAccentHex(sceneTintHex)
+  }
+  return adaptiveAutomaticAccentHex(sceneTintHex, { backgroundLuminance })
 }
 
 // B3: memo decode condivisi per extractBadgeColor (chiamato 2× — top+bottom —

@@ -3,6 +3,13 @@
 import { useState, useCallback, useEffect, useRef } from "react"
 import type { CustomCatalogConfig } from "./types"
 import { PICTORIUM_CATALOGS } from "./catalog-definitions"
+import {
+  CATALOG_SHAPES_STORAGE_KEY,
+  normalizeCatalogShapeKeys,
+  sanitizeCatalogShapes,
+  type CatalogShapeOverride,
+  type CatalogShapes,
+} from "./catalog-shape"
 import { isProfilelessOnMultiUser, notifyProfilelessOnce, shouldSkipServerSync } from "./guest-guard"
 import { userFetch } from "./http"
 import { USER_UNLOCK_EVENT } from "./user-token"
@@ -17,6 +24,7 @@ export function useCustomCatalogs(
   const [homeDisabledCatalogIds, setHomeDisabledCatalogIdsState] = useState<string[]>([])
   const [catalogOrder, setCatalogOrderState] = useState<string[]>([])
   const [catalogRenames, setCatalogRenamesState] = useState<Record<string, string>>({})
+  const [catalogShapes, setCatalogShapesState] = useState<CatalogShapes>({})
   const lastSyncRef = useRef<string>("")
   const pendingRef = useRef("")
   const [syncAttempt, setSyncAttempt] = useState(0)
@@ -51,6 +59,7 @@ export function useCustomCatalogs(
     const savedHomeDisabledCats = hasSaved("pictorium_home_disabled_catalogs")
     const savedOrder = hasSaved("pictorium_catalog_order")
     const savedRenames = hasSaved("pictorium_catalog_renames", true)
+    const savedShapes = hasSaved(CATALOG_SHAPES_STORAGE_KEY, true)
     // Hydrate missing or server-configured defaults
     userFetch("/api/defaults")
       .then((r) => (r.ok ? r.json() : null))
@@ -62,6 +71,7 @@ export function useCustomCatalogs(
           homeDisabledCatalogIds: data.homeDisabledCatalogIds ?? [],
           catalogOrder: data.catalogOrder ?? [],
           catalogRenames: data.catalogRenames ?? {},
+          catalogShapes: normalizeCatalogShapeKeys(data.catalogShapes) ?? {},
         })
         if (Array.isArray(data.customCatalogs) && !savedCustomCats) {
           setCustomCatalogsState((prev) => {
@@ -108,6 +118,16 @@ export function useCustomCatalogs(
             return prev
           })
         }
+        if (data.catalogShapes && typeof data.catalogShapes === "object" && !Array.isArray(data.catalogShapes) && !savedShapes) {
+          const clean = normalizeCatalogShapeKeys(data.catalogShapes) ?? {}
+          setCatalogShapesState((prev) => {
+            if (Object.keys(prev).length === 0) {
+              safeSetItem(CATALOG_SHAPES_STORAGE_KEY, JSON.stringify(clean))
+              return clean
+            }
+            return prev
+          })
+        }
       })
       .catch(() => {})
       .finally(() => setHydrated(true))
@@ -120,6 +140,7 @@ export function useCustomCatalogs(
     let localHomeDisabled: string[] = []
     let localOrder: string[] = []
     let localRenames: Record<string, string> = {}
+    let localShapes: CatalogShapes = {}
 
     const savedCustomCats = safeGetItem("pictorium_custom_catalogs")
     if (savedCustomCats) {
@@ -171,6 +192,16 @@ export function useCustomCatalogs(
         }
       } catch {}
     }
+    const savedShapesRaw = safeGetItem(CATALOG_SHAPES_STORAGE_KEY)
+    if (savedShapesRaw) {
+      try {
+        const parsed = JSON.parse(savedShapesRaw)
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          localShapes = sanitizeCatalogShapes(parsed)
+          setCatalogShapesState(localShapes)
+        }
+      } catch {}
+    }
 
     lastSyncRef.current = JSON.stringify({
       customCatalogs: localCustom,
@@ -178,6 +209,7 @@ export function useCustomCatalogs(
       homeDisabledCatalogIds: localHomeDisabled,
       catalogOrder: localOrder,
       catalogRenames: localRenames,
+      catalogShapes: localShapes,
     })
 
     refreshCatalogsFromServer()
@@ -191,7 +223,7 @@ export function useCustomCatalogs(
   }, [refreshCatalogsFromServer])
 
   // Keep the latest desired payload separate from the last acknowledged PUT.
-  const payloadStr = JSON.stringify({ customCatalogs, disabledCatalogIds, homeDisabledCatalogIds, catalogOrder, catalogRenames })
+  const payloadStr = JSON.stringify({ customCatalogs, disabledCatalogIds, homeDisabledCatalogIds, catalogOrder, catalogRenames, catalogShapes })
   useEffect(() => {
     pendingRef.current = payloadStr
     if (!hydrated || lastSyncRef.current === payloadStr) return
@@ -349,6 +381,32 @@ export function useCustomCatalogs(
     try { localStorage.removeItem("pictorium_catalog_renames") } catch {}
   }, [])
 
+  const setCatalogShapes = useCallback((shapes: CatalogShapes) => {
+    const clean = sanitizeCatalogShapes(shapes)
+    setCatalogShapesState(clean)
+    safeSetItem(CATALOG_SHAPES_STORAGE_KEY, JSON.stringify(clean))
+  }, [safeSetItem])
+
+  /**
+   * Per-catalog format override: `poster`/`landscape` persist an explicit
+   * choice for that catalog only; `null` (follow global) deletes the key so
+   * the catalog re-inherits the global setting on both client and server.
+   */
+  const setCatalogShape = useCallback((id: string, shape: CatalogShapeOverride | null) => {
+    setCatalogShapesState((prev) => {
+      const next = { ...prev }
+      if (shape === null) delete next[id]
+      else next[id] = shape
+      safeSetItem(CATALOG_SHAPES_STORAGE_KEY, JSON.stringify(next))
+      return next
+    })
+  }, [safeSetItem])
+
+  const resetCatalogShapes = useCallback(() => {
+    setCatalogShapesState({})
+    try { localStorage.removeItem(CATALOG_SHAPES_STORAGE_KEY) } catch {}
+  }, [])
+
   const resetCatalogOrder = useCallback(() => {
     setCatalogOrderState([])
     try { localStorage.removeItem("pictorium_catalog_order") } catch {}
@@ -375,5 +433,9 @@ export function useCustomCatalogs(
     renameCatalog,
     resetCatalogNames,
     resetCatalogOrder,
+    catalogShapes,
+    setCatalogShapes,
+    setCatalogShape,
+    resetCatalogShapes,
   }
 }

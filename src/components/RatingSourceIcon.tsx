@@ -11,6 +11,8 @@ const RATING_ICON_FILES: Record<string, string> = {
   metacriticuser: "/rating/metacritic.svg",
   trakt: "/rating/trakt.svg",
   simkl: "/rating/simkl.svg",
+  tvdb: "/rating/tvdb.svg",
+  fanart: "/rating/art.svg",
   mal: "/rating/mal.svg",
   anilist: "/rating/anilist.svg",
   kitsu: "/rating/kitsu.svg",

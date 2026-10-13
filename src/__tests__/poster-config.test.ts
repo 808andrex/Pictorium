@@ -61,7 +61,7 @@ describe("resolvePosterRenderConfig", () => {
     expect(r.blurFade).toBe(50)
     expect(r.blurDarkness).toBe(30)
     expect(r.tintStrength).toBe(20)
-    expect(r.topShade).toBe(50)
+    expect(r.topShade).toBe(80)
     expect(r.badgesEnabled).toBe(true)
     expect(r.rankingEnabled).toBe(true)
     expect(r.ribbonSide).toBe("left")
@@ -317,11 +317,11 @@ describe("resolvePosterRenderConfig", () => {
     expect(resolvePosterRenderConfig(baseInput({ sd: { tintStrength: 35 } })).tintStrength).toBe(35)
   })
 
-  it("topShade: query wins, then mapping, config token, sd, then 50 (clamped 0..100)", () => {
-    expect(resolvePosterRenderConfig(baseInput()).topShade).toBe(50)
+  it("topShade: query wins, then mapping, config token, sd, then 80 (clamped 0..100)", () => {
+    expect(resolvePosterRenderConfig(baseInput()).topShade).toBe(80)
     expect(resolvePosterRenderConfig(baseInput({ searchParams: new URLSearchParams({ ts: "60" }) })).topShade).toBe(60)
     expect(resolvePosterRenderConfig(baseInput({ searchParams: new URLSearchParams({ ts: "999" }) })).topShade).toBe(100)
-    expect(resolvePosterRenderConfig(baseInput({ searchParams: new URLSearchParams({ ts: "abc" }) })).topShade).toBe(50)
+    expect(resolvePosterRenderConfig(baseInput({ searchParams: new URLSearchParams({ ts: "abc" }) })).topShade).toBe(80)
     expect(resolvePosterRenderConfig(baseInput({ mapping: mapping({ topShade: 40 }) })).topShade).toBe(40)
     expect(resolvePosterRenderConfig(baseInput({ configOverride: config({ topShade: 70 }) })).topShade).toBe(70)
     expect(resolvePosterRenderConfig(baseInput({ sd: { topShade: 35 } })).topShade).toBe(35)

@@ -1,12 +1,12 @@
 "use client"
 
-import { useState } from "react"
-import { ChevronDown, Star, Trophy, Tv, Sparkles, Palette, Layers, LayoutTemplate, Cloud, RotateCcw } from "lucide-react"
+import { useEffect, useState } from "react"
+import { ChevronDown, Star, Trophy, Tv, Sparkles, Palette, Layers, Cloud, RotateCcw } from "lucide-react"
 import { usePSelector } from "@/lib/context"
 import { useT } from "@/lib/contexts/TranslationContext"
 import { usePosterEditor } from "@/lib/contexts/PosterEditorContext"
 import { Toggle } from "@/components/Toggle"
-import { PosterLayoutSelector, PosterFreshScopeSelector } from "@/components/PosterLayoutSelector"
+import { isCardSkin, type CardSkin } from "@/lib/card-layout-skins"
 import { BadgeStyleSelector, BadgeFontSelector } from "@/components/ui"
 import {
   RankingAppearanceSelector,
@@ -18,6 +18,7 @@ import {
   ribbonVariantValue,
   legacyExtraStyleForRank,
   type RankingAppearance,
+  type RankingPresentation,
   type RankBadgeVariant,
   type RankRibbonVariant,
 } from "@/components/RankingAppearanceSelector"
@@ -31,6 +32,7 @@ import { getUpcomingReleaseLabel } from "@/lib/release-badge"
 import { isPrefixedKey, badgeKey } from "@/lib/i18n"
 import { getAllBadgeOptions, isMiniseriesType, isReturningStatus } from "@/lib/badge-priority"
 import { isManualAccent } from "@/lib/accent-color"
+import { resolveAccentPickerDisplay, useEffectiveAccent } from "@/lib/useEffectiveAccent"
 import { isBottomSeparateRatingsStyle, getSeparateRatingsStyleForShape } from "@/lib/badge-styles"
 import { UI_RATING_SOURCES } from "@/lib/rating-weights"
 import { RatingSourceIcon } from "@/components/RatingSourceIcon"
@@ -44,12 +46,46 @@ export function BadgeControls() {
   const trendRank = usePSelector((v) => v.trendRank)
   const imdbTop250 = usePSelector((v) => v.imdbTop250)
   const setAccentColor = usePSelector((v) => v.setAccentColor)
+  const previewUrl = usePSelector((v) => v.previewUrl)
   const { t, lang } = useT()
   const ed = usePosterEditor()
   const [now] = useState(() => Date.now())
   const [sourcesOpen, setSourcesOpen] = useState(false)
   const [editingValue, setEditingValue] = useState<string | null>(null)
   const [editText, setEditText] = useState("")
+  // Remembered Card skin (transient UI only, never persisted): survives
+  // classic/Fresh/Card switching, same rule as the standalone selector. A
+  // saved skin hydrates it with no write. Hooks stay above the early return.
+  const [rememberedSkin, setRememberedSkin] = useState<CardSkin>(() =>
+    isCardSkin(ed.posterLayout) ? ed.posterLayout : "provider-glass",
+  )
+  useEffect(() => {
+    if (isCardSkin(ed.posterLayout)) setRememberedSkin(ed.posterLayout)
+  }, [ed.posterLayout])
+  // Effective-accent display sync (display/canonical split, normative): the
+  // server reports the hex ACTUALLY painted per band for the exact preview
+  // URL rendered by <PosterPreview>. Transport is the `X-Pictorium-Accent`
+  // response header of the image itself, parsed by the existing XHR blob load
+  // (`usePosterPreview`, same bytes, zero extra requests) — this hook only
+  // selects that display record (no JSON fetch in the normal flow). Display
+  // state below NEVER feeds isManualAccent/ac=/mapping/globals — canonical
+  // identity stays the legacy base (accentColor/autoAccentColor). The hook
+  // resolves to loading while the current preview (re)loads and to unknown
+  // for legacy/striped responses; the producer keeps the last successful
+  // record while its preview URL is displayed, so the native picker works
+  // even when this badge tab is opened minutes after the load. A late auto
+  // record can never overwrite a manual selection — the picker keeps showing
+  // accentColor verbatim while isManualAccent holds.
+  // NOTE: hooks stay above the early return (rules-of-hooks).
+  const isCustomColorEarly = isManualAccent(accentColor, autoAccentColor)
+  const effective = useEffectiveAccent(previewUrl, !isCustomColorEarly)
+  // Transient manual chooser (never persisted, never written to canonical
+  // until the USER picks): keeps the manual path available while automatic
+  // detection is loading/unknown. Resets on poster identity change.
+  const [manualChooser, setManualChooser] = useState(false)
+  useEffect(() => {
+    setManualChooser(false)
+  }, [previewUrl])
 
   const localSpec = lookupAVSpecs(metaInfo?.imdb_id || selected?.imdb_id)
   const activeVideoFormats = localSpec?.formats
@@ -61,6 +97,30 @@ export function BadgeControls() {
 
   const effectiveColor = accentColor || autoAccentColor || "#555555"
   const isCustomColor = isManualAccent(accentColor, autoAccentColor)
+  const display = resolveAccentPickerDisplay(isCustomColor ? null : effective.meta)
+  const autoPickerHex = display.pickerHex
+  const autoReady = effective.status === "ready" && autoPickerHex != null
+  const autoLoading = effective.status === "loading"
+  // Bottom zone label: the picker lives in the genre card, so the bottom
+  // (genre) shade is the only named readout. The top shade is never shown
+  // as text — the picker simply carries its hex when it is the sole painter.
+  const bottomManual = effective.meta?.provGenre === "manual" && display.bottomHex != null
+  // Native picker state: manual shows the exact manual hex; automatic shows
+  // the effective painted shade; loading/unknown shows an explicit
+  // placeholder (never the base as actual). The chooser opens the native
+  // control on the current placeholder as a clearly-labeled starting point
+  // (opened only by the explicit manual action below) without writing
+  // canonical until the user picks.
+  const nativeEnabled = isCustomColor || manualChooser || autoReady
+  const nativeValue = isCustomColor && accentColor
+    ? accentColor
+    : autoPickerHex ?? (manualChooser ? effectiveColor : "#555555")
+  const hexFieldValue = isCustomColor
+    ? (accentColor ?? "")
+    : (autoPickerHex ?? (manualChooser ? (autoAccentColor ?? "") : ""))
+  const hexFieldFallback = isCustomColor
+    ? (accentColor ?? autoAccentColor ?? "")
+    : (autoPickerHex ?? autoAccentColor ?? "")
   // Bottom attivo: genere+anno soppressi a render (voto incluso) — i toggle
   // restano visibili ma disabilitati e i valori salvati intatti (tornando a
   // Colonna si ripristinano, mai distrutti).
@@ -97,10 +157,63 @@ export function BadgeControls() {
     ed.setRibbonEnabled(next.ribbonEnabled)
   }
 
-  // Extra style options: colored only when already set (legacy compat, same
-  // as the defaults panel — never offered fresh).
-  const extraOptions: ExtraBadgeStyle[] = ["default", "pill", "corner", "vetro", "bordo"]
-  if (ed.extraBadgeStyle === "colored") extraOptions.push("colored")
+  // Unified ranking presentation (per-title Classifica): one exclusive
+  // Nastro/Numero/Badge/Fresh/Card choice over the existing stored fields —
+  // no second layout card, no second renderer. Classic writes
+  // posterLayout=standard plus the canonical rank style above (extra freeze
+  // intact); Fresh writes fresh+ranked with the enter-once offset reset;
+  // Card writes the remembered skin + ranked. New selections always stage
+  // the ranked scope (ranked-only rule, same as the global Classifiche); a
+  // stored explicit "all" on an existing mapping is preserved until an
+  // explicit new selection (never rewritten on mount). Side stays omitted:
+  // side is global-only (defaults), so a per-title switch would preview a
+  // choice the save cannot keep.
+  const presentation: RankingPresentation =
+    ed.posterLayout === "fresh" ? "fresh" : isCardSkin(ed.posterLayout) ? "card" : appearance
+  function handlePresentation(p: RankingPresentation) {
+    if (p === "fresh") {
+      // Actual transition only: re-clicking the already-selected Fresh
+      // preserves deliberate slider edits (and the stored scope) made while
+      // Fresh. One-way reset — returning to a classic never restores the old
+      // offsets. Neutralizes ONLY the title-logo and genre/rating-group
+      // positions in the edited shape: per-title offsets are plain numbers
+      // (0 = neutral slider center; the global null/null auto contract does
+      // not exist per-title). Scales and every other recipe stay intact, and
+      // only the edited shape is touched (the other shape freezes at save).
+      if (ed.posterLayout !== "fresh") {
+        ed.setGenreBadgeOffsetX(0)
+        ed.setGenreBadgeOffsetY(0)
+        ed.setLogoOffsetX(0)
+        ed.setLogoOffsetY(0)
+        ed.setPosterLayout("fresh")
+        if (ed.posterFreshScope !== "ranked") ed.setPosterFreshScope("ranked")
+      }
+      return
+    }
+    if (p === "card") {
+      const skin = isCardSkin(ed.posterLayout) ? ed.posterLayout : rememberedSkin
+      // Re-clicking the already-selected skin is a no-op (stored scope kept).
+      if (ed.posterLayout !== skin) {
+        ed.setPosterLayout(skin)
+        if (ed.posterFreshScope !== "ranked") ed.setPosterFreshScope("ranked")
+      }
+      return
+    }
+    if (ed.posterLayout !== "standard") ed.setPosterLayout("standard")
+    handleAppearance(p)
+  }
+  function handleCardSkin(skin: CardSkin) {
+    setRememberedSkin(skin)
+    if (ed.posterLayout !== skin) {
+      ed.setPosterLayout(skin)
+      if (ed.posterFreshScope !== "ranked") ed.setPosterFreshScope("ranked")
+    }
+  }
+
+  // Extra style options: the full renderer-supported subset (same order as
+  // the defaults panel — colored always offered, never gated on the current
+  // value; the renderer already handles every entry).
+  const extraOptions: ExtraBadgeStyle[] = ["default", "pill", "corner", "vetro", "bordo", "colored"]
   const EXTRA_STYLE_LABELS: Record<ExtraBadgeStyle, string> = {
     default: "ui.bsDefault",
     pill: "ui.pill",
@@ -112,20 +225,6 @@ export function BadgeControls() {
 
   return (
     <div className="space-y-3.5 text-xs">
-      {/* Layout copertina: scelta grafica separata dallo stile classifica
-          (Nastro/Numero/Badge sopra). Non muta badge/logo/transform: i valori
-          restano e tornando a Standard si riapplicano. */}
-      <div data-testid="poster-layout-card" className="bg-surface/50 border border-surface2/60 rounded-xl p-3 space-y-3 shadow-sm">
-        <div className="flex items-center justify-between">
-          <span className="font-semibold text-zinc-200 flex items-center gap-1.5">
-            <LayoutTemplate className="w-3.5 h-3.5 text-accent-orange" />
-            {t("ui.posterLayout")}
-          </span>
-        </div>
-        <PosterLayoutSelector value={ed.posterLayout} onChange={(v) => ed.setPosterLayout(v)} />
-        <PosterFreshScopeSelector layout={ed.posterLayout} value={ed.posterFreshScope} onChange={(v) => ed.setPosterFreshScope(v)} />
-      </div>
-
       {/* CARD 1: Visibilità & Posizione Badge */}
       <div className="bg-surface/50 border border-surface2/60 rounded-xl p-3 space-y-3 shadow-sm">
         <div className="flex items-center justify-between">
@@ -521,9 +620,16 @@ export function BadgeControls() {
           )}
         </div>
 
-        {/* Classifica: single rank appearance (Nastro/Numero/Badge + variants).
-            No side control here: side is global-only (defaults), so a
-            per-title switch would preview a choice the save cannot keep. */}
+        {/* Classifica: single exclusive Nastro/Numero/Badge/Fresh/Card
+            presentation over the existing stored fields (no separate layout
+            card, no second renderer). Classic (Nastro/Numero/Badge) stages
+            posterLayout=standard plus its canonical rank style; Fresh stages
+            fresh+ranked with the enter-once offset reset; Card stages the
+            remembered skin + ranked with its skin subgroup. Ranked-only: no
+            all-posters scope choice (unranked titles fall back to Standard by
+            the unchanged server contract). No side control here: side is
+            global-only (defaults), so a per-title switch would preview a
+            choice the save cannot keep. */}
         <div className="pt-2 border-t border-surface2/50 space-y-1.5">
           <span className="text-[11px] text-muted font-medium flex items-center gap-1.5">
             <Trophy className="w-3 h-3 text-amber-500" />
@@ -536,8 +642,17 @@ export function BadgeControls() {
             onAppearance={handleAppearance}
             onVariant={handleVariant}
             onRibbonVariant={handleRibbonVariant}
+            presentation={presentation}
+            onPresentation={handlePresentation}
+            cardSkin={isCardSkin(ed.posterLayout) ? ed.posterLayout : rememberedSkin}
+            onCardSkin={handleCardSkin}
           />
-          {appearance !== "badge" && (
+          {(presentation === "fresh" || presentation === "card") && (
+            <p className="text-[10px] text-muted italic leading-tight">
+              {t(presentation === "card" ? "ui.posterLayoutScopeHint" : "ui.posterFreshScopeHint")}
+            </p>
+          )}
+          {(presentation === "nastro" || presentation === "numero") && (
             <p className="text-[10px] text-muted italic leading-tight">{t("ui.ribbonPosition")}: {t("ui.settings")}</p>
           )}
         </div>
@@ -558,7 +673,9 @@ export function BadgeControls() {
             options={extraOptions}
             onChange={(v) => ed.setExtraBadgeStyle(v)}
             t={t}
-            accentColor={accentColor}
+            // Display-only preview tint: exact manual hex, else the effective
+            // top shade actually painted (never written back to canonical).
+            accentColor={accentColor ?? display.topHex ?? display.bottomHex ?? null}
           />
         </div>
       </div>
@@ -580,7 +697,9 @@ export function BadgeControls() {
           disabled={ed.posterShape === "landscape" ? ["bar"] : []}
           onChange={ed.setBadgeStyle}
           t={t}
-          accentColor={accentColor}
+          // Display-only preview tint: exact manual hex, else the effective
+          // bottom (genre) shade actually painted (never canonical).
+          accentColor={accentColor ?? display.bottomHex ?? display.topHex ?? null}
         />
 
         <div className="pt-2 border-t border-surface2/50 space-y-1.5">
@@ -597,15 +716,17 @@ export function BadgeControls() {
           <div className="flex items-center gap-2 shrink-0">
             <input
               type="color"
-              value={effectiveColor.startsWith("#") && effectiveColor.length === 7 ? effectiveColor : "#555555"}
-              onChange={(e) => setAccentColor(e.target.value)}
-              className="w-6 h-6 rounded cursor-pointer border-0 bg-transparent [&::-webkit-color-swatch-wrapper]:p-0 [&::-webkit-color-swatch]:rounded shadow-sm shrink-0"
+              value={nativeValue.startsWith("#") && nativeValue.length === 7 ? nativeValue : "#555555"}
+              onChange={(e) => { setManualChooser(false); setAccentColor(e.target.value) }}
+              disabled={!nativeEnabled}
+              title={isCustomColor ? t("ui.resetAutoColor") : t("ui.chooseManualColor")}
+              className="w-6 h-6 rounded cursor-pointer border-0 bg-transparent [&::-webkit-color-swatch-wrapper]:p-0 [&::-webkit-color-swatch]:rounded shadow-sm shrink-0 disabled:cursor-not-allowed disabled:opacity-40"
             />
             <input
               type="text"
-              value={accentColor || autoAccentColor || ""}
-              onChange={(e) => { const v = e.target.value; if (/^#[0-9a-fA-F]{6}$/.test(v)) setAccentColor(v) }}
-              onBlur={(e) => { if (!/^#[0-9a-fA-F]{6}$/.test(e.target.value)) e.target.value = accentColor || autoAccentColor || "" }}
+              value={hexFieldValue}
+              onChange={(e) => { const v = e.target.value; if (/^#[0-9a-fA-F]{6}$/.test(v)) { setManualChooser(false); setAccentColor(v) } }}
+              onBlur={(e) => { if (!/^#[0-9a-fA-F]{6}$/.test(e.target.value)) e.target.value = hexFieldFallback }}
               className="editor-input w-24 text-center px-2 py-1 font-mono text-[11px] shrink-0"
               placeholder="#555555"
             />
@@ -615,6 +736,7 @@ export function BadgeControls() {
               <button
                 type="button"
                 onClick={() => {
+                  setManualChooser(false)
                   if (autoAccentColor) setAccentColor(autoAccentColor)
                   else setAccentColor(null)
                 }}
@@ -623,13 +745,45 @@ export function BadgeControls() {
               >
                 <RotateCcw className="w-3 h-3" />Reset
               </button>
-            ) : (
-              <span className="text-[10px] text-zinc-500 italic">
-                {autoAccentColor ? "Auto-rilevato" : t("ui.noDominantColor")}
-              </span>
-            )}
+            ) : !autoReady ? (
+              <button
+                type="button"
+                onClick={() => setManualChooser(true)}
+                className="text-[11px] text-zinc-300 hover:text-white transition-colors px-1.5 py-0.5 rounded bg-surface2/50 border border-surface2 hover:bg-surface2 flex items-center gap-1"
+                title={t("ui.chooseManualColor")}
+              >
+                {t("ui.chooseManualColor")}
+              </button>
+            ) : null}
           </div>
         </div>
+        {/* Effective-accent zone readout (display-only, localized): the picker
+            above shows the bottom/genre shade by locality (or the top shade
+            when it is the sole painter, with no text); only the bottom shade
+            is named here when it paints. Manual provenance is labeled
+            honestly and never written back to canonical state. */}
+        {!isCustomColor && effective.status === "ready" && display.bottomHex && (
+          <p className="text-[10px] text-zinc-500 leading-snug font-mono">
+            {bottomManual
+              ? t("ui.accentManualPainted", { hex: display.bottomHex })
+              : t("ui.accentAutoBottom", { hex: display.bottomHex })}
+          </p>
+        )}
+        {!isCustomColor && effective.status === "ready" && !display.bottomHex && !display.topHex && (
+          <p className="text-[10px] text-zinc-500 leading-snug">
+            {t("ui.accentAutoNone")}
+          </p>
+        )}
+        {!isCustomColor && autoLoading && (
+          <p className="text-[10px] text-zinc-500 leading-snug">
+            {t("ui.accentAutoDetecting")}
+          </p>
+        )}
+        {!isCustomColor && effective.status === "unknown" && (
+          <p className="text-[10px] text-zinc-500 leading-snug">
+            {autoAccentColor ? t("ui.accentAutoUnavailable") : t("ui.noDominantColor")}
+          </p>
+        )}
       </div>
     </div>
   )

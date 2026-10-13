@@ -430,7 +430,7 @@ export function buildPreviewUrl(ps: PosterState, bp: BadgeParams, configToken?: 
   params.push(`bf=${bp.blurFade}`)
   params.push(`bd=${bp.blurDarkness}`)
   params.push(`tint=${bp.tintStrength ?? 20}`)
-  params.push(`ts=${bp.topShade ?? 50}`)
+  params.push(`ts=${bp.topShade ?? 80}`)
   params.push(`bs=${bp.badgeStyle}`)
   params.push(`rs=${bp.rankingBadgeStyle}`)
   // Standalone extra style: opt-in only (absent = legacy `rs` fallback,
@@ -710,14 +710,23 @@ export const DEFAULTS_PREVIEW_DEMO_MEDIA = {
  * Preview-only editing family (Settings defaults screen): narrows the preview
  * sample to what the user is editing. `auto` (default) keeps the effective
  * saved priority untouched; `genre` (aggregate genre/year/rating style) also
- * keeps it (full actual preview, no forced sample). Never persisted, never
- * sent to Stremio/editor — the same render endpoint, only different query
- * values.
+ * keeps it (full actual preview, no forced sample) but forces a
+ * preview-only `layout=standard` sample so `bs`/`bfont` edits stay visible
+ * even with a fixed-appearance Fresh/Card layout configured (Fresh/Card
+ * hide the genre badge by renderer contract and must never be restyled —
+ * the staged/saved layout is untouched, only the preview query differs).
+ * `extra` behaves like
+ * `info` but originates from the standalone extra-badge style control: the
+ * preview builder prioritizes the existing `extra`-bucket sample when that
+ * bucket is allowed, so an `xbs` change is visible even when `upcoming` would
+ * otherwise win. Never persisted, never sent to Stremio/editor — the same
+ * render endpoint, only different query values.
  */
 export type DefaultsPreviewFamily =
   | "auto"
   | "rank"
   | "info"
+  | "extra"
   | "genre"
   | "ratings"
   | "quality"
@@ -826,7 +835,7 @@ export function buildDefaultsPreviewUrl(bp: DefaultsPreviewParams): string {
   params.push(`bd=${pick(land.blurDarkness, bp.defaultBlurDarkness) ?? 30}`)
   params.push(`be=${pick(land.blurEnabled, bp.defaultBlurEnabled) !== false ? "1" : "0"}`)
   params.push(`tint=${pick(land.tintStrength, bp.defaultTintStrength) ?? 20}`)
-  params.push(`ts=${pick(land.topShade, bp.defaultTopShade) ?? 50}`)
+  params.push(`ts=${pick(land.topShade, bp.defaultTopShade) ?? 80}`)
   params.push(`tscale=${pick(land.topBadgeScale, bp.defaultTopBadgeScale) ?? 100}`)
   params.push(`tox=${pick(land.topBadgeOffsetX, bp.defaultTopBadgeOffsetX) ?? 0}`)
   params.push(`toy=${pick(land.topBadgeOffsetY, bp.defaultTopBadgeOffsetY) ?? 0}`)
@@ -889,7 +898,11 @@ export function buildDefaultsPreviewUrl(bp: DefaultsPreviewParams): string {
   // Layout effettivo del formato in anteprima (`land ?? flat`, come UI e
   // server): SEMPRE esplicito in preview (come sash), così la preview dei
   // default mostra davvero il layout selezionato per quel formato.
-  const effPreviewLayout = (previewLandscape ? land.posterLayout : undefined) ?? bp.defaultPosterLayout
+  // Preview-only: la family `genre` forza un campione `standard` (Fresh/Card
+  // hanno aspetto fisso e nascondono il badge genere per contratto renderer —
+  // mai restyle) così `bs`/`bfont` restano visibili; staged/salvato intatti.
+  const effPreviewLayoutRaw = (previewLandscape ? land.posterLayout : undefined) ?? bp.defaultPosterLayout
+  const effPreviewLayout = bp.previewFamily === "genre" ? "standard" : effPreviewLayoutRaw
   params.push(`layout=${isPosterLayout(effPreviewLayout) ? effPreviewLayout : "standard"}`)
   // Scope effettivo del formato in anteprima (`land ?? flat`, come UI e
   // server): SEMPRE esplicito in preview (come layout), così la preview dei
