@@ -13,6 +13,7 @@ import { CustomCatalogModal } from "@/components/CustomCatalogModal"
 import { AddonCatalogModal } from "@/components/AddonCatalogModal"
 import { RankingSourceSection } from "@/components/RankingSourceSection"
 import { CatalogManagerModal } from "@/components/CatalogManagerModal"
+import { rankingSourceBrowsingName, resolveCatalogDisplayName } from "@/lib/ranking-source"
 import { posterUrl } from "@/lib/utils"
 import { userFetch } from "@/lib/http"
 import { currentPathUuid } from "@/lib/user-token"
@@ -193,6 +194,9 @@ function CustomCatalogEntry({
 }) {
   const { t } = useT()
   const [items, setItems] = useState<SimklCardItem[]>([])
+  // Visibilità emoji solo display: il nome salvato (cat.name) resta intatto.
+  const showEmojis = usePSelector((v) => v.catalogShowEmojis)
+  const displayName = resolveCatalogDisplayName(cat.name, showEmojis)
   const [total, setTotal] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -256,7 +260,7 @@ function CustomCatalogEntry({
             {isMixed ? <Shuffle className="w-3 h-3" /> : isMovie ? <Film className="w-3 h-3" /> : <Tv className="w-3 h-3" />}
             {isMixed ? t("ui.mixedType") : isMovie ? t("ui.movie") : t("ui.tvSeries")}
           </span>
-          <h3 className="text-base font-bold text-foreground line-clamp-1">{cat.name}</h3>
+          <h3 className="text-base font-bold text-foreground line-clamp-1">{displayName}</h3>
           {cat.addon && (
             <span className="shrink-0 text-[10px] text-muted truncate max-w-48" title={cat.addon.manifestUrl}>
               {(() => { try { return new URL(cat.addon.manifestUrl).hostname } catch { return cat.addon.manifestUrl } })()} · {cat.addon.catalogId}
@@ -334,10 +338,10 @@ function CustomCatalogEntry({
           tv={tv}
           totalMovies={movies.length}
           totalTv={tv.length}
-          movieTitle={`${cat.name} — ${t("ui.movie")}`}
-          tvTitle={`${cat.name} — ${t("ui.tvSeries")}`}
-          movieGridTitle={`${cat.name} — ${t("ui.movie")}`}
-          tvGridTitle={`${cat.name} — ${t("ui.tvSeries")}`}
+          movieTitle={`${displayName} — ${t("ui.movie")}`}
+          tvTitle={`${displayName} — ${t("ui.tvSeries")}`}
+          movieGridTitle={`${displayName} — ${t("ui.movie")}`}
+          tvGridTitle={`${displayName} — ${t("ui.tvSeries")}`}
           openGrid={(gridItems, title, section) => {
             void expandAndOpen(gridItems, title, section)
           }}
@@ -351,9 +355,9 @@ function CustomCatalogEntry({
           tv={[]}
           totalMovies={movies.length > 0 ? movies.length : items.length}
           totalTv={0}
-          movieTitle={cat.name}
+          movieTitle={displayName}
           tvTitle=""
-          movieGridTitle={cat.name}
+          movieGridTitle={displayName}
           tvGridTitle=""
           openGrid={(gridItems, title, section) => {
             void expandAndOpen(gridItems, title, section)
@@ -368,9 +372,9 @@ function CustomCatalogEntry({
           totalMovies={0}
           totalTv={tv.length > 0 ? tv.length : items.length}
           movieTitle=""
-          tvTitle={cat.name}
+          tvTitle={displayName}
           movieGridTitle=""
-          tvGridTitle={cat.name}
+          tvGridTitle={displayName}
           openGrid={(gridItems, title, section) => {
             void expandAndOpen(gridItems, title, section)
           }}
@@ -427,6 +431,10 @@ export function CataloghiView() {
   const serverHasTmdbKey = usePSelector((v) => v.serverHasTmdbKey)
   const hasKey = !!tmdbKey || serverHasTmdbKey
   const mdblistApiKey = usePSelector((v) => v.mdblistApiKey)
+  const rankingSourceMovie = usePSelector((v) => v.rankingSourceMovie)
+  const rankingSourceSeries = usePSelector((v) => v.rankingSourceSeries)
+  const catalogRenames = usePSelector((v) => v.catalogRenames)
+  const catalogShowEmojis = usePSelector((v) => v.catalogShowEmojis)
   const { t } = useT()
   const platformFilters = useMemo(() => [
     { id: "all", label: t("ui.all") },
@@ -443,7 +451,30 @@ export function CataloghiView() {
     { id: "anime", label: "Anime" },
   ], [t])
   const ed = usePosterEditor()
-  const regionFlag = getRegionDef(ed.defaultRegion).flag
+  const activeRegion = getRegionDef(ed.defaultRegion)
+  const regionFlag = activeRegion.flag
+  // Nomi riga/griglia del blocco JustWatch: stessa precedenza del manifest
+  // Stremio e del CatalogManagerModal (rinomine utente > nome fonte ranking >
+  // default). La navigazione usa la variante browsing (popular/trending senza
+  // bandiera anche con emoji ON: browsing display vs nomi canonici/export con
+  // bandiera in manager/manifest); per charts resta il legacy generico così
+  // il flusso default è byte-identico. Mai mapping stringhe duplicato qui.
+  const rankingSelection = { customCatalogs, rankingSourceMovie, rankingSourceSeries }
+  const jwMovieRename = catalogRenames?.["pictorium-jw-movies"]?.trim() || null
+  const jwSeriesRename = catalogRenames?.["pictorium-jw-series"]?.trim() || null
+  const jwMovieRankingName = rankingSourceBrowsingName("pictorium-jw-movies", "movie", rankingSelection, activeRegion)
+  const jwSeriesRankingName = rankingSourceBrowsingName("pictorium-jw-series", "series", rankingSelection, activeRegion)
+  // Visibilità emoji solo display: rinomine salvate e nomi fonte dinamici
+  // restano intatti e continuano ad aggiornarsi anche mentre nascosti.
+  const jwMovieTitle = resolveCatalogDisplayName(jwMovieRename ?? jwMovieRankingName ?? `${t("ui.movie")} — Top 20`, catalogShowEmojis)
+  const jwSeriesTitle = resolveCatalogDisplayName(jwSeriesRename ?? jwSeriesRankingName ?? `${t("ui.tvSeries")} — Top 20`, catalogShowEmojis)
+  const jwMovieGridTitle = resolveCatalogDisplayName(jwMovieRename ?? jwMovieRankingName ?? `JustWatch — ${t("ui.movie")}`, catalogShowEmojis)
+  const jwSeriesGridTitle = resolveCatalogDisplayName(jwSeriesRename ?? jwSeriesRankingName ?? `JustWatch — ${t("ui.tvSeries")}`, catalogShowEmojis)
+  // Sezione mista (popular/trending/custom/rename su uno slot): l'intestazione
+  // "JustWatch Top 20" sarebbe falsa, si usa il titolo neutro della fonte.
+  const isJwSourceCustomized = Boolean(jwMovieRename ?? jwMovieRankingName ?? jwSeriesRename ?? jwSeriesRankingName)
+  const jwSectionBase = isJwSourceCustomized ? t("ui.rankingSourceTitle") : t("ui.justwatchTop20")
+  const jwSectionHeading = catalogShowEmojis !== false ? `${jwSectionBase} ${regionFlag}` : jwSectionBase
   const movieTrending = trending.filter((r) => r.media_type === "movie").slice(0, 20)
   const tvTrending = trending.filter((r) => r.media_type === "tv").slice(0, 20)
   const animeMovies = mdblistAnimeList.filter((r) => r.media_type === "movie")
@@ -716,20 +747,21 @@ export function CataloghiView() {
 
       {showCustom && customCatalogs.length > 0 && <div className="section-divider" />}
 
-      {/* JustWatch Top 20 — due contenitori separati (Film | Serie) sulla stessa riga */}
+      {/* JustWatch Top 20 — due contenitori separati (Film | Serie) sulla stessa riga.
+          I titoli seguono la fonte ranking selezionata, come nel manifest. */}
       {showJustWatch && (
         <>
           <div className="mb-12">
-            <h2 className="section-heading text-xl font-bold mb-6">{t("ui.justwatchTop20")} {regionFlag}</h2>
+            <h2 className="section-heading text-xl font-bold mb-6">{jwSectionHeading}</h2>
             <CatalogPair
               movies={movieTrending}
               tv={tvTrending}
               totalMovies={movieTrending.length}
               totalTv={tvTrending.length}
-              movieTitle={`${t("ui.movie")} — Top 20`}
-              tvTitle={`${t("ui.tvSeries")} — Top 20`}
-              movieGridTitle={`JustWatch — ${t("ui.movie")}`}
-              tvGridTitle={`JustWatch — ${t("ui.tvSeries")}`}
+              movieTitle={jwMovieTitle}
+              tvTitle={jwSeriesTitle}
+              movieGridTitle={jwMovieGridTitle}
+              tvGridTitle={jwSeriesGridTitle}
               openGrid={openGrid}
               onItemClick={navigateToItem}
               savedKeys={savedKeys}

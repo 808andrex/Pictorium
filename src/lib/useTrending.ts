@@ -16,9 +16,40 @@ function statusOf(length: number): ListStatus {
   return length > 0 ? "ready" : "empty"
 }
 
-export function useTrending(tmdbKey: string, mdblistApiKey: string, regionCode = "IT", hasServerKey = false) {
+export interface TrendingScope {
+  /** Raw Top 20 selections (`""` = explicit JustWatch charts). */
+  readonly movieSource?: string
+  readonly seriesSource?: string
+  /** Namespace for source resolution (server resolves `?u=` too; explicit
+   *  here so tests and manual refreshes carry it deterministically). */
+  readonly userId?: string | null
+  /** Signed device config (profileless spaces); null elsewhere. */
+  readonly configToken?: string | null
+  /** Token lifecycle: suspend/error instead of silent JW (same rule as rank). */
+  readonly tokenStatus?: "off" | "pending" | "ready" | "error"
+  /** Server save status: suspend/error to avoid fetching with obsolete server defaults. */
+  readonly saveStatus?: "idle" | "saving" | "ready" | "error"
+  /** Bumped on every acknowledged ranking save: refetch even when the title
+   *  and user are unchanged. */
+  readonly rankNonce?: number
+}
+
+export function useTrending(
+  tmdbKey: string,
+  mdblistApiKey: string,
+  regionCode = "IT",
+  hasServerKey = false,
+  scope: TrendingScope = {},
+) {
   const region = getRegionDef(regionCode)
   const flixCountry = region.flixSlug
+  const movieSource = scope.movieSource ?? ""
+  const seriesSource = scope.seriesSource ?? ""
+  const scopeUserId = scope.userId ?? null
+  const configToken = scope.configToken ?? null
+  const tokenStatus = scope.tokenStatus ?? "off"
+  const saveStatus = scope.saveStatus ?? "idle"
+  const rankNonce = scope.rankNonce ?? 0
   const [trending, setTrending] = useState<Array<SearchResult & { rank: number }>>([])
   const [trendingStatus, setTrendingStatus] = useState<ListStatus>("idle")
   const [mdblistAnimeList, setMdblistAnimeList] = useState<EnrichedAnimeItem[]>([])
@@ -31,6 +62,11 @@ export function useTrending(tmdbKey: string, mdblistApiKey: string, regionCode =
   const [refreshNonce, setRefreshNonce] = useState(0)
   const lastRefreshRef = useRef(0)
   const abortRef = useRef<AbortController | null>(null)
+  const animeAbortRef = useRef<AbortController | null>(null)
+  // Generation guard: a slow response from a previous scope (or a previous
+  // manual refresh) must never overwrite the current scope's rows.
+  const trendGenRef = useRef(0)
+  const animeGenRef = useRef(0)
   const platformAbortRef = useRef<AbortController | null>(null)
   const requestedPlatformsRef = useRef(new Set<string>())
   const chartsRef = useRef<Record<string, FlixPatrolChart>>({})
@@ -39,34 +75,90 @@ export function useTrending(tmdbKey: string, mdblistApiKey: string, regionCode =
   const platformQueuesRef = useRef([Promise.resolve(), Promise.resolve()])
   const nextQueueRef = useRef(0)
 
+  // Scoped Top 20 URL: the server resolves the effective ranking source
+  // (namespace `?u=`, `?config=` token, or global defaults) through the SAME
+  // shared service the Stremio catalogs use — the UI rows and the installed
+  // catalogs can never disagree on content/order/ids.
+  const trendingUrl = useCallback((buster?: number) => {
+    let url = `/api/tmdb/trending?api_key=${tmdbKey}&country=${encodeURIComponent(region.code)}`
+    if (scopeUserId) url += `&u=${encodeURIComponent(scopeUserId)}`
+    if (configToken) url += `&config=${encodeURIComponent(configToken)}`
+    if (buster !== undefined) url += `&_t=${buster}`
+    return url
+  }, [tmdbKey, region.code, scopeUserId, configToken])
+
+  // Top 20 effect: follows the ranking selection (sources, namespace, token,
+  // save nonce) as well as keys/region. Anime and platforms are deliberately
+  // NOT in here: switching the Top 20 source must never refetch them.
   useEffect(() => {
     if (!tmdbKey && !hasServerKey) {
       setTrending([])
-      setMdblistAnimeList([])
       setTrendingStatus("idle")
-      setAnimeStatus("idle")
       return
     }
+    // Token suspend/error or server save pending: never resolve through the
+    // server while a selection is saving or token is minting (otherwise it
+    // queries the previous selection on the server!).
+    if (saveStatus === "saving" || tokenStatus === "pending") {
+      abortRef.current?.abort()
+      setTrending([])
+      setTrendingStatus("loading")
+      return
+    }
+    if (saveStatus === "error" || tokenStatus === "error") {
+      abortRef.current?.abort()
+      setTrending([])
+      setTrendingStatus("error")
+      return
+    }
+    const gen = ++trendGenRef.current
+    // Clear previous results immediately when starting a new fetch so old titles
+    // are never shown under the new name while loading.
+    setTrending([])
     setTrendingStatus("loading")
     const ctrl = new AbortController()
     abortRef.current = ctrl
     const signal = ctrl.signal
-    http<{ movies: Array<SearchResult & { rank: number }>; tv: Array<SearchResult & { rank: number }> }>(`/api/tmdb/trending?api_key=${tmdbKey}&country=${encodeURIComponent(region.code)}`, { timeout: 30000, signal })
+    const url = trendingUrl()
+    // `cache: "no-store"` bypasses the browser HTTP cache at this same
+    // namespace URL (the selection lives server-side and the URL carries no
+    // `&_t` buster on this automatic path, unlike the manual refresh below):
+    // without it the browser/CDN could keep serving the previous source's
+    // body after a save even though the server-side app cache key is correct.
+    // Server-side data caching is untouched (headers/transport only).
+    http<{ movies: Array<SearchResult & { rank: number }>; tv: Array<SearchResult & { rank: number }> }>(url, { timeout: 30000, signal, cache: "no-store" })
       .then((data) => {
-        if (signal.aborted) return
-        const list = [...(data.movies || []), ...(data.tv || [])]
+        if (signal.aborted || gen !== trendGenRef.current) return
+        const movies = (data.movies || []).slice(0, 20)
+        const tv = (data.tv || []).slice(0, 20)
+        const list = [...movies, ...tv]
         setTrending(list)
         setTrendingStatus(statusOf(list.length))
       })
       .catch((e) => {
-        if (signal.aborted) return
+        if (signal.aborted || gen !== trendGenRef.current) return
         console.error("[pictorium] Failed to load trending:", e)
         setTrendingStatus("error")
       })
+    return () => { ctrl.abort(); if (abortRef.current === ctrl) abortRef.current = null }
+  }, [tmdbKey, region.code, hasServerKey, movieSource, seriesSource, scopeUserId, configToken, tokenStatus, saveStatus, rankNonce, trendingUrl])
+
+  // Anime effect: keys only (plus the historic region dep). A Top 20 source
+  // switch never touches this list.
+  useEffect(() => {
+    if (!tmdbKey && !hasServerKey) {
+      setMdblistAnimeList([])
+      setAnimeStatus("idle")
+      return
+    }
+    const gen = ++animeGenRef.current
     setAnimeStatus("loading")
+    const ctrl = new AbortController()
+    animeAbortRef.current = ctrl
+    const signal = ctrl.signal
     http<EnrichedAnimeItem[]>(`/api/mdblist/anime?mdblist_key=${encodeURIComponent(mdblistApiKey || "")}&api_key=${encodeURIComponent(tmdbKey)}`, { timeout: 30000, signal })
       .then((data) => {
-        if (signal.aborted) return
+        if (signal.aborted || gen !== animeGenRef.current) return
         if (Array.isArray(data) && data.length > 0) {
           setMdblistAnimeList(data)
           setAnimeStatus("ready")
@@ -75,7 +167,7 @@ export function useTrending(tmdbKey: string, mdblistApiKey: string, regionCode =
           // Fallback TMDB trending anime
           http<{ results: SearchResult[] }>(`/api/tmdb/trending/tv/week?api_key=${tmdbKey}&with_original_language=ja&sort_by=popularity`, { timeout: 30000, signal })
             .then((tmdbData) => {
-              if (signal.aborted) return
+              if (signal.aborted || gen !== animeGenRef.current) return
               const fallback: EnrichedAnimeItem[] = (tmdbData.results || []).map((item: SearchResult, idx: number) => ({
                 id: item.id,
                 title: item.title || item.name || "",
@@ -87,14 +179,14 @@ export function useTrending(tmdbKey: string, mdblistApiKey: string, regionCode =
               setAnimeStatus(statusOf(fallback.length))
               setAnimeSource("tmdb")
             })
-            .catch(() => { if (!signal.aborted) setAnimeStatus("error") })
+            .catch(() => { if (!signal.aborted && gen === animeGenRef.current) setAnimeStatus("error") })
         }
       })
       .catch(() => {
-        if (signal.aborted) return
+        if (signal.aborted || gen !== animeGenRef.current) return
         http<{ results: SearchResult[] }>(`/api/tmdb/trending/tv/week?api_key=${tmdbKey}&with_original_language=ja&sort_by=popularity`, { timeout: 30000, signal })
           .then((tmdbData) => {
-            if (signal.aborted) return
+            if (signal.aborted || gen !== animeGenRef.current) return
             const fallback: EnrichedAnimeItem[] = (tmdbData.results || []).map((item: SearchResult, idx: number) => ({
               id: item.id,
               title: item.title || item.name || "",
@@ -106,9 +198,9 @@ export function useTrending(tmdbKey: string, mdblistApiKey: string, regionCode =
             setAnimeStatus(statusOf(fallback.length))
             setAnimeSource("tmdb")
           })
-          .catch(() => { if (!signal.aborted) setAnimeStatus("error") })
+          .catch(() => { if (!signal.aborted && gen === animeGenRef.current) setAnimeStatus("error") })
       })
-    return () => { ctrl.abort(); abortRef.current?.abort() }
+    return () => { ctrl.abort(); if (animeAbortRef.current === ctrl) animeAbortRef.current = null }
   }, [tmdbKey, mdblistApiKey, region.code, hasServerKey])
 
   useEffect(() => {
@@ -167,10 +259,14 @@ export function useTrending(tmdbKey: string, mdblistApiKey: string, regionCode =
     }
     lastRefreshRef.current = now
     if (abortRef.current) abortRef.current.abort()
+    if (animeAbortRef.current) animeAbortRef.current.abort()
     platformAbortRef.current?.abort()
     const ctrl = new AbortController()
     const signal = ctrl.signal
     abortRef.current = ctrl
+    const animeCtrl = new AbortController()
+    const animeSignal = animeCtrl.signal
+    animeAbortRef.current = animeCtrl
     platformAbortRef.current = new AbortController()
     platformInflightRef.current.clear()
     platformQueuesRef.current = [Promise.resolve(), Promise.resolve()]
@@ -178,11 +274,30 @@ export function useTrending(tmdbKey: string, mdblistApiKey: string, regionCode =
     setRefreshNonce((n) => n + 1)
     const customPromise = refreshCustom ? refreshCustom().catch(() => 1) : Promise.resolve(0)
     let failures = 0
+    // Token suspend/error or server save pending: the manual refresh
+    // resolves through the same scoped selection as the mount effect — never
+    // through the empty namespace while a device selection is pending or
+    // failed (silent JW), and never through the stale server defaults while
+    // a ranking save is pending or failed. Anime and platforms stay
+    // independent: only the Top 20 trend fetch is gated here.
+    const trendingSuspended =
+      tokenStatus === "pending" ||
+      tokenStatus === "error" ||
+      saveStatus === "saving" ||
+      saveStatus === "error"
     if (tmdbKey || hasServerKey) try {
-      const animePromise = http<EnrichedAnimeItem[]>(`/api/mdblist/anime?mdblist_key=${encodeURIComponent(mdblistApiKey || "")}&api_key=${encodeURIComponent(tmdbKey)}&_t=${now}`, { timeout: 30000, signal })
+      const trendGen = ++trendGenRef.current
+      const animeGen = ++animeGenRef.current
+      const trendingPromise = trendingSuspended
+        ? Promise.resolve(null)
+        // `&_t` already busts the URL, but `cache: "no-store"` (same as the
+        // automatic effect above) keeps the manual path consistent and
+        // explicit failures never cached anywhere.
+        : http<{ movies: Array<SearchResult & { rank: number }>; tv: Array<SearchResult & { rank: number }> }>(trendingUrl(now), { timeout: 30000, signal, cache: "no-store" })
+      const animePromise = http<EnrichedAnimeItem[]>(`/api/mdblist/anime?mdblist_key=${encodeURIComponent(mdblistApiKey || "")}&api_key=${encodeURIComponent(tmdbKey)}&_t=${now}`, { timeout: 30000, signal: animeSignal })
         .then((data) => {
           if (Array.isArray(data) && data.length > 0) {
-            if (!signal.aborted) setAnimeSource("mdblist")
+            if (!animeSignal.aborted && animeGen === animeGenRef.current) setAnimeSource("mdblist")
             return data
           }
           return null
@@ -190,10 +305,10 @@ export function useTrending(tmdbKey: string, mdblistApiKey: string, regionCode =
         .catch(() => null)
         .then((res) => {
           if (res) return res
-          if (signal.aborted) return null
-          return http<{ results: SearchResult[] }>(`/api/tmdb/trending/tv/week?api_key=${tmdbKey}&with_original_language=ja&sort_by=popularity&_t=${now}`, { timeout: 30000, signal })
+          if (animeSignal.aborted) return null
+          return http<{ results: SearchResult[] }>(`/api/tmdb/trending/tv/week?api_key=${tmdbKey}&with_original_language=ja&sort_by=popularity&_t=${now}`, { timeout: 30000, signal: animeSignal })
             .then((data): EnrichedAnimeItem[] => {
-              if (!signal.aborted) setAnimeSource("tmdb")
+              if (!animeSignal.aborted && animeGen === animeGenRef.current) setAnimeSource("tmdb")
               return (data.results || []).map((item: SearchResult, idx: number) => ({
               id: item.id,
               title: item.title || item.name || "",
@@ -204,26 +319,34 @@ export function useTrending(tmdbKey: string, mdblistApiKey: string, regionCode =
             })
             .catch(() => null)
         })
-      // JustWatch e anime procedono indipendentemente: il fallimento di uno
+      // Top 20 e anime procedono indipendentemente: il fallimento di uno
       // non cancella i dati dell'altro.
       const [trendingRes, animeRes] = await Promise.allSettled([
-        http<{ movies: Array<SearchResult & { rank: number }>; tv: Array<SearchResult & { rank: number }> }>(`/api/tmdb/trending?api_key=${tmdbKey}&country=${encodeURIComponent(region.code)}&_t=${now}`, { timeout: 30000, signal }),
+        trendingPromise,
         animePromise,
       ])
       if (signal.aborted) return
-      if (trendingRes.status === "fulfilled") {
+      if (trendingSuspended) {
+        // Refresh while the device selection is pending/failed: the rows stay
+        // untouched (the mount effect owns them) but the toast stays honest.
+        failures++
+      } else if (trendingRes.status === "fulfilled" && trendingRes.value) {
+        if (trendGen !== trendGenRef.current) return
         const list = [...(trendingRes.value.movies || []), ...(trendingRes.value.tv || [])]
         setTrending(list)
         setTrendingStatus(statusOf(list.length))
       } else {
-        console.error("[pictorium] Failed to refresh lists:", trendingRes.reason)
+        if (trendGen !== trendGenRef.current) return
+        console.error("[pictorium] Failed to refresh lists:", trendingRes.status === "rejected" ? trendingRes.reason : "suspended")
         setTrendingStatus("error")
         failures++
       }
       if (animeRes.status === "fulfilled" && animeRes.value) {
+        if (animeGen !== animeGenRef.current) return
         setMdblistAnimeList(animeRes.value as EnrichedAnimeItem[])
         setAnimeStatus(statusOf(animeRes.value.length))
       } else if (animeRes.status === "rejected" || !animeRes.value) {
+        if (animeGen !== animeGenRef.current) return
         if (animeRes.status === "rejected") console.error("[pictorium] Failed to refresh anime:", animeRes.reason)
         setAnimeStatus("error")
         failures++
@@ -248,7 +371,7 @@ export function useTrending(tmdbKey: string, mdblistApiKey: string, regionCode =
       if (failures === 0) toast(t("ui.listsRefreshed"))
       else toast.warning(t("ui.listsPartial"))
     })
-  }, [tmdbKey, mdblistApiKey, region.code, hasServerKey, loadPlatform])
+  }, [tmdbKey, mdblistApiKey, hasServerKey, loadPlatform, trendingUrl, tokenStatus, saveStatus])
 
   return { trending, trendingStatus, trendingError: trendingStatus === "error", mdblistAnimeList, animeStatus, animeSource, streamingCharts, platformErrors, loadPlatform, refreshLists, refreshNonce }
 }

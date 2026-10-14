@@ -10,6 +10,7 @@ export interface LocalConfigTokenInput {
   readonly rankingSourceMovie: string
   readonly rankingSourceSeries: string
   readonly catalogShapes?: Readonly<Record<string, string>>
+  readonly catalogShowEmojis?: boolean
 }
 
 /**
@@ -70,6 +71,9 @@ export function useLocalConfigToken(input: LocalConfigTokenInput): LocalConfigTo
         ...(input.catalogShapes && Object.keys(input.catalogShapes).length > 0
           ? { catalogShapes: input.catalogShapes }
           : {}),
+        // Display-only pref: carried only when hidden so default URLs stay
+        // byte-identical (no token churn, no refetch while shown).
+        ...(input.catalogShowEmojis === false ? { catalogShowEmojis: false } : {}),
       })
       if (cancelled) return
       if (minted) {
@@ -92,7 +96,7 @@ export function useLocalConfigToken(input: LocalConfigTokenInput): LocalConfigTo
     return () => {
       cancelled = true
     }
-  }, [input.customCatalogs, input.rankingSourceMovie, input.rankingSourceSeries, input.catalogShapes])
+  }, [input.customCatalogs, input.rankingSourceMovie, input.rankingSourceSeries, input.catalogShapes, input.catalogShowEmojis])
 
   return { token, status }
 }

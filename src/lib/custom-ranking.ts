@@ -76,8 +76,9 @@ const RESOLVE_CHUNK_SIZE = 10
 const RESOLVE_SCAN_CAP = 500
 
 /**
- * Normalized result TTL: same 30 minutes as the provider list cache, same
- * `custom_catalogs` tag so existing invalidations clear both layers.
+ * Normalized result TTL: its own 30 minutes (the custom-list source cache
+ * is 12h; this derived Top-20 layer stays short), same `custom_catalogs`
+ * tag so existing invalidations clear both layers.
  * Only `ok` results with items are cached; errors and genuine empties are
  * recomputed (the catalog layer already holds empty bodies for 60s).
  */

@@ -10,6 +10,12 @@ vi.mock("@/lib/contexts/TranslationContext", async (importOriginal) => ({
   useT: () => ({ t: (key: string) => key }),
 }))
 
+vi.mock("@/lib/server-defaults", async (importOriginal) => {
+  const mod = await importOriginal<typeof import("@/lib/server-defaults")>()
+  const mocked = vi.fn(() => ({}))
+  return { ...mod, getServerDefaults: mocked, getServerDefaultsChecked: vi.fn(async () => mocked()) }
+})
+
 beforeEach(() => {
   vi.spyOn(window, "scrollTo").mockImplementation(() => {})
 })
@@ -203,6 +209,116 @@ describe("CatalogManagerModal preserved behaviors", () => {
     expect(screen.getAllByText(/^#\d+$/)).toHaveLength(PICTORIUM_CATALOGS.length + 2)
     expect(screen.getByText("Mix — ui.movie")).toBeInTheDocument()
     expect(screen.getByText("Mix — ui.tvSeries")).toBeInTheDocument()
+    view.unmount()
+  })
+})
+
+describe("CatalogManagerModal ranking-source names", () => {
+  it("shows the flagged popular name on the movie Top 20 instead of Top 20", () => {
+    const { view } = openManager({ rankingSourceMovie: "jw:popular" })
+    expect(screen.getByText("🇮🇹 I più popolari — Film")).toBeInTheDocument()
+    expect(screen.queryByText("🇮🇹 Top 20 Italia — Film")).not.toBeInTheDocument()
+    // The untouched series slot keeps its regional Top 20 name.
+    expect(screen.getByText("🇮🇹 Top 20 Italia — Serie TV")).toBeInTheDocument()
+    view.unmount()
+  })
+
+  it("shows flagged names on both slots for both modes", () => {
+    const movieView = openManager({ rankingSourceMovie: "jw:trending" })
+    expect(screen.getByText("🇮🇹 In tendenza — Film")).toBeInTheDocument()
+    movieView.view.unmount()
+    const { view } = openManager({ rankingSourceMovie: "jw:popular", rankingSourceSeries: "jw:popular" })
+    expect(screen.getByText("🇮🇹 I più popolari — Film")).toBeInTheDocument()
+    expect(screen.getByText("🇮🇹 I più popolari — Serie TV")).toBeInTheDocument()
+    view.unmount()
+  })
+
+  it("lets an explicit rename win over the popular name", () => {
+    const { view } = openManager({
+      rankingSourceMovie: "jw:popular",
+      catalogRenames: { "pictorium-jw-movies": "La mia classifica" },
+    })
+    expect(screen.getByText("La mia classifica")).toBeInTheDocument()
+    expect(screen.queryByText(/I più popolari/)).not.toBeInTheDocument()
+    view.unmount()
+  })
+
+  it("strips the popular flag for display when emojis are off without rewriting storage", () => {
+    const { view } = openManager({ rankingSourceMovie: "jw:popular", catalogShowEmojis: false })
+    expect(screen.getByText("I più popolari — Film")).toBeInTheDocument()
+    expect(screen.queryByText("🇮🇹 I più popolari — Film")).not.toBeInTheDocument()
+    view.unmount()
+  })
+
+  it("rename editor starts from the full stored raw name (never the stripped text)", () => {
+    const { view } = openManager({
+      rankingSourceMovie: "jw:popular",
+      catalogShowEmojis: false,
+      catalogRenames: { "pictorium-jw-movies": "🚀 La mia classifica" },
+    })
+    fireEvent.click(screen.getAllByTitle("ui.renameCatalog")[0])
+    expect(screen.getByRole("textbox")).toHaveValue("🚀 La mia classifica")
+    view.unmount()
+  })
+
+  it("matches the manifest canonical name for the same mode and preference (manager/manifest parity)", async () => {
+    const { buildManifestResponse } = await import("@/lib/build-manifest")
+    const { encodeConfig } = await import("@/lib/config-token")
+    const { NextRequest } = await import("next/server")
+    const token = encodeConfig({
+      globalBadges: true,
+      rankingBadges: true,
+      badgeStyle: "pill",
+      rankingBadgeStyle: "default",
+      blurEnabled: true,
+      blurIntensity: 50,
+      blurFade: 30,
+      blurDarkness: 40,
+      gradientHeight: 35,
+      networkLogo: true,
+      autoRotateClean: true,
+      rankingSourceMovie: "jw:popular",
+      rankingSourceSeries: "jw:trending",
+    })
+    const req = new NextRequest(`https://pictorium.test/manifest.json?config=${token}`)
+    const res = await buildManifestResponse(req, null, token)
+    const data = (await res.json()) as { catalogs: Array<{ id: string; name: string }> }
+    const byId = new Map(data.catalogs.map((c) => [c.id, c.name]))
+    expect(byId.get("pictorium-jw-movies")).toBe("🇮🇹 I più popolari — Film")
+    expect(byId.get("pictorium-jw-series")).toBe("🇮🇹 In tendenza — Serie TV")
+    const { view } = openManager({ rankingSourceMovie: "jw:popular", rankingSourceSeries: "jw:trending" })
+    expect(screen.getByText(byId.get("pictorium-jw-movies")!)).toBeInTheDocument()
+    expect(screen.getByText(byId.get("pictorium-jw-series")!)).toBeInTheDocument()
+    view.unmount()
+  })
+})
+
+describe("CatalogManagerModal catalog emoji visibility", () => {
+  it("shows an 'Emoji nei nomi' toggle pressed by default with full names", () => {
+    const { view } = openManager()
+    const toggle = screen.getByRole("button", { name: "ui.catalogEmojis" })
+    expect(toggle).toHaveAttribute("aria-pressed", "true")
+    expect(screen.getByText("🇮🇹 Top 20 Italia — Film")).toBeInTheDocument()
+    view.unmount()
+  })
+
+  it("hides every emoji for display when off while stored renames stay intact", () => {
+    const setCatalogShowEmojis = vi.fn()
+    const { view } = openManager({
+      catalogShowEmojis: false,
+      setCatalogShowEmojis,
+      catalogRenames: { "pictorium-jw-movies": "🚀 La mia classifica" },
+    })
+    // Builtins stripped, explicit rename stripped only for display.
+    // (The movie slot carries the explicit rename here, so the untouched
+    // series builtin pins the stripped default.)
+    expect(screen.getByText("Top 20 Italia — Serie TV")).toBeInTheDocument()
+    expect(screen.queryByText("🇮🇹 Top 20 Italia — Serie TV")).not.toBeInTheDocument()
+    expect(screen.getByText("La mia classifica")).toBeInTheDocument()
+    expect(screen.queryByText("🚀 La mia classifica")).not.toBeInTheDocument()
+    // Toggle restores the full names (reversible, nothing rewritten).
+    fireEvent.click(screen.getByRole("button", { name: "ui.catalogEmojis" }))
+    expect(setCatalogShowEmojis).toHaveBeenCalledWith(true)
     view.unmount()
   })
 })

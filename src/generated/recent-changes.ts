@@ -11,6 +11,9 @@ export interface RecentChange {
 }
 
 export const RECENT_CHANGES: RecentChange[] = [
+  { type: "fix", text: "Keep imported ranks and poster previews in sync", sha: "4f57d55", date: "2026-10-14" },
+  { type: "feature", text: "Connect your Trakt account with PKCE", sha: "6095d8f", date: "2026-10-14" },
+  { type: "feature", text: "Add Brazilian Portuguese language choice", sha: "7f0fe60", date: "2026-10-14" },
   { type: "feature", text: "Make poster customization clearer and desktop notifications less intrusive", sha: "8343654", date: "2026-10-13" },
   { type: "fix", text: "Restore desktop poster save confirmations to bottom right", sha: "c50cf1b", date: "2026-10-13" },
   { type: "feature", text: "Redesign poster settings with independent presets and adaptive colors", sha: "480138e", date: "2026-10-13" },

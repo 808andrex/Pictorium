@@ -14,11 +14,10 @@ export { isTraktUserContentUrl, isTraktWatchlistUrl } from "./catalog-provider-d
 export type { CatalogProviderType, ProviderDetectionResult } from "./catalog-provider-detect"
 
 const log = createLogger("custom-catalogs")
-const CACHE_TTL_MS = 30 * 60 * 1000
-// MDBList lists have a 12h source cache (mdblist.ts): the outer cache
-// honors 12h ONLY for the mdblist provider — TVDB and other sources
-// stay at 30min.
-const MDBLIST_OUTER_TTL_MS = 12 * 60 * 60 * 1000
+// Successful normalized custom lists share one 12h source cache (user:
+// "le liste personalizzate fai sempre 12 ore"). Errors, empties,
+// incomplete/aborted prefixes and time-budget partials never land here.
+const CUSTOM_LIST_SOURCE_TTL_MS = 12 * 60 * 60 * 1000
 
 /**
  * Esito tipizzato del fetch catalogo (Fase 5): la pipeline Stremio tratta
@@ -1146,8 +1145,8 @@ export interface UnifiedCatalogOptions {
 /**
  * Universal dispatcher for fetching items from any catalog or
  * external list, with a typed outcome (Phase 5). Only successful "ok"
- * results with items go into cache (30min, 12h for the mdblist
- * provider); transient errors never poison the cache.
+ * results with items go into cache (12h for every supported custom-list
+ * source); transient errors never poison the cache.
  */
 export async function fetchUnifiedCatalogResult(
   urlOrSlug: string,
@@ -1181,7 +1180,7 @@ export async function fetchUnifiedCatalogResult(
   // cache key come hash, mai plaintext (stesso pattern di mdblist.ts). Senza,
   // il fallback pubblico senza chiave avvelenava la vista keyed e viceversa.
   // La Client ID Trakt d'istanza entra come hash: a rotazione chiave la cache
-  // vecchia non viene servita per 30 min. Stesso per dataset e chiave TVDB:
+  // vecchia non viene servita per 12h. Stesso per dataset e chiave TVDB:
   // due utenti non collidono mai. Il contesto Trakt aggiunge UUID proprietario
   // + generation di fencing (solo path contenuto-utente autenticate): due
   // utenti con lo stesso URL incollato non condividono mai nulla, e dopo
@@ -1281,7 +1280,7 @@ export async function fetchUnifiedCatalogResult(
   const traktPrivateServed =
     provider === "trakt" && traktAuth?.kind === "token" && items.length > 0 && result.status === "ok"
   // Interrupted provider pagination must NEVER long-cache: a partial prefix
-  // stays servable this request but is not written to the 30min/12h source
+  // stays servable this request but is not written to the 12h source
   // cache (healthy TTLs untouched). The flag propagates so the catalog
   // handler serves the body short-TTL and the retry refetches.
   if (result.incomplete) {
@@ -1293,7 +1292,7 @@ export async function fetchUnifiedCatalogResult(
     }
   }
   if (items.length > 0 && !traktNoCache && (provider !== "trakt" || traktAuth?.kind !== "token" || traktPrivateVerified)) {
-    cacheSet(cacheKey, items, ["custom_catalogs"], provider === "mdblist" ? MDBLIST_OUTER_TTL_MS : CACHE_TTL_MS)
+    cacheSet(cacheKey, items, ["custom_catalogs"], CUSTOM_LIST_SOURCE_TTL_MS)
     return { items, status: "ok", ...(traktPrivateServed ? { traktPrivate: true as const } : {}) }
   }
   if (items.length > 0) return { items, status: "ok", ...(traktPrivateServed ? { traktPrivate: true as const } : {}) }

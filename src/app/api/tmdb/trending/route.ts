@@ -1,13 +1,18 @@
 import { NextRequest } from "next/server"
-import { getJWRankings } from "@/lib/justwatch"
-import { getDetails, getImages, resolveRouteApiKey } from "@/lib/tmdb"
+import { fetchTop20Ranking } from "@/lib/top20-ranking"
+import { resolveRankingSource } from "@/lib/ranking-source"
+import { findRankingCustomCatalog } from "@/lib/custom-ranking"
+import { getDetails, getImages, resolveUserApiKeys } from "@/lib/tmdb"
+import { getServerDefaults, getServerDefaultsForUser } from "@/lib/server-defaults"
+import { getScopedUserId, userExists } from "@/lib/user-auth"
+import { decodeConfig } from "@/lib/config-token"
 import { rateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit"
-import { getServerDefaults } from "@/lib/server-defaults"
 import { getRegionDef, normalizeRegion, parseRegion } from "@/lib/regions"
 import { cacheGet, cacheSet } from "@/lib/cache"
 import { createLogger } from "@/lib/logger"
 import { jsonGzip } from "@/lib/json-response"
 import { combineAbortSignals } from "@/lib/abort-signal"
+import crypto from "node:crypto"
 import {
   TRENDING_ENDPOINT_TIMEOUT_MS,
   TRENDING_ENRICH_CONCURRENCY,
@@ -16,6 +21,21 @@ import {
 } from "@/lib/trending-budgets"
 
 const log = createLogger("trending")
+
+// Mutable-selection HTTP caching (same precedent as /api/trending/rank):
+// the preview body resolves server-side from the namespace (`?u=`), the
+// `?config=` token, or the mutable global defaults, so the URL does not
+// version the selection — except an explicit `?config=` token, which travels
+// in the URL. The automatic hook GET carries no `&_t` cache-buster (only the
+// manual refresh does), so a `public` Cache-Control would let shared
+// (CDN/proxy) caches — and the browser HTTP cache at the same URL — serve
+// the previous source's body after a save ("switch shows same titles until
+// manual refresh"). All healthy branches therefore stay out of shared caches
+// (`private, no-cache`, token branch included for consistency); the
+// server-side app cache above still absorbs upstream cost (headers only, no
+// data-cache change). Explicit failures stay `no-store` and are never cached
+// anywhere.
+const mutablePreviewHeaders = { "Cache-Control": "private, no-cache, must-revalidate" }
 
 interface TrendingItem {
   id: number
@@ -39,6 +59,11 @@ function isAbortLike(err: unknown): boolean {
   return name === "AbortError" || name === "TimeoutError"
 }
 
+/** Hash breve e stabile per i cache key — mai il frammento grezzo. */
+function hashFragment(value: string | undefined): string {
+  return value ? crypto.createHash("sha1").update(value).digest("hex").slice(0, 8) : "none"
+}
+
 /**
  * 404 TMDB fisiologico (id rimosso da TMDB): l'item si scarta in silenzio
  * senza degradare la risposta. Qualsiasi altro errore (500/429/rete/abort/
@@ -53,17 +78,66 @@ function isTmdbNotFound(err: unknown): boolean {
 export async function GET(req: NextRequest) {
   const rl = await rateLimit(rateLimitKey(req), "tmdb")
   if (!rl.ok) return rateLimitResponse(rl.retAfter)
-  const apiKey = await resolveRouteApiKey(req)
-  // Regione classifica: `?country=` > default server > IT (fail-closed su IT).
-  const region = getRegionDef(parseRegion(req.nextUrl.searchParams.get("country")) ?? normalizeRegion(getServerDefaults().region))
+  // Scoped ranking selection (same contract as /api/trending/rank and the
+  // Stremio catalogs): `?u=` (user space) and `?config=` (device token, wins
+  // over the namespace). Without either, the global selection applies.
+  const userParam = req.nextUrl.searchParams.get("u") ?? req.nextUrl.searchParams.get("user")
+  const configParam = req.nextUrl.searchParams.get("config") ?? req.nextUrl.searchParams.get("c")
+  let scopedUser = getScopedUserId(userParam)
+  if (scopedUser && !(await userExists(scopedUser))) scopedUser = null
+  const tokenConfig = configParam ? decodeConfig(configParam) : null
+  const namespaceDefaults = scopedUser ? await getServerDefaultsForUser(scopedUser) : getServerDefaults()
+  const selection = {
+    customCatalogs: tokenConfig?.customCatalogs ?? namespaceDefaults.customCatalogs,
+    rankingSourceMovie: tokenConfig?.rankingSourceMovie ?? namespaceDefaults.rankingSourceMovie,
+    rankingSourceSeries: tokenConfig?.rankingSourceSeries ?? namespaceDefaults.rankingSourceSeries,
+  }
+  const movieSource = resolveRankingSource(selection, "movie")
+  const seriesSource = resolveRankingSource(selection, "series")
+  const movieCustom = movieSource.kind === "custom"
+    ? findRankingCustomCatalog(selection.customCatalogs, movieSource.customId)
+    : undefined
+  const seriesCustom = seriesSource.kind === "custom"
+    ? findRankingCustomCatalog(selection.customCatalogs, seriesSource.customId)
+    : undefined
+  const resolvedKeys = await resolveUserApiKeys(req, scopedUser)
+  const apiKey = resolvedKeys.tmdb.key
+  // Regione classifica: `?region=`/`?country=` > default server > IT (fail-closed su IT).
+  const region = getRegionDef(parseRegion(req.nextUrl.searchParams.get("region") ?? req.nextUrl.searchParams.get("country")) ?? normalizeRegion(namespaceDefaults.region))
   const country = region.code
   const tmdbLang = region.lang
   // v2: la lingua di arricchimento segue la regione — le entry v1 (sempre it-IT)
   // non devono avvelenare le richieste non italiane.
-  const cacheKey = `trending:v2:${country}`
+  //
+  // Source-aware cache key: the default charts scope keeps the legacy key
+  // byte-identically (`trending:v2:<country>`); any effective non-charts
+  // selection (namespace, token or global defaults) extends it with per-slot
+  // source fragments plus scope/credential hashes, so switching the Top 20
+  // source never serves the previous source's body (and custom lists stay
+  // isolated per payload-changing credentials).
+  const movieFrag = movieSource.kind === "custom" && movieCustom
+    ? `rsm${hashFragment(`${movieSource.customId}:${movieCustom.url}:${movieCustom.datasetId ?? ""}`)}`
+    : movieSource.kind === "justwatch" && movieSource.mode !== "charts"
+      ? `rsm_jw_${movieSource.mode}`
+      : "rsm_jw"
+  const seriesFrag = seriesSource.kind === "custom" && seriesCustom
+    ? `rss${hashFragment(`${seriesSource.customId}:${seriesCustom.url}:${seriesCustom.datasetId ?? ""}`)}`
+    : seriesSource.kind === "justwatch" && seriesSource.mode !== "charts"
+      ? `rss_jw_${seriesSource.mode}`
+      : "rss_jw"
+  const isDefaultScope = movieFrag === "rsm_jw" && seriesFrag === "rss_jw" && !scopedUser && !configParam
+  let cacheKey = `trending:v2:${country}`
+  if (!isDefaultScope) {
+    cacheKey += `:${movieFrag}:${seriesFrag}`
+    if (scopedUser) cacheKey += `:u${hashFragment(scopedUser)}`
+    if (configParam) cacheKey += `:cfg${hashFragment(configParam)}`
+    if (movieCustom || seriesCustom) {
+      cacheKey += `:ak${hashFragment(resolvedKeys.tmdb.key)}:mk${hashFragment(resolvedKeys.mdblist.key)}:vk${hashFragment(resolvedKeys.tvdb.key)}`
+    }
+  }
   const acceptEncoding = req.headers.get("accept-encoding")
   const cached = cacheGet<{ movies: TrendingItem[]; tv: TrendingItem[] }>(cacheKey)
-  if (cached) return jsonGzip(cached, 200, undefined, acceptEncoding)
+  if (cached) return jsonGzip(cached, 200, mutablePreviewHeaders, acceptEncoding)
 
   // Deadline di endpoint: timer esplicito (non AbortSignal.timeout) così i
   // test lo controllano col fake clock; combined col signal del client per i
@@ -95,7 +169,7 @@ export async function GET(req: NextRequest) {
     // unilaterale appeso fallisce in fretta e lascia il resto dell'endpoint
     // alla metà sana + arricchimento. Il signal di fase combina abort del
     // client + deadline di endpoint + tetto 8s: un abort a metà fase cancella
-    // davvero il trasporto JW posseduto (ogni getJWRankings fa il suo fetch,
+    // davvero il trasporto posseduto (ogni ranking fetch fa il suo fetch,
     // niente inflight condiviso da preservare qui) e i worker saldano subito.
     // L'abort del chiamante NON avvelena il breaker condiviso: getJWRankings
     // esclude gli errori da caller-abort dal conteggio fallimenti (il timeout
@@ -118,6 +192,45 @@ export async function GET(req: NextRequest) {
     const jwSignal = jwCtrl.signal
     let movieRanks: { tmdbId: number; rank: number }[]
     let tvRanks: { tmdbId: number; rank: number }[]
+    // Top 20 ranking resolution: the SAME shared service the Stremio
+    // catalogs and /api/trending/rank use (fetchTop20Ranking), driven by the
+    // scoped selection above — never hardcoded charts. Charts call the exact
+    // same getJWRankings the old code called (contract unchanged); popular /
+    // trending use the digital-monetization titles; custom uses the resolved
+    // custom list (provider errors surface as degraded, never as a silent JW
+    // substitution); GLOBAL popular/trending is an approved empty (no
+    // national substitute, not an outage).
+    const resolveSlotRanks = async (
+      slot: "movie" | "series",
+      label: string,
+    ): Promise<{ tmdbId: number; rank: number }[]> => {
+      const source = slot === "movie" ? movieSource : seriesSource
+      try {
+        const res = await fetchTop20Ranking({
+          slot,
+          source,
+          regionCode: country,
+          regionLang: tmdbLang,
+          customCatalogs: selection.customCatalogs,
+          apiKey,
+          mdblistKey: resolvedKeys.mdblist.key,
+          tvdbKey: resolvedKeys.tvdb.key,
+          userId: scopedUser,
+          signal: jwSignal,
+        })
+        if (res.status === "error") {
+          degraded = true
+          log.warn("Top 20 custom ranking failed", { error: res.errorStatus, country, slot })
+          return []
+        }
+        return res.items.map((r) => ({ tmdbId: r.tmdbId, rank: r.rank }))
+      } catch (e) {
+        degraded = true
+        if (isAbortLike(e)) enrichmentTimedOut = true
+        log.warn(`JW ${label} rankings failed`, { error: e instanceof Error ? e.message : String(e), country })
+        return []
+      }
+    }
     try {
       if (endpointCtrl.signal.aborted) {
         // Navigazione già abortita: niente fetch posseduti, risposta degradata.
@@ -127,18 +240,8 @@ export async function GET(req: NextRequest) {
         tvRanks = []
       } else {
         ;[movieRanks, tvRanks] = await Promise.all([
-          getJWRankings("MOVIE", country, 20, undefined, tmdbLang, jwSignal).catch((e) => {
-            degraded = true
-            if (isAbortLike(e)) enrichmentTimedOut = true
-            log.warn("JW movie rankings failed", { error: e instanceof Error ? e.message : String(e), country })
-            return [] as { tmdbId: number; rank: number }[]
-          }),
-          getJWRankings("SHOW", country, 20, undefined, tmdbLang, jwSignal).catch((e) => {
-            degraded = true
-            if (isAbortLike(e)) enrichmentTimedOut = true
-            log.warn("JW show rankings failed", { error: e instanceof Error ? e.message : String(e), country })
-            return [] as { tmdbId: number; rank: number }[]
-          }),
+          resolveSlotRanks("movie", "movie"),
+          resolveSlotRanks("series", "show"),
         ])
       }
     } finally {
@@ -263,7 +366,7 @@ export async function GET(req: NextRequest) {
       return jsonGzip({ ...body, degraded: true }, 200, { "Cache-Control": "no-store" }, acceptEncoding)
     }
     cacheSet(cacheKey, body, ["tmdb", "trending", country])
-    return jsonGzip({ ...body, degraded: false }, 200, { "Cache-Control": "public, max-age=300, s-maxage=1800" }, acceptEncoding)
+    return jsonGzip({ ...body, degraded: false }, 200, mutablePreviewHeaders, acceptEncoding)
   } catch (err) {
     log.error("Trending fetch failed", { error: err instanceof Error ? err.message : String(err) })
     return jsonGzip({ movies: [], tv: [], degraded: true }, 200, { "Cache-Control": "no-store" }, acceptEncoding)

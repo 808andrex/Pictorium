@@ -14,7 +14,8 @@ import { userRateLimitKey } from "@/lib/user-auth"
 import { touchUserActivity } from "@/lib/user-activity"
 import { rateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit"
 import { getServerDefaultsForUser, getServerDefaultsChecked, effectiveDefaultsForShape } from "@/lib/server-defaults"
-import { getRegionDef, normalizeRegion, parseRegion, defaultRegionForLang } from "@/lib/regions"
+import { getRegionDef, normalizeRegion, parseRegion, defaultRegionForLang, GLOBAL_REGION_CODE } from "@/lib/regions"
+import { fetchTop20Ranking } from "@/lib/top20-ranking"
 import { BEST_FIT_GLOBAL, resolveLogoFitEnabled } from "@/lib/best-fit-config"
 import { selectAutoFitCandidates, selectBestLogoFitPosterPath } from "@/lib/poster-auto-fit"
 import { fetchAllWikidata, matchTMDBStudios, directorBadgeLabel, isValidWikidataQid, type WikidataResult } from "@/lib/awards"
@@ -558,6 +559,13 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
   const rankingCustomPre = rankingSourcePre.kind === "custom"
     ? findRankingCustomCatalog(rankingSelectionPre.customCatalogs, rankingSourcePre.customId)
     : undefined
+  // Fail-closed per new JW mode: an upstream popular/trending error resolves
+  // null (no stored-rank fallback from another source). The legacy charts
+  // path keeps its historical degraded fallback to the saved rank (pinned by
+  // poster-route-mapping.test.ts); the custom branch above is already
+  // fail-closed (.catch(() => null)).
+  const isNewJwModePre = rankingSourcePre.kind === "justwatch"
+    && (rankingSourcePre.mode === "popular" || rankingSourcePre.mode === "trending")
   // Bounded preflight using existing caps only. Shared source calls run on a
   // common timeout signal (never req.signal: a disconnecting first client must
   // not abort the fetch others are coalesced on).
@@ -566,7 +574,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
   const preflightSourceSignal = AbortSignal.timeout(preflightBudgetMs)
   const needTrendFetch = rankingEnabledPre && !hasValidQRankOverride
   const needAnimeFetch = rankingEnabledPre && !(Number.isFinite(qAnimeRankPre) && qAnimeRankPre > 0)
-  const jwSourceKey = `jw:${mediaType === "movie" ? "MOVIE" : "SHOW"}:${posterRegion.code}:20:${posterRegion.lang}`
+  const jwSourceKey = `jw:${mediaType === "movie" ? "MOVIE" : "SHOW"}:${posterRegion.code}:20:${posterRegion.lang}${rankingSourcePre.kind === "justwatch" && rankingSourcePre.mode !== "charts" ? `:${rankingSourcePre.mode}` : ""}`
   const animeListKey = mediaType === "movie" ? "mdblistAnimeMovie" : "mdblistAnime"
   const animeKeyUsed = effMdblistKey || envWithFallback("MDBLIST_KEY") || process.env.MDBLIST_KEY || process.env.MDBLIST_API_KEY || undefined
   const animeSourceKey = `anime:${mediaType}:${hashKey(animeKeyUsed ?? "")}`
@@ -589,9 +597,21 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
           return idx >= 0 ? idx + 1 : null
         }), preflightBudgetMs, req.signal)
         .catch(() => null)
-      : awaitWithOwnBudget(sharedSourceFetch(jwSourceKey, () => getJWRankings(mediaType === "movie" ? "MOVIE" : "SHOW", posterRegion.code, 20, undefined, posterRegion.lang, preflightSourceSignal))
-        .then((r) => r.find((x) => x.tmdbId === tmdbId)?.rank ?? null), preflightBudgetMs, req.signal)
-        .catch(() => mapping?.badgeRank ?? mapping?.trendRank ?? null))
+      : awaitWithOwnBudget(sharedSourceFetch(jwSourceKey, () => {
+          if (rankingSourcePre.kind === "justwatch" && (rankingSourcePre.mode === "popular" || rankingSourcePre.mode === "trending")) {
+            if (posterRegion.code === GLOBAL_REGION_CODE) return Promise.resolve(null);
+            return fetchTop20Ranking({
+              slot: mediaType === "movie" ? "movie" : "series",
+              source: rankingSourcePre,
+              regionCode: posterRegion.code,
+              regionLang: posterRegion.lang,
+              signal: preflightSourceSignal,
+            }).then((res) => res.items.find((x) => x.tmdbId === tmdbId)?.rank ?? null);
+          }
+          return getJWRankings(mediaType === "movie" ? "MOVIE" : "SHOW", posterRegion.code, 20, undefined, posterRegion.lang, preflightSourceSignal)
+            .then((r) => r.find((x) => x.tmdbId === tmdbId)?.rank ?? null);
+        }), preflightBudgetMs, req.signal)
+        .catch(() => (isNewJwModePre ? null : (mapping?.badgeRank ?? mapping?.trendRank ?? null))))
   const animePreflight: Promise<number | null> = !needAnimeFetch
     ? Promise.resolve(rankingEnabledPre ? qAnimeRankPre : null)
     : awaitWithOwnBudget(sharedSourceFetch(animeSourceKey, () => fetchMDBList(animeListKey, animeKeyUsed, preflightSourceSignal))

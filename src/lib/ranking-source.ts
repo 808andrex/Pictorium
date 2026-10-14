@@ -26,9 +26,43 @@ import type { CustomCatalogConfig, CustomCatalogType } from "./types"
 
 export type RankingSlot = "movie" | "series"
 
+export type JustWatchRankingMode = "charts" | "popular" | "trending"
+
 export type RankingSource =
-  | { readonly kind: "justwatch" }
+  | { readonly kind: "justwatch"; readonly mode: JustWatchRankingMode }
   | { readonly kind: "custom"; readonly customId: string }
+
+export const RANKING_SOURCE_JW_CHARTS = "jw:charts"
+export const RANKING_SOURCE_JW_POPULAR = "jw:popular"
+export const RANKING_SOURCE_JW_TRENDING = "jw:trending"
+
+export const BUILTIN_RANKING_SOURCES = [
+  RANKING_SOURCE_JW_CHARTS,
+  RANKING_SOURCE_JW_POPULAR,
+  RANKING_SOURCE_JW_TRENDING,
+] as const
+
+export function isBuiltinRankingSource(id: string): id is (typeof BUILTIN_RANKING_SOURCES)[number] {
+  return (
+    id === RANKING_SOURCE_JW_CHARTS ||
+    id === RANKING_SOURCE_JW_POPULAR ||
+    id === RANKING_SOURCE_JW_TRENDING
+  )
+}
+
+/**
+ * Resolves a raw string selection into its corresponding JustWatch mode.
+ * Returns null if the raw value does not represent a JustWatch built-in mode.
+ * Empty, whitespace, or "jw:charts" resolve to "charts".
+ */
+export function parseJustWatchRankingMode(raw: string | null | undefined): JustWatchRankingMode | null {
+  if (raw === null || raw === undefined) return "charts"
+  const trimmed = raw.trim()
+  if (!trimmed || trimmed === RANKING_SOURCE_JW_CHARTS) return "charts"
+  if (trimmed === RANKING_SOURCE_JW_POPULAR) return "popular"
+  if (trimmed === RANKING_SOURCE_JW_TRENDING) return "trending"
+  return null
+}
 
 /** Custom id cap, same bound as the persistence schemas. */
 export const RANKING_SOURCE_MAX_ID_LENGTH = 64
@@ -50,23 +84,35 @@ function isCompatibleCustomType(customType: CustomCatalogType | undefined, slot:
 
 /**
  * Resolves the effective ranking source for one slot. Always returns a
- * value: JustWatch when nothing is selected, the selection is blank/invalid,
+ * value: JustWatch charts when nothing is selected, the selection is blank/invalid,
  * the id was deleted, the catalog is switched off (`enabled === false`), or
  * the custom type is incompatible (e.g. a `movie` custom on the series slot).
+ * Built-in JustWatch modes ("jw:popular", "jw:trending", "jw:charts") resolve
+ * directly to their respective JustWatch mode without consulting custom catalogs.
  * Stremio-addon imports (`addon` set) can never drive the Top 20: the ranking
  * service only understands normalized custom lists, so they fall back to
  * JustWatch like a deleted id.
  */
 export function resolveRankingSource(selection: RankingSelection, slot: RankingSlot): RankingSource {
   const raw = selectionForSlot(selection, slot)
-  if (typeof raw !== "string") return { kind: "justwatch" }
-  const customId = raw.trim()
-  if (!customId || customId.length > RANKING_SOURCE_MAX_ID_LENGTH) return { kind: "justwatch" }
+  const jwMode = parseJustWatchRankingMode(raw)
+  if (jwMode !== null) return { kind: "justwatch", mode: jwMode }
+
+  const customId = typeof raw === "string" ? raw.trim() : ""
+  if (!customId || customId.length > RANKING_SOURCE_MAX_ID_LENGTH) {
+    return { kind: "justwatch", mode: "charts" }
+  }
+
+  // Builtin identifiers must never be resolved as custom catalogs even if present in the list
+  if (isBuiltinRankingSource(customId)) {
+    return { kind: "justwatch", mode: "charts" }
+  }
+
   const customCatalogs = selection.customCatalogs
-  if (!customCatalogs) return { kind: "justwatch" }
+  if (!customCatalogs) return { kind: "justwatch", mode: "charts" }
   const found = customCatalogs.find((c) => c.id === customId)
-  if (!found || found.enabled === false || found.addon) return { kind: "justwatch" }
-  if (!isCompatibleCustomType(found.type, slot)) return { kind: "justwatch" }
+  if (!found || found.enabled === false || found.addon) return { kind: "justwatch", mode: "charts" }
+  if (!isCompatibleCustomType(found.type, slot)) return { kind: "justwatch", mode: "charts" }
   return { kind: "custom", customId }
 }
 
@@ -111,7 +157,11 @@ export function compatibleRankingCustoms<T extends RankingCustomOption>(
 ): T[] {
   if (!customCatalogs) return []
   return customCatalogs.filter(
-    (c) => c.enabled !== false && (c.type === slot || c.type === "mixed") && !(c as { addon?: unknown }).addon,
+    (c) =>
+      c.enabled !== false &&
+      (c.type === slot || c.type === "mixed") &&
+      !(c as { addon?: unknown }).addon &&
+      !isBuiltinRankingSource(c.id),
   )
 }
 
@@ -122,13 +172,14 @@ const JW_SERIES_CATALOG_ID = "pictorium-jw-series"
  * Slots whose raw selection points at a deleted custom id. Called when a
  * custom catalog is removed so the raw reference is cleared (a same-id
  * reimport can not resurrect a stale selection). Disabling alone never
- * clears (re-enable restores the source).
+ * clears (re-enable restores the source). Builtin ranking sources are ignored.
  */
 export function slotsReferencingCustom(
   rankingSourceMovie: string | null | undefined,
   rankingSourceSeries: string | null | undefined,
   deletedId: string,
 ): RankingSlot[] {
+  if (isBuiltinRankingSource(deletedId)) return []
   const slots: RankingSlot[] = []
   if (rankingSourceMovie === deletedId) slots.push("movie")
   if (rankingSourceSeries === deletedId) slots.push("series")
@@ -150,23 +201,142 @@ export interface RankRefreshStamp {
 export function shouldApplyRankRefresh(fired: RankRefreshStamp, latest: RankRefreshStamp): boolean {
   return fired.gen === latest.gen && fired.key === latest.key && fired.user === latest.user
 }
+export interface RankingCatalogRegion {
+  readonly flag: string
+  readonly label: string
+}
+
 /**
- * Display name override for the global Top 20 catalogs: when a slot is driven
- * by a custom list, the manifest must not call it JustWatch, so the custom
- * catalog name wins. Returns null for every other catalog and for the
- * JustWatch default (the caller falls through to the regional JW name).
- * User renames still win: the caller checks them first.
+ * Canonical display name override for the global Top 20 catalogs: when a
+ * slot is driven by a custom list, the custom catalog name wins. For
+ * "popular" or "trending" modes, returns the mode-specific label with the
+ * region flag prefix ("🇮🇹 I più popolari — Film"): the flag follows the
+ * active region (dynamic country code) and is part of the canonical/export
+ * name shown in Priorità e nomi and in the install/export manifests while
+ * the global emoji preference is ON. Returns null for every other catalog
+ * and for the default "charts" mode (the caller falls through to the
+ * regional Top 20 name). User renames still win: the caller checks them
+ * first. The global OFF toggle strips emojis afterwards via
+ * `resolveCatalogDisplayName` (display-only, stored values untouched).
  */
 export function rankingSourceCatalogName(
   catalogId: string,
   slot: RankingSlot,
   selection: RankingSelection,
+  region?: RankingCatalogRegion,
 ): string | null {
   const expected = slot === "movie" ? JW_MOVIE_CATALOG_ID : JW_SERIES_CATALOG_ID
   if (catalogId !== expected) return null
   const source = resolveRankingSource(selection, slot)
-  if (source.kind !== "custom") return null
-  const found = selection.customCatalogs?.find((c) => c.id === source.customId)
-  const name = found?.name?.trim()
-  return name ? name : null
+  if (source.kind === "custom") {
+    const found = selection.customCatalogs?.find((c) => c.id === source.customId)
+    const name = found?.name?.trim()
+    return name ? name : null
+  }
+  if (source.mode === "popular" && region) {
+    const mediaLabel = slot === "movie" ? "Film" : "Serie TV"
+    return `${region.flag} I più popolari — ${mediaLabel}`
+  }
+  if (source.mode === "trending" && region) {
+    const mediaLabel = slot === "movie" ? "Film" : "Serie TV"
+    return `${region.flag} In tendenza — ${mediaLabel}`
+  }
+  return null
+}
+
+/**
+ * Browsing-only variant of `rankingSourceCatalogName` for the Pictorium
+ * client catalog grids/rows: derived from the canonical name, with only
+ * the leading region flag removed for built-in popular/trending (browsing
+ * display vs canonical/export names), so the two helpers can never drift
+ * apart on labels. Popular/Trending headings stay flagless even while the
+ * global emoji preference is ON. Custom source names pass through
+ * untouched (ordinary emojis in custom renames are never suppressed here)
+ * and charts returns null like the canonical helper. Callers still apply
+ * `resolveCatalogDisplayName` afterwards so global OFF keeps stripping.
+ */
+export function rankingSourceBrowsingName(
+  catalogId: string,
+  slot: RankingSlot,
+  selection: RankingSelection,
+  region?: RankingCatalogRegion,
+): string | null {
+  const canonical = rankingSourceCatalogName(catalogId, slot, selection, region)
+  if (!canonical) return null
+  const source = resolveRankingSource(selection, slot)
+  // Built-in popular/trending only: browsing shows the canonical name
+  // without the leading region flag. Custom source names pass through
+  // untouched and charts already returned null above.
+  if (
+    source.kind === "justwatch" &&
+    (source.mode === "popular" || source.mode === "trending") &&
+    region?.flag &&
+    canonical.startsWith(region.flag)
+  ) {
+    return canonical.slice(region.flag.length).replace(/^\s+/, "")
+  }
+  return canonical
+}
+
+/**
+ * Whether catalog-name emojis are shown. `undefined`/`null` (never saved,
+ * old configs) means shown: the toggle defaults to the current behavior.
+ */
+export function isCatalogEmojisShown(value: boolean | undefined | null): boolean {
+  return value !== false
+}
+
+/**
+ * Strips emoji presentation from a displayed catalog name, leaving stored
+ * values untouched (callers keep the full name and strip only for display,
+ * so re-enabling restores the original text). Removed: regional-indicator
+ * flag pairs, tag sequences, keycaps, ZWJ chains, skin-tone modifiers,
+ * default-emoji pictographs (`Emoji_Presentation`, e.g. 🔴 🍥 🔍 ⭐) and
+ * text-default symbols shown in emoji form (trailing VS16, e.g. ©️ ❤️ ☁️
+ * ⛩️ ㊗️). Preserved: plain ©/®/❤/☁, ordinary arrows (→), CJK
+ * punctuation/text (U+3000–U+303F, e.g. 「」、 。), enclosed CJK in text
+ * form (U+3200–U+32FF, e.g. ㈱ ㊗), digits (no keycap), accents, general
+ * punctuation and spacing; leftovers collapse to single spaces. Matching
+ * is property-based (`Extended_Pictographic` / `Emoji_Presentation`),
+ * never blanket Unicode-range stripping of non-emoji text.
+ */
+export function stripCatalogEmojis(name: string): string {
+  if (!name) return ""
+  let out = name
+  // Subdivision/tag flags (e.g. England): tag characters + terminator.
+  out = out.replace(/[\u{E0020}-\u{E007F}]+/gu, "")
+  // Country flags: pairs of regional indicators.
+  out = out.replace(/[\u{1F1E6}-\u{1F1FF}]{2}/gu, "")
+  // Keycaps: digit/#/* + optional VS16 + combining enclosing keycap. Bare
+  // digits (e.g. "Top 20") have no U+20E3 after them and survive.
+  out = out.replace(/[0-9#*]\uFE0F?\u20E3/gu, "")
+  // Emoji ZWJ chains (e.g. 👨‍👩‍👧), each link with optional skin tone / VS16.
+  out = out.replace(/\p{Extended_Pictographic}(?:[\u{1F3FB}-\u{1F3FF}]\uFE0F?|\uFE0F)?(?:\u200D\p{Extended_Pictographic}(?:[\u{1F3FB}-\u{1F3FF}]\uFE0F?|\uFE0F)?)+/gu, "")
+  // Skin-tone-modified pictographs (e.g. 👍🏽): base + modifier go together.
+  out = out.replace(/\p{Extended_Pictographic}[\u{1F3FB}-\u{1F3FF}]/gu, "")
+  // Text-default emoji-capable symbols only in emoji form (trailing VS16,
+  // e.g. ©️ ❤️ ☁️ ⛩️ ㊗️): plain © ® ❤ ☁, CJK punctuation/text, enclosed
+  // CJK in text form and ordinary arrows (→) survive.
+  out = out.replace(/\p{Extended_Pictographic}\uFE0F/gu, "")
+  // Default-emoji pictographs (e.g. 🔴 🍥 🔍 ⭐), plain or with VS16.
+  out = out.replace(/\p{Emoji_Presentation}\uFE0F?/gu, "")
+  // Remaining supplementary emoji symbols (no CJK text lives in 1F000–1FAFF).
+  out = out.replace(/[\u{1F000}-\u{1FAFF}]\uFE0F?/gu, "")
+  // Leftover invisibles: variation selectors, joiners, lone modifiers.
+  out = out.replace(/[\uFE0E\uFE0F\u200D\u{E0020}-\u{E007F}\u{1F3FB}-\u{1F3FF}]/gu, "")
+  return out.replace(/[\s\u00A0]+/g, " ").trim()
+}
+
+/**
+ * Display name for a catalog row/manifest entry: the stored (or default)
+ * name when emojis are shown, the emoji-stripped text when hidden. Pure and
+ * non-destructive: the stored rename/default is never rewritten, so dynamic
+ * source/country updates keep flowing underneath while hidden.
+ */
+export function resolveCatalogDisplayName(
+  baseName: string,
+  catalogShowEmojis?: boolean | null,
+): string {
+  if (isCatalogEmojisShown(catalogShowEmojis ?? undefined)) return baseName
+  return stripCatalogEmojis(baseName)
 }

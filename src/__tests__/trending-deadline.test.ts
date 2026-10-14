@@ -223,7 +223,11 @@ describe("GET /api/tmdb/trending — percorso sano", () => {
     // Poster già nei dettagli → zero fetch immagini; pool 4 → max 4 attivi.
     expect(tracker.imageStarts).toBe(0)
     expect(tracker.maxActive).toBeLessThanOrEqual(8)
-    expect(res.headers.get("Cache-Control")).toContain("public")
+    // Mutable-selection HTTP caching: sano ma fuori dagli shared cache (la
+    // selection server-side non versiona l'URL; vedi route `mutablePreviewHeaders`).
+    expect(res.headers.get("Cache-Control")).toContain("private")
+    expect(res.headers.get("Cache-Control")).toContain("no-cache")
+    expect(res.headers.get("Cache-Control")).not.toContain("public")
 
     // Seconda chiamata: cache di route, zero rete (la entry cachata è il body
     // senza flag `degraded` — contratto storico invariato).
@@ -494,7 +498,8 @@ describe("GET /api/tmdb/trending — outage parziali: 404 fisiologico vs 500/tim
     const okJson = await readJson(ok)
     expect(okJson.degraded).toBe(false)
     expect(okJson.movies.map((m: { id: number }) => m.id)).toEqual([181, 182])
-    expect(ok.headers.get("Cache-Control")).toContain("public")
+    expect(ok.headers.get("Cache-Control")).toContain("private")
+    expect(ok.headers.get("Cache-Control")).not.toContain("public")
     const calls = spy2.mock.calls.length
     await GET(req("/api/tmdb/trending?country=IT&api_key=testkey", { ua: "task13-c1-500" }))
     expect(spy2.mock.calls.length).toBe(calls)
@@ -515,7 +520,8 @@ describe("GET /api/tmdb/trending — outage parziali: 404 fisiologico vs 500/tim
     expect(json.movies.map((m: { id: number }) => m.id)).toEqual([183])
     expect(json.tv.map((m: { id: number }) => m.id)).toEqual([283])
     expect(json.degraded).toBe(false)
-    expect(res.headers.get("Cache-Control")).toContain("public")
+    expect(res.headers.get("Cache-Control")).toContain("private")
+    expect(res.headers.get("Cache-Control")).not.toContain("public")
     expect(cacheGet("trending:v2:IT")).not.toBeNull()
     const calls = spy.mock.calls.length
     await GET(req("/api/tmdb/trending?country=IT&api_key=testkey", { ua: "task13-c1-404" }))

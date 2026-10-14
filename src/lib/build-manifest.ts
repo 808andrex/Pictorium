@@ -5,7 +5,7 @@ import { PICTORIUM_CATALOGS, PICTORIUM_PEOPLE_SEARCH_CATALOGS, regionJwName } fr
 import { getOriginFromRequest } from "@/lib/poster-public-url"
 import { decodeConfig, type PictoriumUserConfig } from "@/lib/config-token"
 import { normalizeCatalogIdKeys, normalizeCatalogIdList } from "@/lib/catalog-definitions"
-import { rankingSourceCatalogName } from "@/lib/ranking-source"
+import { rankingSourceCatalogName, resolveCatalogDisplayName } from "@/lib/ranking-source"
 import { pictoriumExtraForAddon } from "@/lib/stremio-addon"
 import { getServerDefaultsChecked, getServerDefaultsForUser } from "@/lib/server-defaults"
 import { getScopedUserId } from "@/lib/user-auth"
@@ -63,6 +63,7 @@ export async function buildManifestResponse(req: NextRequest, user?: string | nu
       rankingSourceSeries: namespaceDefaults.rankingSourceSeries,
       catalogRenames: namespaceDefaults.catalogRenames,
       catalogOrder: namespaceDefaults.catalogOrder,
+      catalogShowEmojis: namespaceDefaults.catalogShowEmojis,
     }
   } else {
     // Config-token + namespace composti (stile AIO): il namespace è la base
@@ -78,6 +79,7 @@ export async function buildManifestResponse(req: NextRequest, user?: string | nu
       rankingSourceSeries: userConfig.rankingSourceSeries ?? namespaceDefaults.rankingSourceSeries,
       catalogRenames: userConfig.catalogRenames ?? namespaceDefaults.catalogRenames,
       catalogOrder: userConfig.catalogOrder ?? namespaceDefaults.catalogOrder,
+      catalogShowEmojis: userConfig.catalogShowEmojis ?? namespaceDefaults.catalogShowEmojis,
       region: userConfig.region ?? namespaceDefaults.region,
       hubMode: userConfig.hubMode,
     }
@@ -157,12 +159,20 @@ export async function buildManifestResponse(req: NextRequest, user?: string | nu
         rankingSourceMovie: userConfig?.rankingSourceMovie,
         rankingSourceSeries: userConfig?.rankingSourceSeries,
       },
+      manifestRegion,
     )
     if (rankingName) return { ...cat, name: rankingName }
     const jwName = regionJwName(cat.id, cat.type, manifestRegion)
     if (jwName) return { ...cat, name: jwName }
     return cat
   })
+
+  // Visibilità emoji solo display (default mostrati): i nomi salvati e i
+  // default dinamici restano intatti, Stremio vede il testo spogliato.
+  const showCatalogEmojis = userConfig?.catalogShowEmojis !== false
+  if (!showCatalogEmojis) {
+    catalogs = catalogs.map((cat) => ({ ...cat, name: resolveCatalogDisplayName(cat.name, false) }))
+  }
 
   // Applica ordinamento / priorità personalizzata
   if (userConfig?.catalogOrder && userConfig.catalogOrder.length > 0) {
@@ -214,13 +224,13 @@ export async function buildManifestResponse(req: NextRequest, user?: string | nu
   const searchCatalogs = [
     {
       id: "pictorium-search-movies",
-      name: "🔍 Pictorium — Cerca Film",
+      name: resolveCatalogDisplayName("🔍 Pictorium — Cerca Film", userConfig?.catalogShowEmojis),
       type: "movie" as const,
       extra: [{ name: "search", isRequired: true }, { name: "skip", isRequired: false }],
     },
     {
       id: "pictorium-search-series",
-      name: "🔍 Pictorium — Cerca Serie TV",
+      name: resolveCatalogDisplayName("🔍 Pictorium — Cerca Serie TV", userConfig?.catalogShowEmojis),
       type: "series" as const,
       extra: [{ name: "search", isRequired: true }, { name: "skip", isRequired: false }],
     },
@@ -228,7 +238,7 @@ export async function buildManifestResponse(req: NextRequest, user?: string | nu
 
   const peopleSearchCatalogs = PICTORIUM_PEOPLE_SEARCH_CATALOGS.map((c) => ({
     id: c.id,
-    name: c.name,
+    name: resolveCatalogDisplayName(c.name, userConfig?.catalogShowEmojis),
     type: c.type,
     extra: [{ name: "search", isRequired: true }, { name: "skip", isRequired: false }] as const,
   }))

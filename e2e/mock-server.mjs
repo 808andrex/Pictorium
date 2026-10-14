@@ -358,10 +358,11 @@ const server = http.createServer(async (req, res) => {
     if (pathname === "/graphql" && method === "POST") {
       let opName = ""
       let objectType = "SHOW"
+      let parsedBody = null
       try {
-        const body = JSON.parse(await readBody(req))
-        opName = body?.operationName || ""
-        objectType = body?.variables?.filter?.objectType || body?.variables?.filter?.objectTypes?.[0] || "SHOW"
+        parsedBody = JSON.parse(await readBody(req))
+        opName = parsedBody?.operationName || ""
+        objectType = parsedBody?.variables?.filter?.objectType || parsedBody?.variables?.filter?.objectTypes?.[0] || "SHOW"
       } catch {}
 
       if (opName === "GetTitleOffers") {
@@ -388,21 +389,20 @@ const server = http.createServer(async (req, res) => {
       }
 
       if (opName === "GetPopularTitles") {
+        const sortBy = parsedBody?.variables?.sortBy || "POPULAR"
+        const items = sortBy === "TRENDING" ? [...LIST_ITEMS].reverse() : LIST_ITEMS
         return json(res, 200, {
           data: {
             popularTitles: {
-              edges: [
-                {
-                  node: {
-                    content: { title: "Avatar", originalReleaseDate: "2009-12-18", externalIds: { tmdbId: 19995, imdbId: "tt0499549" } },
+              edges: items.map((item) => ({
+                node: {
+                  content: {
+                    title: item.title,
+                    originalReleaseDate: item.release_date || "2020-01-01",
+                    externalIds: { tmdbId: item.id, imdbId: "tt" + item.id },
                   },
                 },
-                {
-                  node: {
-                    content: { title: "Interstellar", originalReleaseDate: "2014-11-07", externalIds: { tmdbId: 157336, imdbId: "tt0816692" } },
-                  },
-                },
-              ],
+              })),
             },
           },
         })

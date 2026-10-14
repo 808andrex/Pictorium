@@ -1,12 +1,18 @@
 "use client"
 
 import { useState, useRef } from "react"
-import { Trophy, Info, Film, Tv, ChevronDown, Loader2, Check } from "lucide-react"
+import { Trophy, Info, Film, Tv, ChevronDown, Loader2, Check, AlertCircle } from "lucide-react"
 import { usePSelector } from "@/lib/context"
 import { useT } from "@/lib/contexts/TranslationContext"
 import { usePosterEditor } from "@/lib/contexts/PosterEditorContext"
-import { getRegionDef } from "@/lib/regions"
-import { resolveRankingSource, compatibleRankingCustoms } from "@/lib/ranking-source"
+import { getRegionDef, GLOBAL_REGION_CODE } from "@/lib/regions"
+import {
+  resolveRankingSource,
+  compatibleRankingCustoms,
+  resolveCatalogDisplayName,
+  RANKING_SOURCE_JW_POPULAR,
+  RANKING_SOURCE_JW_TRENDING,
+} from "@/lib/ranking-source"
 import { useOutsideDismiss } from "@/lib/useOutsideDismiss"
 import type { RankingSlotKey } from "@/lib/useRankingSources"
 import type { CustomCatalogConfig } from "@/lib/types"
@@ -19,6 +25,8 @@ function SlotSelect({
   options,
   value,
   disabled,
+  isGlobal,
+  isIncompatible,
   onPick,
 }: {
   id: string
@@ -28,11 +36,15 @@ function SlotSelect({
   options: CustomCatalogConfig[]
   value: string
   disabled: boolean
+  isGlobal: boolean
+  isIncompatible: boolean
   onPick: (slot: RankingSlotKey, value: string) => void
 }) {
   const { t } = useT()
   const [isOpen, setIsOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement | null>(null)
+  // Nomi custom dinamici seguono la visibilità emoji (solo display).
+  const showEmojis = usePSelector((v) => v.catalogShowEmojis)
 
   useOutsideDismiss({
     active: isOpen,
@@ -42,7 +54,17 @@ function SlotSelect({
 
   const activeCustom = options.find((c) => c.id === value)
   const isCustom = Boolean(activeCustom)
-  const displayLabel = activeCustom ? activeCustom.name : t("ui.rankingSourceJW")
+
+  let displayLabel: string
+  if (activeCustom) {
+    displayLabel = resolveCatalogDisplayName(activeCustom.name, showEmojis)
+  } else if (value === RANKING_SOURCE_JW_POPULAR) {
+    displayLabel = t("ui.rankingSourceJWPopular")
+  } else if (value === RANKING_SOURCE_JW_TRENDING) {
+    displayLabel = t("ui.rankingSourceJWTrending")
+  } else {
+    displayLabel = t("ui.rankingSourceJWCharts")
+  }
 
   const handleSelect = (newVal: string) => {
     onPick(slot, newVal)
@@ -55,11 +77,34 @@ function SlotSelect({
     }
   }
 
+  const builtinOptions = [
+    {
+      id: "",
+      label: t("ui.rankingSourceJWCharts"),
+      desc: t("ui.rankingSourceJWChartsDesc"),
+      disabled: false,
+    },
+    {
+      id: RANKING_SOURCE_JW_POPULAR,
+      label: t("ui.rankingSourceJWPopular"),
+      desc: t("ui.rankingSourceJWPopularDesc"),
+      disabled: isGlobal,
+      disabledReason: isGlobal ? t("ui.rankingSourceGlobalUnsupported") : undefined,
+    },
+    {
+      id: RANKING_SOURCE_JW_TRENDING,
+      label: t("ui.rankingSourceJWTrending"),
+      desc: t("ui.rankingSourceJWTrendingDesc"),
+      disabled: isGlobal,
+      disabledReason: isGlobal ? t("ui.rankingSourceGlobalUnsupported") : undefined,
+    },
+  ]
+
   return (
     <div
       ref={containerRef}
       onKeyDown={handleKeyDown}
-      className={`relative flex items-center ${isOpen ? "z-30" : "z-10"}`}
+      className={`relative flex flex-col ${isOpen ? "z-30" : "z-10"}`}
     >
       {/* Visual trigger button */}
       <button
@@ -67,9 +112,11 @@ function SlotSelect({
         disabled={disabled}
         onClick={() => setIsOpen((prev) => !prev)}
         className={`group flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-medium transition-all duration-150 cursor-pointer select-none focus:outline-none focus:ring-1 focus:ring-white/30 ${
-          isCustom
-            ? "bg-accent-orange/15 border-accent-orange/30 text-zinc-100 hover:border-accent-orange/50 hover:bg-accent-orange/20"
-            : "bg-white/[0.04] border-white/[0.08] text-zinc-300 hover:border-white/20 hover:bg-white/[0.08] hover:text-white"
+          isIncompatible
+            ? "bg-amber-500/10 border-amber-500/40 text-amber-200 hover:border-amber-500/60 hover:bg-amber-500/15"
+            : isCustom
+              ? "bg-accent-orange/15 border-accent-orange/30 text-zinc-100 hover:border-accent-orange/50 hover:bg-accent-orange/20"
+              : "bg-white/[0.04] border-white/[0.08] text-zinc-300 hover:border-white/20 hover:bg-white/[0.08] hover:text-white"
         } ${disabled ? "opacity-50 cursor-wait" : ""}`}
       >
         <span
@@ -87,10 +134,19 @@ function SlotSelect({
 
         <span
           className={`truncate max-w-[130px] sm:max-w-[170px] ${
-            isCustom ? "text-accent-orange font-semibold" : "text-zinc-400 group-hover:text-zinc-200"
+            isIncompatible
+              ? "text-amber-300 font-semibold"
+              : isCustom
+                ? "text-accent-orange font-semibold"
+                : "text-zinc-400 group-hover:text-zinc-200"
           }`}
         >
           {displayLabel}
+          {isIncompatible && (
+            <span className="ml-1 text-[10px] text-amber-400 font-normal">
+              ({t("ui.rankingSourceIncompatibleBadge")})
+            </span>
+          )}
         </span>
 
         <span className="ml-0.5 text-zinc-400 group-hover:text-zinc-200 transition-transform duration-200">
@@ -108,23 +164,44 @@ function SlotSelect({
       {isOpen && (
         <div
           role="listbox"
-          className="absolute left-0 top-full mt-2 z-50 min-w-[200px] w-max max-w-[calc(100vw-2rem)] sm:max-w-[280px] rounded-xl bg-zinc-950/95 backdrop-blur-2xl border border-white/10 p-1.5 shadow-2xl shadow-black/80 animate-in fade-in-0 zoom-in-95 duration-100"
+          className="absolute left-0 top-full mt-2 z-50 min-w-[240px] w-max max-w-[calc(100vw-2rem)] sm:max-w-[320px] rounded-xl bg-zinc-950/95 backdrop-blur-2xl border border-white/10 p-1.5 shadow-2xl shadow-black/80 animate-in fade-in-0 zoom-in-95 duration-100"
         >
-          {/* Default JustWatch option */}
-          <button
-            type="button"
-            role="option"
-            aria-selected={value === ""}
-            onClick={() => handleSelect("")}
-            className={`w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer text-left ${
-              value === ""
-                ? "bg-accent-orange/15 text-accent-orange font-semibold"
-                : "text-zinc-300 hover:text-white hover:bg-white/[0.08]"
-            }`}
-          >
-            <span className="truncate">{t("ui.rankingSourceJW")}</span>
-            {value === "" && <Check className="w-3.5 h-3.5 text-accent-orange shrink-0" />}
-          </button>
+          {/* Built-in JustWatch options */}
+          <div className="space-y-0.5">
+            {builtinOptions.map((opt) => {
+              const isSelected = value === opt.id
+              const isOptDisabled = Boolean(opt.disabled)
+              return (
+                <button
+                  key={opt.id || "charts"}
+                  type="button"
+                  role="option"
+                  disabled={isOptDisabled}
+                  aria-selected={isSelected}
+                  onClick={() => !isOptDisabled && handleSelect(opt.id)}
+                  className={`w-full flex flex-col gap-0.5 px-3 py-2 rounded-lg text-left transition-colors ${
+                    isOptDisabled
+                      ? "opacity-40 cursor-not-allowed text-zinc-500"
+                      : isSelected
+                        ? "bg-accent-orange/15 text-accent-orange font-semibold cursor-pointer"
+                        : "text-zinc-300 hover:text-white hover:bg-white/[0.08] cursor-pointer"
+                  }`}
+                >
+                  <div className="flex items-center justify-between w-full">
+                    <span className="text-xs font-medium truncate">{opt.label}</span>
+                    {isSelected && <Check className="w-3.5 h-3.5 text-accent-orange shrink-0 ml-1" />}
+                  </div>
+                  <span className="text-[10px] text-zinc-400 leading-tight">
+                    {opt.disabledReason ? (
+                      <span className="text-amber-400/90">{opt.disabledReason}</span>
+                    ) : (
+                      opt.desc
+                    )}
+                  </span>
+                </button>
+              )
+            })}
+          </div>
 
           {/* Custom options */}
           {options.length > 0 && (
@@ -145,7 +222,7 @@ function SlotSelect({
                     : "text-zinc-300 hover:text-white hover:bg-white/[0.08]"
                 }`}
               >
-                <span className="truncate">{c.name}</span>
+                <span className="truncate">{resolveCatalogDisplayName(c.name, showEmojis)}</span>
                 {isSelected && <Check className="w-3.5 h-3.5 text-accent-orange shrink-0" />}
               </button>
             )
@@ -153,7 +230,15 @@ function SlotSelect({
         </div>
       )}
 
-      {/* Accessible native select for full programmatic & test compatibility */}
+      {/* Incompatibility warning note when saved selection is not supported in current region */}
+      {isIncompatible && (
+        <div className="mt-1 flex items-center gap-1 text-[11px] text-amber-300/90">
+          <AlertCircle className="w-3 h-3 shrink-0 text-amber-400" />
+          <span>{t("ui.rankingSourceIncompatible")}</span>
+        </div>
+      )}
+
+      {/* Accessible native select for programmatic & test compatibility */}
       <label htmlFor={id} className="sr-only">
         {label}
       </label>
@@ -166,10 +251,16 @@ function SlotSelect({
         className="sr-only"
         tabIndex={-1}
       >
-        <option value="">{t("ui.rankingSourceJW")}</option>
+        <option value="">{t("ui.rankingSourceJWCharts")}</option>
+        <option value={RANKING_SOURCE_JW_POPULAR} disabled={isGlobal}>
+          {t("ui.rankingSourceJWPopular")}
+        </option>
+        <option value={RANKING_SOURCE_JW_TRENDING} disabled={isGlobal}>
+          {t("ui.rankingSourceJWTrending")}
+        </option>
         {options.map((c) => (
           <option key={c.id} value={c.id}>
-            {c.name}
+            {resolveCatalogDisplayName(c.name, showEmojis)}
           </option>
         ))}
       </select>
@@ -244,10 +335,12 @@ function RankingInfoPopover({
  * resolver-derived, so a deleted, disabled or type-incompatible custom always
  * displays JustWatch.
  */
-export function RankingSourceSection() {
+export function RankingSourceSection({ regionCode }: { regionCode?: string } = {}) {
   const { t } = useT()
   const ed = usePosterEditor()
-  const regionFlag = getRegionDef(ed.defaultRegion).flag
+  const activeRegionCode = regionCode || ed.defaultRegion || "IT"
+  const isGlobal = activeRegionCode.toUpperCase() === GLOBAL_REGION_CODE
+  const regionFlag = getRegionDef(activeRegionCode).flag
   const customCatalogs = usePSelector((v) => v.customCatalogs)
   const rankingSourceMovie = usePSelector((v) => v.rankingSourceMovie)
   const rankingSourceSeries = usePSelector((v) => v.rankingSourceSeries)
@@ -257,17 +350,35 @@ export function RankingSourceSection() {
   const selection = { customCatalogs, rankingSourceMovie, rankingSourceSeries }
   const movieSource = resolveRankingSource(selection, "movie")
   const seriesSource = resolveRankingSource(selection, "series")
-  const movieValue = movieSource.kind === "custom" ? movieSource.customId : ""
-  const seriesValue = seriesSource.kind === "custom" ? seriesSource.customId : ""
+
+  const movieValue =
+    movieSource.kind === "custom"
+      ? movieSource.customId
+      : movieSource.mode === "popular"
+        ? RANKING_SOURCE_JW_POPULAR
+        : movieSource.mode === "trending"
+          ? RANKING_SOURCE_JW_TRENDING
+          : ""
+
+  const seriesValue =
+    seriesSource.kind === "custom"
+      ? seriesSource.customId
+      : seriesSource.mode === "popular"
+        ? RANKING_SOURCE_JW_POPULAR
+        : seriesSource.mode === "trending"
+          ? RANKING_SOURCE_JW_TRENDING
+          : ""
+
   const movieOptions = compatibleRankingCustoms(customCatalogs, "movie")
   const seriesOptions = compatibleRankingCustoms(customCatalogs, "series")
+
+  const isMovieIncompatible = isGlobal && (movieValue === RANKING_SOURCE_JW_POPULAR || movieValue === RANKING_SOURCE_JW_TRENDING)
+  const isSeriesIncompatible = isGlobal && (seriesValue === RANKING_SOURCE_JW_POPULAR || seriesValue === RANKING_SOURCE_JW_TRENDING)
 
   const onPick = async (slot: RankingSlotKey, value: string) => {
     if (saving) return
     setSaving(slot)
     try {
-      // trendRank/badge/poster follow via the save nonces (effect in context):
-      // no explicit refresh here, it would double-fetch.
       await setRankingSource(slot, value)
     } finally {
       setSaving(null)
@@ -297,6 +408,8 @@ export function RankingSourceSection() {
             options={movieOptions}
             value={movieValue}
             disabled={saving !== null}
+            isGlobal={isGlobal}
+            isIncompatible={isMovieIncompatible}
             onPick={onPick}
           />
           <SlotSelect
@@ -307,6 +420,8 @@ export function RankingSourceSection() {
             options={seriesOptions}
             value={seriesValue}
             disabled={saving !== null}
+            isGlobal={isGlobal}
+            isIncompatible={isSeriesIncompatible}
             onPick={onPick}
           />
         </div>

@@ -256,6 +256,9 @@ export interface PictoriumCtx {
   renameCatalog: (id: string, newName: string) => void
   resetCatalogNames: () => void
   resetCatalogOrder: () => void
+  /** Catalog-name emoji visibility (display only, default shown). */
+  catalogShowEmojis: boolean
+  setCatalogShowEmojis: (show: boolean) => void
   /** Per-catalog card format overrides (`poster`|`landscape` only; absent key = follow global). */
   catalogShapes: CatalogShapes
   setCatalogShapes: (shapes: CatalogShapes) => void
@@ -264,6 +267,7 @@ export interface PictoriumCtx {
   /** Raw Top 20 source ids (`""` = explicit JustWatch); resolved via the pure resolver. */
   rankingSourceMovie: string
   rankingSourceSeries: string
+  rankingSourceStatus: import("./useRankingSources").RankingSourceStatus
   setRankingSource: (slot: "movie" | "series", id: string) => Promise<boolean>
   /** Bumped on every successful ranking save: rank consumers refetch. */
   rankSourceNonce: number
@@ -491,7 +495,61 @@ export function usePictorium(): PictoriumCtx {
   // the commit would derive (and overwrite) from a stale region.
   const defaultRegionLiveRef = useRef(editorCtx.defaultRegion)
   defaultRegionLiveRef.current = editorCtx.defaultRegion
-  const trending = useTrending(tmdbKey, mdblistApiKey, editorCtx.defaultRegion, serverHasTmdbKey)
+  // --- Custom Catalogs & Profile Auth Hooks ---
+  // Declared BEFORE useTrending: the Top 20 scope (ranking selections +
+  // device token) threads into the trending fetch below. Static order, never
+  // conditional — hook identity stays stable across renders.
+  const {
+    customCatalogs,
+    setCustomCatalogs,
+    addCustomCatalog,
+    removeCustomCatalog: removeCustomCatalogBase,
+    toggleCustomCatalog,
+    catalogsSyncNonce,
+    disabledCatalogIds,
+    setDisabledCatalogIds,
+    toggleBuiltinCatalog,
+    homeDisabledCatalogIds,
+    setHomeDisabledCatalogIds,
+    toggleCatalogHome,
+    catalogOrder,
+    setCatalogOrder,
+    moveCatalog,
+    catalogRenames,
+    setCatalogRenames,
+    renameCatalog,
+    resetCatalogNames,
+    resetCatalogOrder,
+    catalogShowEmojis,
+    setCatalogShowEmojis,
+    catalogShapes,
+    setCatalogShapes,
+    setCatalogShape,
+    resetCatalogShapes,
+  } = useCustomCatalogs(safeGetItem, safeSetItem)
+
+  // --- Top 20 Ranking Sources (global movie/series charts) ---
+  const {
+    rankingSourceMovie,
+    rankingSourceSeries,
+    rankingSourceStatus,
+    setRankingSource,
+    rankSourceNonce,
+  } = useRankingSources(safeGetItem, safeSetItem)
+
+  // Signed device config for namespace-less spaces (null otherwise).
+  const { token: localConfigToken, status: localConfigTokenStatus } =
+    useLocalConfigToken({ customCatalogs, rankingSourceMovie, rankingSourceSeries, catalogShapes, catalogShowEmojis })
+
+  const trending = useTrending(tmdbKey, mdblistApiKey, editorCtx.defaultRegion, serverHasTmdbKey, {
+    movieSource: rankingSourceMovie,
+    seriesSource: rankingSourceSeries,
+    userId: currentUserId,
+    configToken: localConfigToken,
+    tokenStatus: localConfigTokenStatus,
+    saveStatus: rankingSourceStatus,
+    rankNonce: rankSourceNonce,
+  })
   // pt-br only: an explicit Brazilian UI choice searches pt-BR independently
   // of the chart country. Every other UI language keeps the historic wiring
   // (region locale only), so e.g. pt/fr + US still search en-US.
@@ -798,45 +856,8 @@ export function usePictorium(): PictoriumCtx {
     })
   }, [navigation.previewPoster, navigation.selectedLogo, logoScale, hasBadges, posterShape, logoAlign])
 
-  // --- Custom Catalogs & Profile Auth Hooks ---
-  const {
-    customCatalogs,
-    setCustomCatalogs,
-    addCustomCatalog,
-    removeCustomCatalog: removeCustomCatalogBase,
-    toggleCustomCatalog,
-    catalogsSyncNonce,
-    disabledCatalogIds,
-    setDisabledCatalogIds,
-    toggleBuiltinCatalog,
-    homeDisabledCatalogIds,
-    setHomeDisabledCatalogIds,
-    toggleCatalogHome,
-    catalogOrder,
-    setCatalogOrder,
-    moveCatalog,
-    catalogRenames,
-    setCatalogRenames,
-    renameCatalog,
-    resetCatalogNames,
-    resetCatalogOrder,
-    catalogShapes,
-    setCatalogShapes,
-    setCatalogShape,
-    resetCatalogShapes,
-  } = useCustomCatalogs(safeGetItem, safeSetItem)
-
-  // --- Top 20 Ranking Sources (global movie/series charts) ---
-  const {
-    rankingSourceMovie,
-    rankingSourceSeries,
-    setRankingSource,
-    rankSourceNonce,
-  } = useRankingSources(safeGetItem, safeSetItem)
-
-  // Signed device config for namespace-less spaces (null otherwise).
-  const { token: localConfigToken, status: localConfigTokenStatus } =
-    useLocalConfigToken({ customCatalogs, rankingSourceMovie, rankingSourceSeries, catalogShapes })
+  // (Custom catalogs, ranking sources and device token are declared above,
+  // before useTrending, so the Top 20 scope threads into the trending fetch.)
 
   // Targeted trendRank refresh for the current item (after a ranking save):
   // same endpoint and params as the item loader, without reloading
@@ -2667,8 +2688,9 @@ export function usePictorium(): PictoriumCtx {
     homeDisabledCatalogIds, setHomeDisabledCatalogIds, toggleCatalogHome,
     catalogOrder, setCatalogOrder, moveCatalog,
     catalogRenames, setCatalogRenames, renameCatalog, resetCatalogNames, resetCatalogOrder,
+    catalogShowEmojis, setCatalogShowEmojis,
     catalogShapes, setCatalogShapes, setCatalogShape, resetCatalogShapes,
-    rankingSourceMovie, rankingSourceSeries, setRankingSource, rankSourceNonce, refreshCurrentRank,
+    rankingSourceMovie, rankingSourceSeries, rankingSourceStatus, setRankingSource, rankSourceNonce, refreshCurrentRank,
     localConfigToken, localConfigTokenStatus,
     t,
   // eslint-disable-next-line react-hooks/exhaustive-deps -- context value deps intentionally stable to prevent re-render cascades
@@ -2691,7 +2713,7 @@ export function usePictorium(): PictoriumCtx {
     trending.trending, trending.trendingError, trending.trendingStatus, trending.streamingCharts, trending.platformErrors, trending.mdblistAnimeList, trending.animeStatus, trending.animeSource, trending.refreshNonce,
     trending.refreshLists, trending.loadPlatform,
     theme, uiAccent, serviceErrors, hasNetflixRank,
-    customCatalogs, disabledCatalogIds, homeDisabledCatalogIds, catalogOrder, catalogRenames, catalogShapes,
+    customCatalogs, disabledCatalogIds, homeDisabledCatalogIds, catalogOrder, catalogRenames, catalogShapes, catalogShowEmojis,
     rankingSourceMovie, rankingSourceSeries, rankSourceNonce, catalogsSyncNonce, localConfigToken, localConfigTokenStatus,
   ])
 }

@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server"
 import { getJWRankings } from "@/lib/justwatch"
-import { getRegionDef, normalizeRegion, parseRegion, defaultRegionForLang } from "@/lib/regions"
+import { getRegionDef, normalizeRegion, parseRegion, defaultRegionForLang, GLOBAL_REGION_CODE } from "@/lib/regions"
+import { fetchTop20Ranking } from "@/lib/top20-ranking"
 import { getServerDefaults, getServerDefaultsForUser } from "@/lib/server-defaults"
 import { getScopedUserId, userExists } from "@/lib/user-auth"
 import { decodeConfig } from "@/lib/config-token"
@@ -73,9 +74,21 @@ export async function GET(req: NextRequest) {
   // and never cached, never a silent JW substitution. Browser/CDN caching
   // stays off on this branch (private no-cache): the URL does not change
   // when the selection does, so a public max-age would serve stale ranks;
-  // the server-side app cache above still absorbs upstream cost. JW below
-  // keeps its public caching untouched.
-  const customNoCacheHeaders = { "Cache-Control": "private, no-cache, must-revalidate" }
+  // the server-side app cache above still absorbs upstream cost (no branch
+  // below uses shared caches — see the mutable-selection note).
+  // Mutable-selection HTTP caching: every branch below resolves its source
+  // server-side (namespace `?u=`, `?config=` token, or mutable global
+  // defaults), so the URL does not version the selection — except an explicit
+  // `?config=` token, which travels in the URL and therefore versions it.
+  // Namespace/default selections can change without any URL change, so a
+  // `public` Cache-Control would let shared (CDN/proxy) caches serve the
+  // previous source's body after a save. All resolved-source branches
+  // therefore stay out of shared caches (`private, no-cache`, the custom
+  // precedent); the server-side app cache above still absorbs upstream cost.
+  // Explicit failures and the GLOBAL-unsupported mode are `no-store` and
+  // never cached anywhere. Data caches are untouched (headers only).
+  const mutableSourceHeaders = { "Cache-Control": "private, no-cache, must-revalidate" }
+  const customNoCacheHeaders = mutableSourceHeaders
   if (rankingSource.kind === "custom" && rankingCustom) {
     const resolvedKeys = await resolveUserApiKeys(req, scopedUser)
     const cacheKey =
@@ -116,14 +129,49 @@ export async function GET(req: NextRequest) {
     return Response.json(body, { headers })
   }
 
+  if (rankingSource.kind === "justwatch" && (rankingSource.mode === "popular" || rankingSource.mode === "trending")) {
+    // GLOBAL is unsupported for popular/trending (fetchTop20Ranking status
+    // "unsupported", no region substitution): explicit unavailable, never a
+    // publicly cached genuine miss. JwRankBadge renders `data?.error` as
+    // unavailable, and the empty catalog is the approved UI state.
+    if (region.code === GLOBAL_REGION_CODE) {
+      return Response.json({ rank: null, top: 20, period: rankingSource.mode, error: "unsupported" }, { headers: { "Cache-Control": "no-store" } })
+    }
+    const cacheKey = `rank:v2:${rawType}:${id}:f20:r${region.code}:${rankingSource.mode}`
+    const cached = cacheGet<{ rank: number | null; top: number; period: string }>(cacheKey)
+    if (cached) {
+      return Response.json(cached, { headers: mutableSourceHeaders })
+    }
+    try {
+      const res = await fetchTop20Ranking({
+        slot,
+        source: rankingSource,
+        regionCode: region.code,
+        regionLang: region.lang,
+      })
+      const found = res.items.find((r) => r.tmdbId === id)
+      if (found) {
+        const body = { rank: found.rank, period: rankingSource.mode, top: 20 }
+        cacheSet(cacheKey, body, ["rank", "justwatch"])
+        return Response.json(body, { headers: mutableSourceHeaders })
+      }
+      const body = { rank: null, top: 20, period: rankingSource.mode }
+      cacheSet(cacheKey, body, ["rank", "justwatch"], 60_000)
+      return Response.json(body, { headers: mutableSourceHeaders })
+    } catch (e) {
+      log.error("Fetch failed", { error: e instanceof Error ? e.message : String(e) })
+      return Response.json({ rank: null }, { headers: { "Cache-Control": "no-store" } })
+    }
+  }
+
   const cacheKey = `rank:v2:${rawType}:${id}:f${first}:r${region.code}`
   const cached = cacheGet<{ rank: number | null; period?: string }>(cacheKey)
   if (cached) {
-    // Fix L9: anche il cache-hit dichiara i header cache (Next default
-    // no-store) — altrimenti il path caldo non veniva mai cacchettato dalla CDN.
-    return Response.json(cached, { headers: { "Cache-Control": "public, max-age=300, s-maxage=1800" } })
+    // Mutable defaults can retarget this same URL to another source, so even
+    // the legacy charts branch stays out of shared caches (see above).
+    return Response.json(cached, { headers: mutableSourceHeaders })
   }
-  const headers = { "Cache-Control": "public, max-age=300, s-maxage=1800" }
+  const headers = mutableSourceHeaders
   try {
     const rankings = await getJWRankings(rawType === "movie" ? "MOVIE" : "SHOW", region.code, first, undefined, region.lang)
     const found = rankings.find((r) => r.tmdbId === id)

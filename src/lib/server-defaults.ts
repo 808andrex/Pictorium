@@ -286,6 +286,13 @@ export interface ServerDefaults {
   catalogOrder?: string[]
   catalogRenames?: Record<string, string>
   /**
+   * Catalog-name emoji visibility (UI/manifest display only, never storage):
+   * absent/true = current behavior (emojis shown), false = all emojis hidden
+   * in displayed catalog names via the shared pure helper. Stored renames and
+   * dynamic source/country defaults are never rewritten.
+   */
+  catalogShowEmojis?: boolean
+  /**
    * Per-catalog card format overrides, keyed by the actual manifest/route
    * catalog id. Persisted values are ONLY `poster`|`landscape`; an
    * absent/deleted key follows the global `posterShape`. See

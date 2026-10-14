@@ -106,4 +106,40 @@ describe("RankingSourceSection", () => {
     expect(movieSelect.getAttribute("aria-describedby")).toBe("ranking-source-desc")
     expect(screen.getByText("ui.rankingSourceTitle", { exact: false })).toBeInTheDocument()
   })
+
+  it("offers all three JustWatch modes in the dropdown for regional settings", () => {
+    renderWithCtx(<RankingSourceSection />, { customCatalogs: [] })
+
+    const movieSelect = screen.getByLabelText("ui.movie — Top 20") as HTMLSelectElement
+    const values = Array.from(movieSelect.options).map((o) => o.value)
+    expect(values).toContain("")
+    expect(values).toContain("jw:popular")
+    expect(values).toContain("jw:trending")
+
+    const popularOption = Array.from(movieSelect.options).find((o) => o.value === "jw:popular")
+    expect(popularOption?.disabled).toBe(false)
+  })
+
+  it("disables Popular and Trending in Global region with explanation", () => {
+    renderWithCtx(<RankingSourceSection regionCode="GLOBAL" />, {
+      customCatalogs: [],
+    })
+
+    const movieSelect = screen.getByLabelText("ui.movie — Top 20") as HTMLSelectElement
+    const popularOption = Array.from(movieSelect.options).find((o) => o.value === "jw:popular")
+    const trendingOption = Array.from(movieSelect.options).find((o) => o.value === "jw:trending")
+    expect(popularOption?.disabled).toBe(true)
+    expect(trendingOption?.disabled).toBe(true)
+  })
+
+  it("shows incompatibility warning when a popular selection meets Global region without silent replacement", () => {
+    renderWithCtx(<RankingSourceSection regionCode="GLOBAL" />, {
+      customCatalogs: [],
+      rankingSourceMovie: "jw:popular",
+    })
+
+    const movieSelect = screen.getByLabelText("ui.movie — Top 20") as HTMLSelectElement
+    expect(movieSelect.value).toBe("jw:popular")
+    expect(screen.getByText("ui.rankingSourceIncompatible")).toBeInTheDocument()
+  })
 })

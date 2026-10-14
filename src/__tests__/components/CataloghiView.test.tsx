@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { act, fireEvent, screen, waitFor, within } from "@testing-library/react"
+import { useState } from "react"
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { CataloghiView } from "@/components/CataloghiView"
-import { renderWithCtx } from "@/__tests__/test-utils"
+import { MOCK_CTX, renderWithCtx } from "@/__tests__/test-utils"
+import { PictoriumProvider } from "@/lib/context"
+import { PosterEditorProvider } from "@/lib/contexts/PosterEditorContext"
+import { ThemeProvider } from "@/lib/contexts/ThemeContext"
 import { userFetch } from "@/lib/http"
 
 vi.mock("@/lib/http", () => ({ userFetch: vi.fn() }))
@@ -11,6 +15,9 @@ vi.mock("@/lib/contexts/TranslationContext", async (importOriginal) => ({
 }))
 vi.mock("@/components/CustomCatalogModal", () => ({ CustomCatalogModal: () => null }))
 vi.mock("@/components/CatalogManagerModal", () => ({ CatalogManagerModal: () => null }))
+// The source picker itself owns identical "ui.movie — Top 20" labels: mock it
+// away so row-title queries below can only match the JustWatch pair rows.
+vi.mock("@/components/RankingSourceSection", () => ({ RankingSourceSection: () => null }))
 
 const cat = { id: "audit", name: "Audit list", type: "mixed" as const, url: "https://mdblist.com/lists/audit/list" }
 const movie = { id: 1, media_type: "movie", title: "Preview movie", poster_path: "/movie.jpg" }
@@ -122,5 +129,169 @@ describe("catalog browsing", () => {
       expect(loadPlatform).toHaveBeenCalledTimes(2)
       view.unmount()
     } finally { vi.unstubAllGlobals() }
+  })
+})
+
+describe("CataloghiView ranking-source names", () => {
+  const jwMovie = { id: 11, media_type: "movie" as const, title: "JW Movie", poster_path: "/jwm.jpg", rank: 1 }
+  const jwSeries = { id: 22, media_type: "tv" as const, title: "JW Series", poster_path: "/jws.jpg", rank: 2 }
+  const trendingBoth = [jwMovie, jwSeries]
+
+  it("keeps the charts default byte-identical (legacy section, rows and grids)", async () => {
+    const view = renderWithCtx(<CataloghiView />, { tmdbKey: "k", trending: trendingBoth })
+    expect(await screen.findByText("ui.justwatchTop20 🇮🇹")).toBeInTheDocument()
+    expect(screen.getByText("ui.movie — Top 20")).toBeInTheDocument()
+    expect(screen.getByText("ui.tvSeries — Top 20")).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: /ui\.movie — Top 20/ }))
+    expect(await screen.findByRole("dialog", { name: "JustWatch — ui.movie" })).toBeInTheDocument()
+    view.unmount()
+  })
+
+  it("shows independent popular/trending names without flags and a neutral heading", async () => {
+    const view = renderWithCtx(<CataloghiView />, {
+      tmdbKey: "k",
+      trending: trendingBoth,
+      rankingSourceMovie: "jw:popular",
+      rankingSourceSeries: "jw:trending",
+    })
+    expect(await screen.findByText("I più popolari — Film")).toBeInTheDocument()
+    expect(screen.getByText("In tendenza — Serie TV")).toBeInTheDocument()
+    expect(screen.queryByText("ui.movie — Top 20")).not.toBeInTheDocument()
+    expect(screen.queryByText("ui.tvSeries — Top 20")).not.toBeInTheDocument()
+    // Mixed sources: no false "JustWatch Top 20" section heading.
+    expect(screen.queryByText("ui.justwatchTop20 🇮🇹")).not.toBeInTheDocument()
+    expect(screen.getByText("ui.rankingSourceTitle 🇮🇹")).toBeInTheDocument()
+    // Expanded grids follow the same effective names.
+    fireEvent.click(screen.getByRole("button", { name: /I più popolari — Film/ }))
+    expect(await screen.findByRole("dialog", { name: "I più popolari — Film" })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "ui.close" }))
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument())
+    fireEvent.click(screen.getByRole("button", { name: /In tendenza — Serie TV/ }))
+    expect(await screen.findByRole("dialog", { name: "In tendenza — Serie TV" })).toBeInTheDocument()
+    view.unmount()
+  })
+
+  // Live source-switch harness: ONE mounted tree whose provider value follows
+  // local state, so the button below performs a REAL same-mounted provider
+  // update (no unmount/remount). CataloghiView reads the selection via
+  // usePSelector, so the rename must propagate to the already-mounted rows.
+  function LiveSourceSwitchHost() {
+    const [movieSrc, setMovieSrc] = useState("")
+    const animeItem = { id: 33, media_type: "movie" as const, title: "Anime Movie", poster_path: "/a.jpg", rank: 1 }
+    const ctx = {
+      ...MOCK_CTX,
+      tmdbKey: "k",
+      trending: trendingBoth,
+      mdblistAnimeList: [animeItem],
+      rankingSourceMovie: movieSrc,
+      rankingSourceSeries: "",
+    }
+    return (
+      <ThemeProvider>
+        <PosterEditorProvider>
+          <PictoriumProvider value={ctx}>
+            <button type="button" onClick={() => setMovieSrc("jw:popular")}>switch-movie-source</button>
+            <CataloghiView />
+          </PictoriumProvider>
+        </PosterEditorProvider>
+      </ThemeProvider>
+    )
+  }
+
+  it("updates names live on a same-mounted provider source change (no remount)", async () => {
+    const view = render(<LiveSourceSwitchHost />)
+    expect(await screen.findByText("ui.justwatchTop20 🇮🇹")).toBeInTheDocument()
+    // The charts movie row title is shared with the anime movie row at this
+    // layer, so the unique series row pins the initial charts state.
+    expect(screen.getByText("ui.tvSeries — Top 20")).toBeInTheDocument()
+    // Anime + platform headings use their own strings.
+    expect(screen.getByText("ui.trendingAnime")).toBeInTheDocument()
+    expect(screen.getByText("ui.streamingPlatforms")).toBeInTheDocument()
+    // Same mounted tree: flip the movie source through provider state.
+    fireEvent.click(screen.getByRole("button", { name: "switch-movie-source" }))
+    expect(await screen.findByText("I più popolari — Film")).toBeInTheDocument()
+    // Untouched series slot keeps the charts row; anime/platform strings unchanged.
+    expect(screen.getByText("ui.tvSeries — Top 20")).toBeInTheDocument()
+    expect(screen.getByText("ui.trendingAnime")).toBeInTheDocument()
+    expect(screen.getByText("ui.streamingPlatforms")).toBeInTheDocument()
+    // Scope note: the `trending` fixture rows are source-independent input at
+    // this layer — only the effective names react to the selection here. Row
+    // content refetch on source change is owned by the context/catalog data
+    // layer, not by this view, so this test pins live name propagation only
+    // and claims no data-lifecycle coverage.
+    view.unmount()
+  })
+
+  it("lets an explicit rename win and shows a custom source name independently", async () => {
+    const custom = { id: "mylist", name: "La mia lista", type: "movie" as const, url: "https://mdblist.com/lists/u/mylist" }
+    const view = renderWithCtx(<CataloghiView />, {
+      tmdbKey: "k",
+      trending: trendingBoth,
+      customCatalogs: [custom],
+      rankingSourceMovie: "mylist",
+      catalogRenames: { "pictorium-jw-series": "Le mie serie" },
+    })
+    expect((await screen.findAllByText("La mia lista")).length).toBeGreaterThanOrEqual(2)
+    expect(screen.getByText("Le mie serie")).toBeInTheDocument()
+    expect(screen.getByText("ui.rankingSourceTitle 🇮🇹")).toBeInTheDocument()
+    // The driving custom list appears both as its own custom row and as the
+    // JW movie row: the JW copy (last match) opens the effective grid name.
+    const copies = screen.getAllByRole("button", { name: /La mia lista/ })
+    expect(copies.length).toBeGreaterThanOrEqual(2)
+    fireEvent.click(copies[copies.length - 1])
+    expect(await screen.findByRole("dialog", { name: "La mia lista" })).toBeInTheDocument()
+    view.unmount()
+  })
+
+  it("browsing stays flagless while the canonical/manifest name keeps the flag (same mode, same preference)", async () => {
+    const { rankingSourceCatalogName } = await import("@/lib/ranking-source")
+    const { getRegionDef } = await import("@/lib/regions")
+    const itRegion = getRegionDef("IT")
+    const selection = { rankingSourceMovie: "jw:popular", rankingSourceSeries: "jw:trending" }
+    // Canonical/export names (manager + manifest) carry the flag with emoji ON.
+    expect(rankingSourceCatalogName("pictorium-jw-movies", "movie", selection, itRegion)).toBe(
+      "🇮🇹 I più popolari — Film",
+    )
+    expect(rankingSourceCatalogName("pictorium-jw-series", "series", selection, itRegion)).toBe(
+      "🇮🇹 In tendenza — Serie TV",
+    )
+    // Browsing rows/expanded grids suppress it under the very same preference.
+    const view = renderWithCtx(<CataloghiView />, {
+      tmdbKey: "k",
+      trending: trendingBoth,
+      catalogShowEmojis: true,
+      ...selection,
+    })
+    expect(await screen.findByText("I più popolari — Film")).toBeInTheDocument()
+    expect(screen.getByText("In tendenza — Serie TV")).toBeInTheDocument()
+    expect(screen.queryByText("🇮🇹 I più popolari — Film")).not.toBeInTheDocument()
+    expect(screen.queryByText("🇮🇹 In tendenza — Serie TV")).not.toBeInTheDocument()
+    view.unmount()
+  })
+
+  it("keeps ordinary emojis in custom renames visible by default in browsing", async () => {
+    const custom = { id: "mylist", name: "🚀 La mia lista", type: "movie" as const, url: "https://mdblist.com/lists/u/mylist" }
+    const view = renderWithCtx(<CataloghiView />, {
+      tmdbKey: "k",
+      trending: trendingBoth,
+      customCatalogs: [custom],
+      rankingSourceMovie: "mylist",
+    })
+    expect((await screen.findAllByText("🚀 La mia lista")).length).toBeGreaterThanOrEqual(2)
+    view.unmount()
+  })
+
+  it("strips browsing names for display when emojis are off, stored values untouched", async () => {
+    const view = renderWithCtx(<CataloghiView />, {
+      tmdbKey: "k",
+      trending: trendingBoth,
+      catalogShowEmojis: false,
+      rankingSourceMovie: "jw:popular",
+      catalogRenames: { "pictorium-jw-series": "🚀 Le mie serie" },
+    })
+    expect(await screen.findByText("I più popolari — Film")).toBeInTheDocument()
+    expect(screen.getByText("Le mie serie")).toBeInTheDocument()
+    expect(screen.queryByText("🚀 Le mie serie")).not.toBeInTheDocument()
+    view.unmount()
   })
 })

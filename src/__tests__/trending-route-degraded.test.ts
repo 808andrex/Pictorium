@@ -53,9 +53,14 @@ describe("GET /api/tmdb/trending (D6 — risposta degradata non cachata)", () =>
     const res = await GET(req)
 
     expect(res.status).toBe(200)
-    // Nessun errore upstream → il vuoto legittimo può essere cachato.
+    // Nessun errore upstream → il vuoto legittimo può essere cachato
+    // server-side, ma resta fuori dagli shared cache: la selection è
+    // mutevole server-side (namespace/default) e l'URL non la versiona, e il
+    // GET automatico dell'hook non ha `&_t` (solo il refresh manuale).
     expect(keys).toHaveLength(1)
-    expect(res.headers.get("Cache-Control")).toContain("public")
+    expect(res.headers.get("Cache-Control")).toContain("private")
+    expect(res.headers.get("Cache-Control")).toContain("no-cache")
+    expect(res.headers.get("Cache-Control")).not.toContain("public")
     spy.mockRestore()
   })
 })

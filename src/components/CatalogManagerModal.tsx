@@ -24,6 +24,7 @@ import { usePSelector } from "@/lib/context"
 import { useT } from "@/lib/contexts/TranslationContext"
 import { usePosterEditor } from "@/lib/contexts/PosterEditorContext"
 import { PICTORIUM_CATALOGS, regionJwName } from "@/lib/catalog-definitions"
+import { rankingSourceCatalogName, resolveCatalogDisplayName } from "@/lib/ranking-source"
 import { getRegionDef } from "@/lib/regions"
 import { EmojiPicker } from "@/components/ui"
 import { Modal } from "@/components/ui/Modal"
@@ -65,6 +66,10 @@ export function CatalogManagerModal({ isOpen, onClose }: CatalogManagerModalProp
   const setCatalogOrder = usePSelector((v) => v.setCatalogOrder)
   const moveCatalog = usePSelector((v) => v.moveCatalog)
   const catalogRenames = usePSelector((v) => v.catalogRenames)
+  const catalogShowEmojis = usePSelector((v) => v.catalogShowEmojis)
+  const setCatalogShowEmojis = usePSelector((v) => v.setCatalogShowEmojis)
+  const rankingSourceMovie = usePSelector((v) => v.rankingSourceMovie)
+  const rankingSourceSeries = usePSelector((v) => v.rankingSourceSeries)
   const renameCatalog = usePSelector((v) => v.renameCatalog)
   const resetCatalogNames = usePSelector((v) => v.resetCatalogNames)
   const resetCatalogOrder = usePSelector((v) => v.resetCatalogOrder)
@@ -104,12 +109,23 @@ export function CatalogManagerModal({ isOpen, onClose }: CatalogManagerModalProp
   const allCatalogs = useMemo(() => {
     const list: CatalogEntryItem[] = []
 
-    // Built-in catalogs (i nomi JW seguono la regione attiva)
+    // Built-in catalogs (i nomi JW seguono la regione attiva; i Top 20
+    // seguono anche la fonte ranking selezionata, come nel manifest Stremio:
+    // rinomine utente > nome fonte ranking > nome regionale Top 20).
+    // La visibilità emoji è solo display (mai storage): i nomi salvati
+    // restano intatti e le sorgenti dinamiche continuano ad aggiornarsi.
     for (const c of PICTORIUM_CATALOGS) {
-      const defaultName = regionJwName(c.id, c.type, activeRegion) ?? c.name
+      const defaultName =
+        rankingSourceCatalogName(
+          c.id,
+          c.type,
+          { customCatalogs, rankingSourceMovie, rankingSourceSeries },
+          activeRegion,
+        ) ?? regionJwName(c.id, c.type, activeRegion) ?? c.name
+      const storedName = catalogRenames[c.id] || defaultName
       list.push({
         id: c.id,
-        name: catalogRenames[c.id] || defaultName,
+        name: resolveCatalogDisplayName(storedName, catalogShowEmojis),
         originalName: defaultName,
         type: c.type,
         isCustom: false,
@@ -124,9 +140,11 @@ export function CatalogManagerModal({ isOpen, onClose }: CatalogManagerModalProp
       if (cc.type === "mixed") {
         const mId = `pictorium-custom-movie-${cc.id}`
         const sId = `pictorium-custom-series-${cc.id}`
+        const mStored = catalogRenames[mId] || `${cc.name} — ${t("ui.movie")}`
+        const sStored = catalogRenames[sId] || `${cc.name} — ${t("ui.tvSeries")}`
         list.push({
           id: mId,
-          name: catalogRenames[mId] || `${cc.name} — ${t("ui.movie")}`,
+          name: resolveCatalogDisplayName(mStored, catalogShowEmojis),
           originalName: `${cc.name} — ${t("ui.movie")}`,
           type: "movie",
           isCustom: true,
@@ -136,7 +154,7 @@ export function CatalogManagerModal({ isOpen, onClose }: CatalogManagerModalProp
         })
         list.push({
           id: sId,
-          name: catalogRenames[sId] || `${cc.name} — ${t("ui.tvSeries")}`,
+          name: resolveCatalogDisplayName(sStored, catalogShowEmojis),
           originalName: `${cc.name} — ${t("ui.tvSeries")}`,
           type: "series",
           isCustom: true,
@@ -146,9 +164,10 @@ export function CatalogManagerModal({ isOpen, onClose }: CatalogManagerModalProp
         })
       } else {
         const cId = `pictorium-custom-${cc.type}-${cc.id}`
+        const cStored = catalogRenames[cId] || cc.name
         list.push({
           id: cId,
-          name: catalogRenames[cId] || cc.name,
+          name: resolveCatalogDisplayName(cStored, catalogShowEmojis),
           originalName: cc.name,
           type: cc.type,
           isCustom: true,
@@ -171,7 +190,7 @@ export function CatalogManagerModal({ isOpen, onClose }: CatalogManagerModalProp
     }
 
     return list
-  }, [customCatalogs, disabledCatalogIds, homeDisabledCatalogIds, catalogOrder, catalogRenames, activeRegion, t])
+  }, [customCatalogs, rankingSourceMovie, rankingSourceSeries, disabledCatalogIds, homeDisabledCatalogIds, catalogOrder, catalogRenames, catalogShowEmojis, activeRegion, t])
 
   const toggleSelect = (id: string) => {
     setSelectedIds((prev) => {
@@ -190,7 +209,10 @@ export function CatalogManagerModal({ isOpen, onClose }: CatalogManagerModalProp
 
   const startRename = (item: CatalogEntryItem) => {
     setEditingId(item.id)
-    setEditName(item.name)
+    // Il campo parte dal nome memorizzato (rinomina esplicita o default
+    // completo), mai dal testo con emoji nascoste: salvare non deve
+    // congelare la versione spogliata.
+    setEditName(catalogRenames[item.id] || item.originalName)
   }
 
   const saveRename = (id: string) => {
@@ -413,6 +435,18 @@ export function CatalogManagerModal({ isOpen, onClose }: CatalogManagerModalProp
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Visibilità emoji nei nomi (solo display, mai storage): nasconde
+              tutte le emoji dai nomi mostrati, i salvataggi restano intatti. */}
+          <button
+            type="button"
+            onClick={() => setCatalogShowEmojis(!catalogShowEmojis)}
+            aria-pressed={catalogShowEmojis}
+            title={t("ui.catalogEmojis")}
+            className="flex items-center gap-1.5 px-2 py-1 rounded-lg border text-muted hover:text-zinc-200 hover:bg-white/5 transition-colors text-[11px] border-white/10"
+          >
+            {catalogShowEmojis ? <CheckSquare className="w-3.5 h-3.5 text-accent-orange" /> : <Square className="w-3.5 h-3.5" />}
+            <span>{t("ui.catalogEmojis")}</span>
+          </button>
           {catalogOrder.length > 0 && (
             <button
               type="button"

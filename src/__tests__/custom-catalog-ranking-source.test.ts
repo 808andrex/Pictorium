@@ -161,8 +161,8 @@ describe("imported list must not become a ranking source (JW selected)", () => {
       rankingSourceMovie: "",
       rankingSourceSeries: "",
     } as const
-    expect(resolveRankingSource(selection, "movie")).toEqual({ kind: "justwatch" })
-    expect(resolveRankingSource(selection, "series")).toEqual({ kind: "justwatch" })
+    expect(resolveRankingSource(selection, "movie")).toEqual({ kind: "justwatch", mode: "charts" })
+    expect(resolveRankingSource(selection, "series")).toEqual({ kind: "justwatch", mode: "charts" })
   })
 
   it("explicit custom ranking selection still resolves (intentional source preserved)", () => {
@@ -174,7 +174,7 @@ describe("imported list must not become a ranking source (JW selected)", () => {
       rankingSourceSeries: "",
     } as const
     expect(resolveRankingSource(selection, "movie")).toEqual({ kind: "custom", customId: "mylist" })
-    expect(resolveRankingSource(selection, "series")).toEqual({ kind: "justwatch" })
+    expect(resolveRankingSource(selection, "series")).toEqual({ kind: "justwatch", mode: "charts" })
   })
 
   it("explicit ranking disable still hides the rank badge (ranking=0 respected)", () => {

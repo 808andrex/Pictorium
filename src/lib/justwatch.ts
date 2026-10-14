@@ -487,6 +487,8 @@ const GET_POPULAR_TITLES_QUERY = `query GetPopularTitles(
   }
 }`
 
+export const JW_DIGITAL_MONETIZATION_TYPES = ["FLATRATE", "FREE", "BUY", "RENT", "ADS"] as const
+
 export interface JWTitleOptions {
   objectType: "MOVIE" | "SHOW"
   country?: string
@@ -496,6 +498,14 @@ export interface JWTitleOptions {
   genres?: readonly string[] | string[]
   sortBy?: "POPULAR" | "TRENDING" | "RELEASE_YEAR"
   language?: string
+  monetizationTypes?: readonly string[] | string[]
+  signal?: AbortSignal
+  /**
+   * Se false, richiede a JustWatch esattamente `first` elementi dall'offset specificato,
+   * garantendo finestre strettamente disgiunte nella paginazione sequenziale (offset=0, 20, 40).
+   * Default: true (conserva l'overfetch storico 2x per i consumer non paginati).
+   */
+  overfetch?: boolean
 }
 
 export async function getJWTitles(opts: JWTitleOptions): Promise<JWRankEntry[]> {
@@ -508,11 +518,16 @@ export async function getJWTitles(opts: JWTitleOptions): Promise<JWRankEntry[]> 
     genres,
     sortBy = "POPULAR",
     language = "it-IT",
+    monetizationTypes,
+    signal,
+    overfetch = true,
   } = opts
 
   const pkgKey = packages && packages.length > 0 ? packages.join(",") : "all"
   const genreKey = genres && genres.length > 0 ? genres.join(",") : "all"
-  const cacheKey = `titles:${objectType}:${country}:${first}:${offset}:${sortBy}:${pkgKey}:${genreKey}:${language}`
+  const monetizationKey = monetizationTypes && monetizationTypes.length > 0 ? monetizationTypes.join(",") : "all"
+  const ofKey = overfetch ? "of1" : "of0"
+  const cacheKey = `titles:${objectType}:${country}:${first}:${offset}:${sortBy}:${pkgKey}:${genreKey}:${monetizationKey}:${language}:${ofKey}`
 
   const cached = rankingsCache.get(cacheKey)
   if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
@@ -532,16 +547,20 @@ export async function getJWTitles(opts: JWTitleOptions): Promise<JWRankEntry[]> 
   if (genres && genres.length > 0) {
     filter.genres = genres
   }
+  if (monetizationTypes && monetizationTypes.length > 0) {
+    filter.monetizationTypes = monetizationTypes
+  }
   if (sortBy === "RELEASE_YEAR") {
     filter.releaseYear = { max: new Date().getFullYear() }
   }
 
+  const requestSignal = combineAbortSignals(signal, JW_TIMEOUT_MS)
   let res: Response
   try {
     res = await timedFetch(JW_API, {
       method: "POST",
       headers: jwHeaders(),
-      signal: AbortSignal.timeout(JW_TIMEOUT_MS),
+      signal: requestSignal,
       body: JSON.stringify({
         operationName: "GetPopularTitles",
         query: GET_POPULAR_TITLES_QUERY,
@@ -549,13 +568,14 @@ export async function getJWTitles(opts: JWTitleOptions): Promise<JWRankEntry[]> 
           country,
           language,
           filter,
-          first: Math.min(Math.max(first * 2, 20), 60),
+          first: overfetch ? Math.min(Math.max(first * 2, 20), 60) : first,
           sortBy,
           offset,
         },
       }),
     })
   } catch (err) {
+    if (signal?.aborted) throw err
     recordCircuitFailure()
     throw err
   }

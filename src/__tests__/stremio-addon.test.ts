@@ -211,7 +211,7 @@ describe("stremio-addon import (MVP)", () => {
       { id: "l1", name: "List", type: "movie" as const, url: "https://mdblist.com/lists/u/s" },
     ]
     expect(ranking.compatibleRankingCustoms(customs, "movie").map((c) => c.id)).toEqual(["l1"])
-    expect(ranking.resolveRankingSource({ customCatalogs: customs, rankingSourceMovie: "a1" }, "movie")).toEqual({ kind: "justwatch" })
+    expect(ranking.resolveRankingSource({ customCatalogs: customs, rankingSourceMovie: "a1" }, "movie")).toEqual({ kind: "justwatch", mode: "charts" })
     expect(ranking.resolveRankingSource({ customCatalogs: customs, rankingSourceMovie: "l1" }, "movie")).toEqual({ kind: "custom", customId: "l1" })
   })
 })

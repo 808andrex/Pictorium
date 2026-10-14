@@ -25,6 +25,9 @@ export function useCustomCatalogs(
   const [catalogOrder, setCatalogOrderState] = useState<string[]>([])
   const [catalogRenames, setCatalogRenamesState] = useState<Record<string, string>>({})
   const [catalogShapes, setCatalogShapesState] = useState<CatalogShapes>({})
+  // Catalog-name emoji visibility (display only, default shown): true unless
+  // explicitly set to false. Stored names are never rewritten by the toggle.
+  const [catalogShowEmojis, setCatalogShowEmojisState] = useState(true)
   const lastSyncRef = useRef<string>("")
   const pendingRef = useRef("")
   const [syncAttempt, setSyncAttempt] = useState(0)
@@ -60,6 +63,7 @@ export function useCustomCatalogs(
     const savedOrder = hasSaved("pictorium_catalog_order")
     const savedRenames = hasSaved("pictorium_catalog_renames", true)
     const savedShapes = hasSaved(CATALOG_SHAPES_STORAGE_KEY, true)
+    const savedEmojis = safeGetItem("pictorium_catalog_show_emojis") !== null
     // Hydrate missing or server-configured defaults
     userFetch("/api/defaults")
       .then((r) => (r.ok ? r.json() : null))
@@ -72,6 +76,7 @@ export function useCustomCatalogs(
           catalogOrder: data.catalogOrder ?? [],
           catalogRenames: data.catalogRenames ?? {},
           catalogShapes: normalizeCatalogShapeKeys(data.catalogShapes) ?? {},
+          catalogShowEmojis: data.catalogShowEmojis ?? true,
         })
         if (Array.isArray(data.customCatalogs) && !savedCustomCats) {
           setCustomCatalogsState((prev) => {
@@ -128,6 +133,11 @@ export function useCustomCatalogs(
             return prev
           })
         }
+        if (typeof data.catalogShowEmojis === "boolean" && !savedEmojis) {
+          const serverShow = data.catalogShowEmojis
+          setCatalogShowEmojisState(serverShow)
+          safeSetItem("pictorium_catalog_show_emojis", JSON.stringify(serverShow))
+        }
       })
       .catch(() => {})
       .finally(() => setHydrated(true))
@@ -141,6 +151,7 @@ export function useCustomCatalogs(
     let localOrder: string[] = []
     let localRenames: Record<string, string> = {}
     let localShapes: CatalogShapes = {}
+    let localShowEmojis = true
 
     const savedCustomCats = safeGetItem("pictorium_custom_catalogs")
     if (savedCustomCats) {
@@ -202,6 +213,16 @@ export function useCustomCatalogs(
         }
       } catch {}
     }
+    const savedShowEmojisRaw = safeGetItem("pictorium_catalog_show_emojis")
+    if (savedShowEmojisRaw !== null) {
+      try {
+        const parsed = JSON.parse(savedShowEmojisRaw)
+        if (typeof parsed === "boolean") {
+          localShowEmojis = parsed
+          setCatalogShowEmojisState(localShowEmojis)
+        }
+      } catch {}
+    }
 
     lastSyncRef.current = JSON.stringify({
       customCatalogs: localCustom,
@@ -210,6 +231,7 @@ export function useCustomCatalogs(
       catalogOrder: localOrder,
       catalogRenames: localRenames,
       catalogShapes: localShapes,
+      catalogShowEmojis: localShowEmojis,
     })
 
     refreshCatalogsFromServer()
@@ -223,7 +245,7 @@ export function useCustomCatalogs(
   }, [refreshCatalogsFromServer])
 
   // Keep the latest desired payload separate from the last acknowledged PUT.
-  const payloadStr = JSON.stringify({ customCatalogs, disabledCatalogIds, homeDisabledCatalogIds, catalogOrder, catalogRenames, catalogShapes })
+  const payloadStr = JSON.stringify({ customCatalogs, disabledCatalogIds, homeDisabledCatalogIds, catalogOrder, catalogRenames, catalogShapes, catalogShowEmojis })
   useEffect(() => {
     pendingRef.current = payloadStr
     if (!hydrated || lastSyncRef.current === payloadStr) return
@@ -381,6 +403,16 @@ export function useCustomCatalogs(
     try { localStorage.removeItem("pictorium_catalog_renames") } catch {}
   }, [])
 
+  /**
+   * Catalog-name emoji visibility (display only): persists the choice locally
+   * and syncs it through the canonical catalog PUT. Stored renames/defaults
+   * are never rewritten — display layers strip via the shared pure helper.
+   */
+  const setCatalogShowEmojis = useCallback((show: boolean) => {
+    setCatalogShowEmojisState(show)
+    safeSetItem("pictorium_catalog_show_emojis", JSON.stringify(show))
+  }, [safeSetItem])
+
   const setCatalogShapes = useCallback((shapes: CatalogShapes) => {
     const clean = sanitizeCatalogShapes(shapes)
     setCatalogShapesState(clean)
@@ -433,6 +465,8 @@ export function useCustomCatalogs(
     renameCatalog,
     resetCatalogNames,
     resetCatalogOrder,
+    catalogShowEmojis,
+    setCatalogShowEmojis,
     catalogShapes,
     setCatalogShapes,
     setCatalogShape,

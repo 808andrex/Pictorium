@@ -124,6 +124,10 @@ export const configTokenSchema = z.object({
   ribbonEnabled: z.boolean().optional(),
   catalogOrder: z.array(z.string().max(80)).optional(),
   catalogRenames: z.record(z.string().max(80), z.string().max(100)).optional(),
+  // Catalog-name emoji visibility (display only, default shown): absent =
+  // current behavior (old tokens stay valid), false = hide all emojis in
+  // displayed catalog names. Stored names are never rewritten.
+  catalogShowEmojis: z.boolean().optional(),
   // Per-catalog card format (TaskB): ONLY poster|landscape persisted; absent
   // key = follow the global posterShape. Bounds mirror the defaults schema.
   catalogShapes: z.record(z.string().max(80), z.enum(["poster", "landscape"])).optional().refine((v) => {
@@ -166,6 +170,7 @@ export const partialCatalogTokenSchema = z.object({
   homeDisabledCatalogIds: z.array(z.string().max(80)).optional(),
   catalogOrder: z.array(z.string().max(80)).optional(),
   catalogRenames: z.record(z.string().max(80), z.string().max(100)).optional(),
+  catalogShowEmojis: z.boolean().optional(),
   catalogShapes: z.record(z.string().max(80), z.enum(["poster", "landscape"])).optional().refine((v) => {
     if (!v) return true
     const keys = Object.keys(v)

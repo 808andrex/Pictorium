@@ -215,7 +215,7 @@ describe("GET /api/trending/rank with custom ranking source", () => {
     expect(fetchSpy.mock.calls.filter((c) => String(c[0]).includes("mdblist"))).toHaveLength(1)
   })
 
-  it("keeps custom responses out of browser caches without touching JW caching", async () => {
+  it("keeps custom responses out of shared caches (charts branch included)", async () => {
     mockedUserDefaults.mockResolvedValue({
       customCatalogs: [MOVIE_CUSTOM],
       rankingSourceMovie: "trakt-movies",
@@ -239,7 +239,12 @@ describe("GET /api/trending/rank with custom ranking source", () => {
     const jw = await GET(
       new NextRequest("http://localhost:3000/api/trending/rank?type=movie&id=602&first=20&region=IT"),
     )
-    expect(jw.headers.get("Cache-Control")).toContain("public")
+    // Mutable-selection contract: the charts branch resolves through the same
+    // mutable defaults as every other branch, so it stays out of shared
+    // caches too (private/no-cache) while the server-side app cache still
+    // absorbs upstream cost.
+    expect(jw.headers.get("Cache-Control")).toContain("private")
+    expect(jw.headers.get("Cache-Control")).toContain("no-cache")
     expect(await jw.json()).toMatchObject({ rank: 1 })
   })
 })

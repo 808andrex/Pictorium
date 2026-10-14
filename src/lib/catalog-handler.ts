@@ -13,7 +13,8 @@ import { getDetails, getDetailsWithExternalIds, getGenreList, getImages, personM
 import { resolveImdbId } from "@/lib/imdb-cache"
 import { fetchMDBList } from "@/lib/mdblist"
 import { resolveRankingSource } from "@/lib/ranking-source"
-import { fetchCustomRankingTop20, findRankingCustomCatalog } from "@/lib/custom-ranking"
+import { findRankingCustomCatalog } from "@/lib/custom-ranking"
+import { fetchTop20Ranking } from "@/lib/top20-ranking"
 import { buildNoticeMeta, noticeCatalogId, NOTICE_CUSTOM_RANKING_UNAVAILABLE, NOTICE_CUSTOM_RANKING_UNAVAILABLE_DESCRIPTION, NOTICE_CUSTOM_RANKING_UNAVAILABLE_TITLE, NOTICE_MISSING_TVDB_KEY, NOTICE_MISSING_TVDB_KEY_TITLE, NOTICE_MISSING_TVDB_KEY_DESCRIPTION } from "@/lib/notice-meta"
 import { fetchUnifiedCatalogResult } from "@/lib/custom-catalog-providers"
 import { detectCatalogProvider, isTraktUserContentUrl } from "@/lib/catalog-provider-detect"
@@ -21,7 +22,7 @@ import { fetchAddonCatalogPage } from "@/lib/stremio-addon-server"
 import { parseSupportedTmdbRef } from "@/lib/stremio-addon"
 import { buildStremioPosterUrl, stremioPosterShape } from "@/lib/stremio-poster-url"
 import { getOriginFromRequest } from "@/lib/poster-public-url"
-import { getJWRankings, getJWTitles, resolveJWGenreCode, type JWRankEntry } from "@/lib/justwatch"
+import { getJWRankings, getJWTitles, resolveJWGenreCode, JW_DIGITAL_MONETIZATION_TYPES, type JWRankEntry } from "@/lib/justwatch"
 import { getRegionDef, normalizeRegion, parseRegion, GLOBAL_REGION_CODE, type RegionDef } from "@/lib/regions"
 import { getCatalogEpoch } from "@/lib/catalog-epoch"
 import { createLogger } from "@/lib/logger"
@@ -160,6 +161,19 @@ export function parseCatalogExtra(
   }
 
   return result
+}
+
+/**
+ * "All" / "Tutti" (any case) and missing genre all mean unfiltered: no
+ * server-side JW genre code, no tail post-filter, no custom-genre scan, and
+ * no genre cache-key fragment. Editorial labels that map to no JW code stay
+ * fail-closed (empty) at the call site — this helper only detects the
+ * unfiltered set.
+ */
+function isUnfilteredCatalogGenre(genre?: string | null): boolean {
+  if (!genre) return true
+  const g = genre.trim().toLowerCase()
+  return g === "tutti" || g === "all"
 }
 
 /** Riutilizza getJWRankings (cache condivisa 30 min + mock server nei test).
@@ -565,7 +579,9 @@ export async function pictoriumCatalog(
     ? ""
     : rankingSource.kind === "custom" && rankingCustom
       ? `:rs${hashFragment(`${rankingSource.customId}:${rankingCustom.url}:${rankingCustom.datasetId ?? ""}`)}`
-      : ":rsjw"
+      : rankingSource.kind === "justwatch" && rankingSource.mode !== "charts"
+        ? `:rsjw_${rankingSource.mode}`
+        : ":rsjw"
 
   // --- Gestione Ricerca Stremio (sia via barra di ricerca che catalogo dedicato) ---
   // Eccezione addon: se il catalogo importato dichiara `search`, la query va
@@ -783,7 +799,7 @@ export async function pictoriumCatalog(
   }
 
   const skipFragment = typeof extra.skip === "number" && extra.skip > 0 ? `:s${extra.skip}` : ""
-  const genreFragment = extra.genre && extra.genre !== "Tutti" ? `:g${hashFragment(extra.genre)}` : ""
+  const genreFragment = !isUnfilteredCatalogGenre(extra.genre) ? `:g${hashFragment(extra.genre!)}` : ""
   // Frammento search: i cataloghi non-addon non arrivano mai qui con search
   // (intercettata dal ramo TMDB globale), ma gli addon con `search` dichiarato
   // la inoltrano alla fonte — senza, due ricerche diverse colliderebbero.
@@ -862,6 +878,7 @@ export async function pictoriumCatalog(
   if (cached) return catalogResponse(cached)
 
   let isCustomGenreFiltered = false
+  let isJwGenrePreFiltered = false
   // Provenienza privata del provider per la coerenza outer-cache (correction
   // cycle 1): true quando il body in costruzione contiene item fetchati con
   // il Bearer del proprietario. Vedi coda della funzione prima del cacheSet.
@@ -1031,7 +1048,7 @@ export async function pictoriumCatalog(
         }
 
         const skip = typeof extra.skip === "number" && extra.skip > 0 ? extra.skip : 0
-        isCustomGenreFiltered = !!(extra.genre && extra.genre !== "Tutti")
+        isCustomGenreFiltered = !isUnfilteredCatalogGenre(extra.genre)
 
         // Stable pagination in source order: dedupe on globally-unique
         // resolved TMDB ids BEFORE applying skip/page-20 — never slice raw
@@ -1198,62 +1215,75 @@ export async function pictoriumCatalog(
       // The JW genre drill-down stays JustWatch-only; the tail post-filter
       // still applies to custom rows.
       let uniqueRows: Array<{ tmdbId: number; imdbId: string | null; title?: string | null | undefined }>
-      if (rankingSource.kind === "custom" && rankingCustom) {
-        const ranking = await fetchCustomRankingTop20({
-          custom: rankingCustom,
-          slot: stType,
-          apiKey,
-          mdblistKey,
-          tvdbKey,
-          userId: scopedUser,
+      const isJwPopularOrTrending =
+        rankingSource.kind === "justwatch" &&
+        (rankingSource.mode === "popular" || rankingSource.mode === "trending")
+
+      if (isJwPopularOrTrending) {
+        // Paginazione Stremio per Popolarità / Tendenze:
+        // - Regione Mondiale (GL): popular/trending non supportati (fail-closed, nessun fallback nazionale).
+        // - Genere: applicato server-side nella query JustWatch prima di offset; categorie non mappabili → vuoto.
+        // - Pagine richieste via skip (offset=skip, first=20), overfetch disattivato per finestre disgiunte.
+        if (region.code === GLOBAL_REGION_CODE) {
+          return catalogResponse({ metas: [] })
+        }
+        const hasGenre = !isUnfilteredCatalogGenre(extra.genre)
+        const jwGenreCode = hasGenre ? resolveJWGenreCode(extra.genre) : null
+        if (hasGenre && !jwGenreCode) {
+          // Categorie editoriali fuori scope (Supereroi, Vacanze, Commedie horror) → vuoto fail-closed
+          return catalogResponse({ metas: [] })
+        }
+        if (hasGenre) {
+          isJwGenrePreFiltered = true
+        }
+        const jwSortBy = rankingSource.mode === "popular" ? "POPULAR" : "TRENDING"
+        const jwSkip = typeof extra.skip === "number" && extra.skip > 0 ? extra.skip : 0
+        const rows = await getJWTitles({
+          objectType: stType === "movie" ? "MOVIE" : "SHOW",
+          country: region.code,
+          first: 20,
+          offset: jwSkip,
+          sortBy: jwSortBy,
+          language: tmdbLang,
+          monetizationTypes: JW_DIGITAL_MONETIZATION_TYPES,
+          genres: jwGenreCode ? [jwGenreCode] : undefined,
+          overfetch: false,
         })
-        if (ranking.items.length === 0) {
-          if (ranking.status !== "empty") {
-            log.debug("Custom ranking unavailable", { catalogId, status: ranking.status })
+        uniqueRows = rows.map((r) => ({ tmdbId: r.tmdbId, imdbId: r.imdbId || null, title: r.title || null }))
+      } else {
+        // Custom e Classifiche storiche: mantengono il comportamento Top 20 (skip >= 20 vuoto)
+        const top20Skip = typeof extra.skip === "number" && extra.skip > 0 ? extra.skip : 0
+        if (top20Skip >= 20) {
+          // Windowed Top-N: pages past the Top 20 are strictly empty.
+          uniqueRows = []
+        } else {
+          const ranking = await fetchTop20Ranking({
+            slot: stType,
+            source: rankingSource,
+            regionCode: region.code,
+            regionLang: tmdbLang,
+            customCatalogs: userConfig?.customCatalogs,
+            apiKey,
+            mdblistKey,
+            tvdbKey,
+            userId: scopedUser,
+          })
+          if (ranking.status === "error") {
+            log.debug("Top 20 ranking unavailable", { catalogId, status: ranking.errorStatus })
             return catalogResponse({
               metas: [buildNoticeMeta({
                 type: stType,
                 poster: `${getOriginFromRequest(req)}/pictorium.png`,
                 id: noticeCatalogId(NOTICE_CUSTOM_RANKING_UNAVAILABLE),
                 name: NOTICE_CUSTOM_RANKING_UNAVAILABLE_TITLE,
-                description: `${NOTICE_CUSTOM_RANKING_UNAVAILABLE_DESCRIPTION} (lista: ${rankingCustom.name}, stato: ${ranking.status})`,
+                description: `${NOTICE_CUSTOM_RANKING_UNAVAILABLE_DESCRIPTION} (lista: ${rankingCustom?.name ?? "custom"}, stato: ${ranking.errorStatus})`,
               })],
             })
           }
-          uniqueRows = []
-        } else {
-          // Windowed Top-N: pages past the Top 20 are empty, short lists are
-          // never backfilled with JustWatch rows.
-          const customSkip = typeof extra.skip === "number" && extra.skip > 0 ? extra.skip : 0
           uniqueRows = ranking.items
-            .slice(customSkip, customSkip + 20)
-            .map((item) => ({ tmdbId: item.tmdbId, imdbId: item.imdb || null, title: item.title || null }))
+            .slice(top20Skip, top20Skip + 20)
+            .map((item) => ({ tmdbId: item.tmdbId, imdbId: item.imdbId, title: item.title }))
         }
-      } else {
-        // streamingCharts non supporta `offset`: l'overfetch da zero + slice è
-        // l'unico modo per paginare (l'arricchimento TMDB resta comunque sui 20
-        // della finestra). popularTitles invece pagina nativo: first = finestra.
-        const jwSkip = typeof extra.skip === "number" && extra.skip > 0 ? extra.skip : 0
-        const jwGenre = region.code === GLOBAL_REGION_CODE ? null : resolveJWGenreCode(extra.genre)
-        const jwFirst = jwGenre ? 20 : Math.min(60, 20 + jwSkip)
-        const rows = jwGenre
-          ? await getJWTitles({
-              objectType: stType === "movie" ? "MOVIE" : "SHOW",
-              country: region.code,
-              first: jwFirst,
-              offset: jwSkip,
-              genres: [jwGenre],
-              sortBy: "POPULAR",
-              language: tmdbLang,
-            })
-          : await getJustWatchRankings(stType === "movie" ? "MOVIE" : "SHOW", region.code, jwFirst, undefined, tmdbLang)
-
-        const seenTmdb = new Set<number>()
-        uniqueRows = rows.filter((r) => {
-          if (!r.tmdbId || seenTmdb.has(r.tmdbId)) return false
-          seenTmdb.add(r.tmdbId)
-          return true
-        }).slice(jwGenre ? 0 : jwSkip, (jwGenre ? 0 : jwSkip) + 20)
       }
 
       const results = await concurrentMap(uniqueRows, async (row) => {
@@ -1505,11 +1535,10 @@ export async function pictoriumCatalog(
       }
     }
 
-    // Filtro locale per nome genere (built-in/custom liste): gli addon sono
-    // esclusi, la fonte ha già filtrato e qui `genre` può essere un anno
-    // (Cinemeta year) o un'etichetta non genere.
-    if (extra.genre && extra.genre !== "Tutti" && metas.length > 0 && !isAddonCatalog) {
-      const gLower = extra.genre.toLowerCase()
+    // Filtro locale per nome genere (built-in/custom liste): gli addon e
+    // le query JustWatch già pre-filtrate server-side sono escluse.
+    if (!isUnfilteredCatalogGenre(extra.genre) && metas.length > 0 && !isAddonCatalog && !isJwGenrePreFiltered) {
+      const gLower = (extra.genre as string).toLowerCase()
       const isFamily = gLower === "famiglia" || gLower === "family"
       const isSciFi = gLower === "fantascienza" || gLower.includes("sci-fi")
       const isAction = gLower === "azione" || gLower.includes("action")

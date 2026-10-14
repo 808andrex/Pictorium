@@ -144,8 +144,8 @@ describe("source cache TTL (FP 12h / MDBList 12h / JW 6h)", () => {
     expect(first.items).toHaveLength(1)
     expect(fetchSpy).toHaveBeenCalledTimes(1)
 
-    // Clear ONLY the inner mdblist cache: if the outer were still at 30 min,
-    // at +6h it would miss and refetch. At 12h it stays a hit with no fetch.
+    // Clear ONLY the inner mdblist cache: the outer honors 12h for every
+    // supported custom-list source, so at +6h it stays a hit with no fetch.
     cacheInvalidate("mdblist")
     now += 6 * HOUR
     const second = await fetchUnifiedCatalogResult(url)
@@ -158,7 +158,7 @@ describe("source cache TTL (FP 12h / MDBList 12h / JW 6h)", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(2)
   })
 
-  it("outer custom catalog: other sources stay at 30 min (tmdb_collection)", async () => {
+  it("outer custom catalog: every supported source honors 12h (tmdb_collection)", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
       Response.json({ parts: [{ id: 11, title: "Saga Uno", release_date: "2012-01-01", poster_path: "/p.jpg" }] }),
     )
@@ -167,11 +167,11 @@ describe("source cache TTL (FP 12h / MDBList 12h / JW 6h)", () => {
     expect(first.items).toHaveLength(1)
     expect(fetchSpy).toHaveBeenCalledTimes(1)
 
-    now += 29 * 60_000
+    now += 6 * HOUR
     await fetchUnifiedCatalogResult("tmdb:collection:86311", { apiKey: "k" })
     expect(fetchSpy).toHaveBeenCalledTimes(1)
 
-    now += 2 * 60_000 // 31 min: the 30 min outer cache has expired
+    now += 6 * HOUR + 1_000 // past 12h: the 12h outer cache has expired
     await fetchUnifiedCatalogResult("tmdb:collection:86311", { apiKey: "k" })
     expect(fetchSpy).toHaveBeenCalledTimes(2)
   })

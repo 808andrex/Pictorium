@@ -216,6 +216,7 @@ const defaultsSchema = z.object({
   homeDisabledCatalogIds: z.array(z.string().max(80)).optional(),
   catalogOrder: z.array(z.string().max(80)).optional(),
   catalogRenames: z.record(z.string().max(80), z.string().max(100)).optional(),
+  catalogShowEmojis: z.boolean().optional(),
   // Per-catalog card format (TaskB): persisted values ONLY poster|landscape;
   // absent/deleted key = follow the global posterShape. Unknown enums fail
   // the PUT (never silently defaulted); prototype keys are rejected and the

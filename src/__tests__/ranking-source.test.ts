@@ -34,21 +34,54 @@ const MIXED_CUSTOM: CustomCatalogConfig = {
 const ALL = [MOVIE_CUSTOM, SERIES_CUSTOM, MIXED_CUSTOM]
 
 describe("resolveRankingSource", () => {
-  it("defaults to JustWatch without any selection (old configs stay valid)", () => {
-    expect(resolveRankingSource({}, "movie")).toEqual({ kind: "justwatch" })
-    expect(resolveRankingSource({}, "series")).toEqual({ kind: "justwatch" })
+  it("defaults to JustWatch charts without any selection (old configs stay valid)", () => {
+    expect(resolveRankingSource({}, "movie")).toEqual({ kind: "justwatch", mode: "charts" })
+    expect(resolveRankingSource({}, "series")).toEqual({ kind: "justwatch", mode: "charts" })
     expect(
       resolveRankingSource({ customCatalogs: ALL }, "movie"),
-    ).toEqual({ kind: "justwatch" })
+    ).toEqual({ kind: "justwatch", mode: "charts" })
   })
 
-  it("treats empty or whitespace selection as JustWatch", () => {
+  it("treats empty or whitespace selection as JustWatch charts", () => {
     expect(
       resolveRankingSource({ customCatalogs: ALL, rankingSourceMovie: "" }, "movie"),
-    ).toEqual({ kind: "justwatch" })
+    ).toEqual({ kind: "justwatch", mode: "charts" })
     expect(
       resolveRankingSource({ customCatalogs: ALL, rankingSourceSeries: "   " }, "series"),
-    ).toEqual({ kind: "justwatch" })
+    ).toEqual({ kind: "justwatch", mode: "charts" })
+  })
+
+  it("resolves built-in JustWatch modes (charts, popular, trending) independently per slot", () => {
+    expect(
+      resolveRankingSource({ customCatalogs: ALL, rankingSourceMovie: "jw:charts" }, "movie"),
+    ).toEqual({ kind: "justwatch", mode: "charts" })
+    expect(
+      resolveRankingSource({ customCatalogs: ALL, rankingSourceMovie: "jw:popular" }, "movie"),
+    ).toEqual({ kind: "justwatch", mode: "popular" })
+    expect(
+      resolveRankingSource({ customCatalogs: ALL, rankingSourceSeries: "jw:trending" }, "series"),
+    ).toEqual({ kind: "justwatch", mode: "trending" })
+    expect(
+      resolveRankingSource(
+        { customCatalogs: ALL, rankingSourceMovie: "jw:popular", rankingSourceSeries: "cat_series" },
+        "movie",
+      ),
+    ).toEqual({ kind: "justwatch", mode: "popular" })
+    expect(
+      resolveRankingSource(
+        { customCatalogs: ALL, rankingSourceMovie: "jw:popular", rankingSourceSeries: "cat_series" },
+        "series",
+      ),
+    ).toEqual({ kind: "custom", customId: "cat_series" })
+  })
+
+  it("never resolves a builtin id as a custom catalog even if custom catalog shares that id", () => {
+    const maliciousCustoms: CustomCatalogConfig[] = [
+      { id: "jw:popular", name: "Fake popular", type: "movie", url: "https://example.com" },
+    ]
+    expect(
+      resolveRankingSource({ customCatalogs: maliciousCustoms, rankingSourceMovie: "jw:popular" }, "movie"),
+    ).toEqual({ kind: "justwatch", mode: "popular" })
   })
 
   it("resolves a compatible custom per slot (round-trip selection)", () => {
@@ -81,47 +114,47 @@ describe("resolveRankingSource", () => {
     ).toEqual({ kind: "custom", customId: "cat_mixed" })
   })
 
-  it("falls back to JustWatch on cross-type selection", () => {
+  it("falls back to JustWatch charts on cross-type selection", () => {
     expect(
       resolveRankingSource(
         { customCatalogs: ALL, rankingSourceMovie: "cat_series" },
         "movie",
       ),
-    ).toEqual({ kind: "justwatch" })
+    ).toEqual({ kind: "justwatch", mode: "charts" })
     expect(
       resolveRankingSource(
         { customCatalogs: ALL, rankingSourceSeries: "cat_movies" },
         "series",
       ),
-    ).toEqual({ kind: "justwatch" })
+    ).toEqual({ kind: "justwatch", mode: "charts" })
   })
 
-  it("falls back to JustWatch when the referenced catalog was deleted", () => {
+  it("falls back to JustWatch charts when the referenced catalog was deleted", () => {
     expect(
       resolveRankingSource(
         { customCatalogs: [MOVIE_CUSTOM], rankingSourceMovie: "cat_gone" },
         "movie",
       ),
-    ).toEqual({ kind: "justwatch" })
+    ).toEqual({ kind: "justwatch", mode: "charts" })
   })
 
-  it("falls back to JustWatch when the referenced catalog is disabled", () => {
+  it("falls back to JustWatch charts when the referenced catalog is disabled", () => {
     const disabled: CustomCatalogConfig = { ...MOVIE_CUSTOM, enabled: false }
     expect(
       resolveRankingSource(
         { customCatalogs: [disabled], rankingSourceMovie: "cat_movies" },
         "movie",
       ),
-    ).toEqual({ kind: "justwatch" })
+    ).toEqual({ kind: "justwatch", mode: "charts" })
   })
 
-  it("falls back to JustWatch on overlong ids (schema bound)", () => {
+  it("falls back to JustWatch charts on overlong ids (schema bound)", () => {
     expect(
       resolveRankingSource(
         { customCatalogs: ALL, rankingSourceMovie: "x".repeat(65) },
         "movie",
       ),
-    ).toEqual({ kind: "justwatch" })
+    ).toEqual({ kind: "justwatch", mode: "charts" })
   })
 })
 
@@ -175,6 +208,45 @@ describe("ranking source persistence contract", () => {
     ).toEqual({ kind: "custom", customId: "cat_movies" })
   })
 
+  it("round-trips built-in JustWatch modes through the config token", () => {
+    const token = encodeConfig({
+      globalBadges: true,
+      rankingBadges: true,
+      badgeStyle: "shadow",
+      rankingBadgeStyle: "default",
+      blurEnabled: true,
+      blurIntensity: 5,
+      blurFade: 60,
+      blurDarkness: 40,
+      gradientHeight: 30,
+      networkLogo: true,
+      autoRotateClean: false,
+      rankingSourceMovie: "jw:popular",
+      rankingSourceSeries: "jw:trending",
+    })
+    const decoded = decodeConfig(token)
+    expect(decoded?.rankingSourceMovie).toBe("jw:popular")
+    expect(decoded?.rankingSourceSeries).toBe("jw:trending")
+    expect(
+      resolveRankingSource(
+        {
+          rankingSourceMovie: decoded?.rankingSourceMovie,
+          rankingSourceSeries: decoded?.rankingSourceSeries,
+        },
+        "movie",
+      ),
+    ).toEqual({ kind: "justwatch", mode: "popular" })
+    expect(
+      resolveRankingSource(
+        {
+          rankingSourceMovie: decoded?.rankingSourceMovie,
+          rankingSourceSeries: decoded?.rankingSourceSeries,
+        },
+        "series",
+      ),
+    ).toEqual({ kind: "justwatch", mode: "trending" })
+  })
+
   it("rejects overlong selection ids in the token schema", () => {
     const parsed = configTokenSchema.safeParse({
       globalBadges: true,
@@ -218,9 +290,10 @@ describe("compatibleRankingCustoms", () => {
     { id: "s", name: "S", type: "series", url: "https://mdblist.com/lists/u/s" },
     { id: "x", name: "X", type: "mixed", url: "https://mdblist.com/lists/u/x" },
     { id: "off", name: "Off", type: "movie", url: "https://mdblist.com/lists/u/off", enabled: false },
+    { id: "jw:popular", name: "Reserved", type: "movie", url: "https://mdblist.com/lists/u/res" },
   ]
 
-  it("keeps enabled type-compatible customs (mixed fits both)", () => {
+  it("keeps enabled type-compatible customs and excludes reserved builtin ids", () => {
     expect(compatibleRankingCustoms(customs, "movie").map((c) => c.id)).toEqual(["m", "x"])
     expect(compatibleRankingCustoms(customs, "series").map((c) => c.id)).toEqual(["s", "x"])
   })
@@ -237,6 +310,11 @@ describe("slotsReferencingCustom", () => {
     expect(slotsReferencingCustom("a", "b", "a")).toEqual(["movie"])
     expect(slotsReferencingCustom("", "b", "b")).toEqual(["series"])
     expect(slotsReferencingCustom("a", "b", "gone")).toEqual([])
+  })
+
+  it("never treats builtin ranking modes as deleted custom catalogs", () => {
+    expect(slotsReferencingCustom("jw:popular", "jw:trending", "jw:popular")).toEqual([])
+    expect(slotsReferencingCustom("jw:charts", "jw:popular", "jw:charts")).toEqual([])
   })
 })
 
