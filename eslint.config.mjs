@@ -49,12 +49,8 @@ const eslintConfig = defineConfig([
     // il proprio .next generato, che altrimenti verrebbe lintato (868 errori
     // dai tipi generati da Next).
     ".claude/**",
-    // Tooling locale .pi (estensioni agenti): non e' codice dell'app e non
-    // rispetta le regole eslint dell'app (require(), export anonimi). Come
-    // .claude/**, fuori dal lint -- altrimenti npm run verify fallisce.
-    ".pi/**",
     // Tooling locale .opencode (plugin + node_modules con test di terze
-    // parti): stesso motivo di .pi/** — vitest li raccoglie come suite del
+    // parti): non e' codice dell'app — vitest li raccoglie come suite del
     // repo e falliscono per dipendenze/env mancanti loro, non nostre.
     ".opencode/**",
     // Artefatti di audit/documentazione generati localmente

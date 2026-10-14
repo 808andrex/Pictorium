@@ -482,7 +482,10 @@ export function buildPreviewUrl(ps: PosterState, bp: BadgeParams, configToken?: 
   if (bp.networkLogoFollowTitle !== undefined) {
     params.push(`netFollow=${bp.networkLogoFollowTitle ? "1" : "0"}`)
   }
-  if (bp.preRelease) params.push("pre=1")
+  // SEMPRE esplicito in preview (come ribbon/cr/sep): senza, un default
+  // salvato ON scavalcerebbe il toggle editor (desync WYSIWYG) — la preview
+  // mostrerebbe il nastro Coming Soon anche a effetto spento.
+  params.push(`pre=${bp.preRelease ? "1" : "0"}`)
   // Fix M2: side viene emesso SEMPRE (left|right) — prima soltanto "right";
   // senza il parametro il server risolve dal mapping/config salvati (di
   // default right in modalità Stremio) e la preview rendeva a destra anche
@@ -658,6 +661,10 @@ export interface DefaultsPreviewParams {
    *  Emesso solo quando definito: default legacy = URL invariati. */
   defaultNetworkLogoFollowTitle?: boolean | null
   defaultRibbonEnabled?: boolean
+  /** Effetto pre-digitale di default portrait (default OFF): sempre esplicito
+   *  in preview. In preview landscape vince il profilo `landscape`
+   *  (`land ?? flat`, stessa regola della UI e del server). */
+  defaultPreRelease?: boolean
   defaultRibbonSide?: "left" | "right"
   defaultPosterShape?: PosterShape
   defaultLogoAlign?: "left" | "center" | null
@@ -892,6 +899,12 @@ export function buildDefaultsPreviewUrl(bp: DefaultsPreviewParams): string {
   params.push(`netLogo=${pick(land.networkLogo, bp.defaultNetworkLogo) !== false ? "1" : "0"}`)
   params.push(`netPos=${pick(land.networkLogoPosition ?? undefined, bp.defaultNetworkLogoPosition) === "top" ? "top" : "auto"}`)
   params.push(`ribbon=${pick(land.ribbonEnabled, bp.defaultRibbonEnabled) === false ? "0" : "1"}`)
+  // Effetto pre-digitale SEMPRE esplicito in preview (come ribbon/sep/cr):
+  // senza, un default salvato ON scavalcerebbe il toggle staged (desync
+  // WYSIWYG) — la preview mostrerebbe il nastro Coming Soon anche a effetto
+  // spento. Per-shape (`land ?? flat`, come UI e server): in landscape vince
+  // il profilo Orizzontale.
+  params.push(`pre=${pick(land.preRelease, bp.defaultPreRelease) ? "1" : "0"}`)
   const effPreviewSide = pick(land.ribbonSide, bp.defaultRibbonSide)
   if (effPreviewSide) params.push(`side=${effPreviewSide}`)
   params.push(`shape=${previewLandscape ? "landscape" : "poster"}`)

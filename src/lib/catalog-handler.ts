@@ -1042,9 +1042,8 @@ export async function pictoriumCatalog(
         // 100 unique when a genre filter applies at the tail), so the first
         // page of an indexed list costs zero /find calls and a late-tail
         // page never resolves all 500 rows. Direct tmdb ids dedupe with no
-        // I/O but keep source order and page-relative ranks.
+        // I/O but keep source order.
         const uniqueTarget = isCustomGenreFiltered ? 100 : skip + 20
-        const rankOffset = isCustomGenreFiltered ? 0 : skip
         const seenTmdb = new Set<number>()
         const uniqueResolved: typeof items = []
         const RESOLVE_STRIDE = 20
@@ -1115,7 +1114,7 @@ export async function pictoriumCatalog(
         // the row stays servable from list data — still flag incomplete so a
         // genre-less partial never freezes for an hour.
         let detailsTransientFailure = false
-        const results = await concurrentMap(pagedItems, async (item, idx) => {
+        const results = await concurrentMap(pagedItems, async (item) => {
           const tmdbId = Number(item.tmdb)
           if (!tmdbId) return null
           let details: TMDBDetails | null = null
@@ -1135,7 +1134,6 @@ export async function pictoriumCatalog(
             imdb: item.imdb,
             title,
             releaseInfo,
-            rank: rankOffset + idx + 1,
             genres: (details?.genres || []).map((g) => g.name).filter(Boolean),
             backdropPath: details?.backdrop_path ?? null,
             description: details?.overview ?? undefined,
@@ -1152,7 +1150,15 @@ export async function pictoriumCatalog(
           const enrichSignal = combineAbortSignals(customBudgetSignal, CATALOG_TMDB_TIMEOUT_MS)
           const [imdbId, posterAndShape, logo] = await Promise.all([
             r.imdb ? Promise.resolve(r.imdb) : resolveImdbId(stType === "movie" ? "movie" : "tv", r.tmdbId, apiKey, CATALOG_TMDB_TIMEOUT_MS, enrichSignal),
-            pictoriumPosterAndShape(req, stType, r.tmdbId, configParam, userParam, r.rank, posterLang, region.code, catalogId),
+            // No list-positional rank is injected here: the badge rank resolves
+            // live at render from the explicitly selected ranking source
+            // (JustWatch default, or a deliberately chosen custom list via the
+            // trendRank channel). Passing the list position as `animerank`
+            // made every imported list behave as its own ranking source and
+            // let it override the selected source (animeRank wins over
+            // trendRank in badge precedence). The anime catalog branch below
+            // keeps its genuine MDBList-chart `animerank`.
+            pictoriumPosterAndShape(req, stType, r.tmdbId, configParam, userParam, undefined, posterLang, region.code, catalogId),
             apiKey ? catalogLogo(stType === "movie" ? "movie" : "tv", r.tmdbId, apiKey, tmdbLang, customBudgetSignal) : Promise.resolve(undefined),
           ])
           const { poster, banner, landscapePoster, posterShape } = posterAndShape

@@ -511,7 +511,9 @@ describe("N5 fresh landscape defaults", () => {
     const p = lastPreviewParams()
     expect(p.get("shape")).toBe("poster")
     expect(p.get("bs")).toBe("shadow")
-    expect(p.get("pre")).toBeNull()
+    // Explicit OFF (not omitted): the portrait flat default is false, so the
+    // preview carries pre=0 and never inherits the landscape ON profile.
+    expect(p.get("pre")).toBe("0")
     // Portrait keeps the long-standing explicit flat formats.
     expect(p.get("formats")).toBe("hdr")
     expect(ed!.videoFormats).toEqual(["hdr"])

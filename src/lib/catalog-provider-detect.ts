@@ -98,37 +98,49 @@ export function detectCatalogProvider(input: string): ProviderDetectionResult | 
     }
   }
 
-  // 2b. Trakt Discovery "anticipated" (SOLO film, custom catalog):
-  // es. https://app.trakt.tv/discover/anticipated?mode=movie
-  // Host esatti come sopra. Il detect riconosce il path a prescindere dal
-  // mode così il fetch risponde con lo status tipizzato `unsupported`
-  // (rifiuto esplicito) invece di cadere nel fallback MDBList con un
-  // generico `empty`; solo mode=movie viene davvero scaricato (film-only,
-  // in linea con le definizioni catalogo film). Mode mancante/sconosciuto
-  // → mai default implicito, mai serie senza requirement: il salvataggio
-  // resta bloccato dalla preview senza titoli.
-  const traktAnticipatedMatch = trimmed.match(/^(?:https?:\/\/)?(?:www\.|app\.)?trakt\.tv\/discover\/anticipated\/?(?:[?#].*)?$/i)
-  if (traktAnticipatedMatch) {
-    return {
-      provider: "trakt",
-      nameSuggestion: "Trakt Anticipated Movies",
-      defaultType: "movie",
+  // 2b. Trakt Discovery (custom catalog): trending / anticipated / popular —
+  // es. https://app.trakt.tv/discover/trending?mode=movie (film),
+  // https://app.trakt.tv/discover/trending?mode=show (serie) o
+  // https://app.trakt.tv/discover/trending?mode=media (misti — vocabolo della
+  // webapp, `?mode=show|movie|media`).
+  // Host esatti come sopra. I mode canonici del sito sono `movie`, `show` e
+  // `media` (singolari — vocabolo API/media del sito, `type=show` nelle
+  // shareable image): il detect riconosce il path a prescindere dal mode
+  // così il fetch risponde con lo status tipizzato `unsupported` (rifiuto
+  // esplicito) invece di cadere nel fallback MDBList con un generico `empty`.
+  // Nome e tipo seguono il mode (`show` → serie, `media` → misto, tutto il
+  // resto → film come default storico); solo i mode canonici vengono davvero
+  // scaricati. Mode mancante/sconosciuto → mai default implicito di fetch,
+  // mai serie senza requirement: il salvataggio resta bloccato dalla preview
+  // senza titoli.
+  const traktDiscoveryMatch = trimmed.match(/^(?:https?:\/\/)?(?:www\.|app\.)?trakt\.tv\/discover\/(anticipated|trending|popular)\/?(?:[?#].*)?$/i)
+  if (traktDiscoveryMatch) {
+    const kind = traktDiscoveryMatch[1].toLowerCase()
+    const kindName = kind === "trending" ? "Trending" : kind === "anticipated" ? "Anticipated" : "Popular"
+    const modeParam = trimmed.match(/[?&]mode=([^&#]*)/i)?.[1] ?? ""
+    let mode = ""
+    try {
+      mode = decodeURIComponent(modeParam).toLowerCase()
+    } catch {
+      mode = ""
     }
-  }
-
-  // 2c. Trakt Discovery "trending" (SOLO film, custom catalog):
-  // es. https://app.trakt.tv/discover/trending?mode=movie
-  // Stesse garanzie di anticipated: il detect riconosce il path a prescindere
-  // dal mode così il fetch risponde con lo status tipizzato `unsupported`
-  // (rifiuto esplicito) invece di cadere nel fallback MDBList con un
-  // generico `empty`; solo mode=movie viene davvero scaricato (film-only).
-  // Mode mancante/sconosciuto → mai default implicito, mai serie senza
-  // requirement: il salvataggio resta bloccato dalla preview senza titoli.
-  const traktTrendingMatch = trimmed.match(/^(?:https?:\/\/)?(?:www\.|app\.)?trakt\.tv\/discover\/trending\/?(?:[?#].*)?$/i)
-  if (traktTrendingMatch) {
+    if (mode === "show") {
+      return {
+        provider: "trakt",
+        nameSuggestion: `Trakt ${kindName} Shows`,
+        defaultType: "series",
+      }
+    }
+    if (mode === "media") {
+      return {
+        provider: "trakt",
+        nameSuggestion: `Trakt ${kindName} Movies & Shows`,
+        defaultType: "mixed",
+      }
+    }
     return {
       provider: "trakt",
-      nameSuggestion: "Trakt Trending Movies",
+      nameSuggestion: `Trakt ${kindName} Movies`,
       defaultType: "movie",
     }
   }

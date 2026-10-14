@@ -84,20 +84,105 @@ interface TraktApiItem {
   episode?: { ids?: TraktApiIds }
 }
 
-/** Item di discovery Trakt "anticipated" (solo film, docs ufficiali):
- *  [{ list_count, movie: { ids, title, year } }] — niente `type`, l'ordine
- *  API è il ranking (più listati prima). */
-interface TraktAnticipatedItem {
-  list_count?: number
-  movie?: { ids?: TraktApiIds; title?: string; year?: number }
+/** Media record di discovery Trakt (film o serie, solo i campi che leggiamo). */
+interface TraktDiscoveryMedia {
+  ids?: TraktApiIds & { tvdb?: number | null }
+  title?: string
+  year?: number
 }
 
-/** Item di discovery Trakt "trending" (solo film, docs ufficiali
- *  GET /movies/trending): [{ watchers, movie: { ids, title, year } }] —
- *  niente `type`, l'ordine API è il ranking (più visti nelle 24h prima). */
-interface TraktTrendingItem {
+/**
+ * Item di discovery Trakt "wrapped" (docs ufficiali: trending
+ * `GET /movies/trending` e `/shows/trending` → `{ watchers, movie|show }`;
+ * anticipated `GET /movies/anticipated` e `/shows/anticipated` →
+ * `{ list_count, movie|show }`; media miste `GET /media/trending` e
+ * `/media/anticipated` → stessa forma wrapped con `movie` OPPURE `show`
+ * (required solo `watchers`/`list_count`, niente `type` — vedi
+ * developer.trakt.tv/openapi.json). Niente `type`, l'ordine API è il ranking
+ * (più visti/listati prima). Popular (`GET /movies/popular`,
+ * `/shows/popular`) restituisce invece record bare (il media stesso); la
+ * media mista `GET /media/popular` restituisce record bare interleaved
+ * (oneOf movie|show, required `[title, ids]`, niente wrapper né `type`).
+ */
+interface TraktWrappedDiscoveryItem {
   watchers?: number
-  movie?: { ids?: TraktApiIds; title?: string; year?: number }
+  list_count?: number
+  movie?: TraktDiscoveryMedia
+  show?: TraktDiscoveryMedia
+}
+
+type TraktDiscoveryKind = "anticipated" | "trending" | "popular"
+type TraktDiscoveryScope = "movies" | "shows" | "media"
+
+/**
+ * Chiave top-level presente solo nella variante movie dello schema ufficiale
+ * `GET /media/popular` (la variante show non la definisce): chiavi Optional
+ * in openapi.json — `?extended=full` richiesto ne migliora la presenza ma non
+ * la garantisce. Vedi developer.trakt.tv/openapi.json, oneOf movie|show di
+ * `getMediaPopular` (movie: `released`; show: `first_aired`, `aired_episodes`,
+ * `airs`, `network`, ...). Presenza, non valore: quando presente,
+ * `released: null` resta un marcatore movie esplicito; record senza alcun
+ * marcatore esclusivo restano ambigui e vengono scartati.
+ */
+const TRAKT_MEDIA_MOVIE_KEYS = ["released"] as const
+
+/**
+ * Chiavi top-level presenti solo nella variante show dello schema ufficiale
+ * `GET /media/popular` (la variante movie non le definisce): chiavi Optional
+ * in openapi.json — `?extended=full` richiesto ne migliora la presenza ma non
+ * la garantisce. Insieme alla presenza della chiave `tvdb` negli ids (la
+ * variante show la definisce nullable, quella movie non la definisce
+ * proprio), sono il marcatore show esplicito per i record bare misti — che
+ * non hanno wrapper né `type`. Presenza, non valore: quando presenti,
+ * `first_aired: null` o `tvdb: null` restano marcatori show espliciti;
+ * record senza alcun marcatore esclusivo restano ambigui e vengono scartati.
+ */
+const TRAKT_MEDIA_SHOW_KEYS = ["aired_episodes", "first_aired", "last_aired", "airs", "network"] as const
+
+function isRecordObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null
+}
+
+/**
+ * Classifica un record di discovery mista (`GET /media/<kind>`) nella forma
+ * ufficiale verificata, senza default impliciti:
+ * - trending/anticipated: solo wrapped `{ watchers|list_count, movie|show }`
+ *   con ESATTAMENTE una delle due chiavi (entrambe → ambiguo, nessuna →
+ *   mancante: scartato);
+ * - popular (richiesto con `?extended=full`, vedi fetchTraktDiscovery): solo
+ *   record bare `{ title, year, ids }` (un record con chiavi oggetto
+ *   `movie`/`show` non è bare → scartato, mai reinterpretato); movie se e
+ *   solo se compare la chiave solo-movie `released` (presenza, anche null)
+ *   SENZA alcun marcatore show; show se e solo se gli ids portano la chiave
+ *   `tvdb` (presenza, anche null) oppure compaiono chiavi top-level
+ *   solo-show, SENZA `released`. ENTRAMBE (movie+show) o NESSUNA → ambiguo,
+ *   scartato: un record minimale valido per schema (`{ title, ids }` senza
+ *   marcatori — la variante show richiede solo `[trakt, slug]`, `tvdb`
+ *   opzionale) non è mai classificato movie in silenzio.
+ * Ritorna null per ogni forma non ufficiale o ambigua: il caller scarta la
+ * voce invece di emettere mediatype inventati o id Trakt nudi.
+ */
+function classifyTraktMediaRecord(
+  kind: TraktDiscoveryKind,
+  record: Record<string, unknown>,
+): { media: TraktDiscoveryMedia; mediatype: "movie" | "tv" } | null {
+  const wrapped = record as unknown as TraktWrappedDiscoveryItem
+  const hasMovie = isRecordObject(wrapped.movie)
+  const hasShow = isRecordObject(wrapped.show)
+  if (kind === "popular") {
+    if (hasMovie || hasShow) return null
+    const ids = (record as unknown as TraktDiscoveryMedia).ids
+    if (!isRecordObject(ids)) return null
+    const movieMarked = TRAKT_MEDIA_MOVIE_KEYS.some((key) => key in record)
+    const showMarked =
+      "tvdb" in ids || TRAKT_MEDIA_SHOW_KEYS.some((key) => key in record)
+    if (movieMarked === showMarked) return null
+    const media = record as unknown as TraktDiscoveryMedia
+    return { media, mediatype: showMarked ? "tv" : "movie" }
+  }
+  if (hasMovie === hasShow) return null
+  if (hasMovie) return { media: wrapped.movie as TraktDiscoveryMedia, mediatype: "movie" }
+  return { media: wrapped.show as TraktDiscoveryMedia, mediatype: "tv" }
 }
 
 const TRAKT_TIMEOUT_MS = 8000
@@ -316,11 +401,16 @@ async function fetchTraktList(url: string, limit: number = 500, signal?: AbortSi
   const empty = (status: CatalogFetchStatus): UnifiedCatalogResult => ({ items: [], status })
   try {
     const trimmed = url.trim()
-    // Discovery "anticipated" film: https://app.trakt.tv/discover/anticipated?mode=movie
-    // (speculare al detect: solo mode=movie; mode mancante/altro → unsupported
-    // esplicito, mai default implicito né serie senza requirement).
-    const anticipatedMatch = trimmed.match(/^(?:https?:\/\/)?(?:www\.|app\.)?trakt\.tv\/discover\/anticipated\/?(?:[?#].*)?$/i)
-    if (anticipatedMatch) {
+    // Discovery trending/anticipated/popular (film, serie o misti):
+    // https://app.trakt.tv/discover/<kind>?mode=movie|show|media
+    // (speculare al detect: solo i mode canonici del sito — `movie`, `show`
+    // e `media` singolari; mode mancante/altro → unsupported esplicito, mai
+    // default implicito né fetch incrociato). I misti usano gli endpoint
+    // ufficiali `GET /media/<kind>` (singolo ranking upstream, mai
+    // concatenazione di movie+show).
+    const discoveryMatch = trimmed.match(/^(?:https?:\/\/)?(?:www\.|app\.)?trakt\.tv\/discover\/(anticipated|trending|popular)\/?(?:[?#].*)?$/i)
+    if (discoveryMatch) {
+      const kind = discoveryMatch[1].toLowerCase() as TraktDiscoveryKind
       let mode: string | null = null
       try {
         const urlObj = new URL(trimmed.startsWith("http") ? trimmed : `https://${trimmed}`)
@@ -328,29 +418,12 @@ async function fetchTraktList(url: string, limit: number = 500, signal?: AbortSi
       } catch {
         return empty("unsupported")
       }
-      if (mode?.toLowerCase() !== "movie") {
-        log.warn("Trakt anticipated mode not supported as custom catalog")
-        return empty("unsupported")
-      }
-      return fetchTraktAnticipated(limit, signal)
-    }
-    // Discovery "trending" film: https://app.trakt.tv/discover/trending?mode=movie
-    // (speculare ad anticipated: solo mode=movie; mode mancante/altro →
-    // unsupported esplicito, mai default implicito né serie senza requirement).
-    const trendingMatch = trimmed.match(/^(?:https?:\/\/)?(?:www\.|app\.)?trakt\.tv\/discover\/trending\/?(?:[?#].*)?$/i)
-    if (trendingMatch) {
-      let mode: string | null = null
-      try {
-        const urlObj = new URL(trimmed.startsWith("http") ? trimmed : `https://${trimmed}`)
-        mode = urlObj.searchParams.get("mode")
-      } catch {
-        return empty("unsupported")
-      }
-      if (mode?.toLowerCase() !== "movie") {
-        log.warn("Trakt trending mode not supported as custom catalog")
-        return empty("unsupported")
-      }
-      return fetchTraktTrending(limit, signal)
+      const normalized = mode?.toLowerCase()
+      if (normalized === "movie") return fetchTraktDiscovery(kind, "movies", limit, signal)
+      if (normalized === "show") return fetchTraktDiscovery(kind, "shows", limit, signal)
+      if (normalized === "media") return fetchTraktDiscovery(kind, "media", limit, signal)
+      log.warn(`Trakt ${kind} mode not supported as custom catalog`)
+      return empty("unsupported")
     }
     // Smart-list web view (es. .../lists/smart/view/films-...): l'ID web è
     // opaco — le docs ufficiali richiedono un integer id per GET /lists/{id}
@@ -597,17 +670,33 @@ async function fetchTraktStandardList(
 }
 
 /**
- * Scarica la discovery Trakt "most anticipated movies" tramite API ufficiale
- * Trakt v2 (`GET /movies/anticipated`, docs ufficiali): richiede la stessa
- * Client ID d'istanza delle liste (PICTORIUM_TRAKT_CLIENT_ID), niente OAuth.
- * Solo film: gli elementi sono `{ list_count, movie }` (niente `type`) e
- * l'ordine API è il ranking — preservato. Voci senza imdb/tmdb non sono
- * risolvibili dalla pipeline (mai id Trakt nudi) e vengono scartate.
+ * Scarica una discovery Trakt (trending/anticipated/popular; film, serie o
+ * misti) tramite API ufficiale Trakt v2 (`GET /movies|shows|media/<kind>`,
+ * docs ufficiali + developer.trakt.tv/openapi.json): richiede la stessa
+ * Client ID d'istanza delle liste (PICTORIUM_TRAKT_CLIENT_ID), niente OAuth
+ * (security: traktAPI da sola basta, OAuth opzionale). Forme ufficiali:
+ * trending e anticipated sono wrapped (`{ watchers|list_count, movie|show }`,
+ * niente `type` — anche gli endpoint misti `/media/...`, con una sola delle
+ * due chiavi); popular è bare (il record film/serie stesso) e la media mista
+ * `/media/popular` è bare interleaved (oneOf movie|show, niente wrapper né
+ * `type`, richiesta con `?extended=full` — SOLO lì, mai su movie/show né su
+ * trending/anticipated: il minimale `{ title, ids }` è ambiguo per schema,
+ * con full movie porta `released` e show porta `tvdb`/`first_aired`/...;
+ * entrambe o nessuna → ambiguo, scartato, mai default movie). L'ordine API è il ranking — preservato, mai concatenazioni.
+ * Voci senza imdb/tmdb (serie: anche tvdb) non sono risolvibili dalla
+ * pipeline (mai id Trakt nudi) e vengono scartate; voci ambigue o fuori forma
+ * ufficiale (entrambe/nessuna chiave wrapped, wrapper dentro popular,
+ * popular misto senza marcatore esclusivo o con entrambi) pure.
  * Stesse garanzie delle liste: paginazione limitata, abort → prefisso
  * parziale `incomplete` (mai long-cache), stessi status (key_missing,
  * private, not_found, rate_limited, unavailable).
  */
-async function fetchTraktAnticipated(limit: number = 500, signal?: AbortSignal): Promise<UnifiedCatalogResult> {
+async function fetchTraktDiscovery(
+  kind: TraktDiscoveryKind,
+  scope: TraktDiscoveryScope,
+  limit: number = 500,
+  signal?: AbortSignal,
+): Promise<UnifiedCatalogResult> {
   const empty = (status: CatalogFetchStatus): UnifiedCatalogResult => ({ items: [], status })
   const done = (items: MDBListEntry[], incomplete = false): UnifiedCatalogResult => ({
     items: items.slice(0, limit),
@@ -622,19 +711,23 @@ async function fetchTraktAnticipated(limit: number = 500, signal?: AbortSignal):
     }
 
     const base = traktApiBase()
-    const headers = {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-      "trakt-api-version": "2",
-      "trakt-api-key": clientId,
-      "User-Agent": "Mozilla/5.0 Pictorium",
-    }
+    const headers = traktHeaders(clientId)
+    const isMedia = scope === "media"
+    const mediatype = scope === "movies" ? "movie" : "tv"
+    const mediaKey = scope === "movies" ? "movie" : "show"
+    const endpointScope = isMedia ? "media" : scope
 
     const maxPages = Math.max(1, Math.min(25, Math.ceil(limit / TRAKT_PAGE_LIMIT)))
     const items: MDBListEntry[] = []
+    // La popular mista minimale è ambigua per schema (show senza `tvdb`
+    // ≡ movie): SOLO lì si chiede `extended=full` così i record portano i
+    // marcatori esclusivi (`released` vs `tvdb`/`first_aired`/...) e la
+    // classifica non inventa mai il tipo. Movie/show e trending/anticipated
+    // restano minimali (ordine e richieste invariati).
+    const extendedSuffix = isMedia && kind === "popular" ? "&extended=full" : ""
     for (let page = 1; page <= maxPages; page++) {
       if (signal?.aborted) return items.length ? done(items, true) : empty("unavailable")
-      const pageUrl = `${base}/movies/anticipated?page=${page}&limit=${TRAKT_PAGE_LIMIT}`
+      const pageUrl = `${base}/${endpointScope}/${kind}?page=${page}&limit=${TRAKT_PAGE_LIMIT}${extendedSuffix}`
       const res = await fetch(pageUrl, {
         headers,
         signal: combineAbortSignals(signal, TRAKT_TIMEOUT_MS),
@@ -642,11 +735,11 @@ async function fetchTraktAnticipated(limit: number = 500, signal?: AbortSignal):
 
       if (!res) return items.length ? done(items, true) : empty("unavailable")
       if (res.status === 401 || res.status === 403) {
-        log.warn("Trakt anticipated is private or forbidden", { status: res.status })
+        log.warn(`Trakt ${kind} is private or forbidden`, { status: res.status })
         return empty("private")
       }
       if (res.status === 404) {
-        log.warn("Trakt anticipated not found")
+        log.warn(`Trakt ${kind} not found`)
         return empty("not_found")
       }
       if (res.status === 429) {
@@ -655,7 +748,7 @@ async function fetchTraktAnticipated(limit: number = 500, signal?: AbortSignal):
         return empty("rate_limited")
       }
       if (!res.ok) {
-        log.warn("Trakt anticipated fetch failed", { status: res.status })
+        log.warn(`Trakt ${kind} fetch failed`, { status: res.status })
         return items.length ? done(items, true) : empty("unavailable")
       }
 
@@ -664,24 +757,43 @@ async function fetchTraktAnticipated(limit: number = 500, signal?: AbortSignal):
       // (es. error body) è una pagina fallita, non una coda vuota sana. Con
       // prefisso atterrato → partial incomplete (mai long-cache); senza righe
       // → transient.
-      const rawItems: TraktAnticipatedItem[] | null = Array.isArray(json)
-        ? (json as TraktAnticipatedItem[])
-        : null
+      const rawItems: unknown[] | null = Array.isArray(json) ? (json as unknown[]) : null
       if (rawItems === null) {
-        log.warn("Trakt anticipated page malformed", { page })
+        log.warn(`Trakt ${kind} page malformed`, { page })
         return items.length ? done(items, true) : empty("unavailable")
       }
       if (rawItems.length === 0) break
 
-      for (const it of rawItems) {
-        const media = it && typeof it === "object" ? it.movie : undefined
+      for (const raw of rawItems) {
+        const record = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : null
+        if (!record) continue
+        // Scope misto: il record si classifica da solo nella forma ufficiale
+        // (wrapped con una sola chiave per trending/anticipated, bare con
+        // marcatore esclusivo per popular con extended=full) — mai default
+        // a film, mai entrambe-le-chiavi/nessuna, mai wrapper dentro popular.
+        let media: TraktDiscoveryMedia | undefined
+        let entryType: "movie" | "tv" = mediatype
+        if (isMedia) {
+          const classified = classifyTraktMediaRecord(kind, record)
+          if (!classified) continue
+          media = classified.media
+          entryType = classified.mediatype
+        } else if (kind === "popular") {
+          // Popular film/serie: record bare (il media stesso); trending/
+          // anticipated: il media vive sotto la chiave movie|show.
+          media = record as unknown as TraktDiscoveryMedia
+        } else {
+          const wrapped = record as unknown as TraktWrappedDiscoveryItem
+          media = wrapped[mediaKey] ?? undefined
+        }
         const ids = media?.ids || {}
         const title = media?.title || ""
         const year = Number(media?.year) || 0
         const imdb = typeof ids.imdb === "string" ? ids.imdb : ""
         const tmdb = typeof ids.tmdb === "number" && Number.isFinite(ids.tmdb) ? ids.tmdb : undefined
-        if (imdb || tmdb) {
-          items.push({ imdb, tmdb, title, year, mediatype: "movie" })
+        const tvdb = typeof ids.tvdb === "number" && Number.isFinite(ids.tvdb) ? ids.tvdb : undefined
+        if (imdb || tmdb || tvdb) {
+          items.push({ imdb, tmdb, tvdb, title, year, mediatype: entryType })
         }
         if (items.length >= limit) break
       }
@@ -693,110 +805,7 @@ async function fetchTraktAnticipated(limit: number = 500, signal?: AbortSignal):
 
     return done(items)
   } catch (err) {
-    log.error("Error fetching Trakt anticipated", { error: (err as Error).message })
-    return empty("unavailable")
-  }
-}
-
-/**
- * Scarica la discovery Trakt "trending movies" tramite API ufficiale
- * Trakt v2 (`GET /movies/trending`, docs ufficiali: più visti nelle 24h
- * prima): richiede la stessa Client ID d'istanza delle liste
- * (PICTORIUM_TRAKT_CLIENT_ID), niente OAuth. Solo film: gli elementi sono
- * `{ watchers, movie }` (niente `type`) e l'ordine API è il ranking —
- * preservato. Voci senza imdb/tmdb non sono risolvibili dalla pipeline
- * (mai id Trakt nudi) e vengono scartate. Stesse garanzie di anticipated:
- * paginazione limitata, abort → prefisso parziale `incomplete` (mai
- * long-cache), stessi status (key_missing, private, not_found,
- * rate_limited, unavailable).
- */
-async function fetchTraktTrending(limit: number = 500, signal?: AbortSignal): Promise<UnifiedCatalogResult> {
-  const empty = (status: CatalogFetchStatus): UnifiedCatalogResult => ({ items: [], status })
-  const done = (items: MDBListEntry[], incomplete = false): UnifiedCatalogResult => ({
-    items: items.slice(0, limit),
-    status: items.length > 0 ? "ok" : "empty",
-    ...(incomplete ? { incomplete: true as const } : {}),
-  })
-  try {
-    const clientId = getTraktClientId()
-    if (!clientId) {
-      log.warn("Trakt client ID missing: set PICTORIUM_TRAKT_CLIENT_ID")
-      return empty("key_missing")
-    }
-
-    const base = traktApiBase()
-    const headers = {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-      "trakt-api-version": "2",
-      "trakt-api-key": clientId,
-      "User-Agent": "Mozilla/5.0 Pictorium",
-    }
-
-    const maxPages = Math.max(1, Math.min(25, Math.ceil(limit / TRAKT_PAGE_LIMIT)))
-    const items: MDBListEntry[] = []
-    for (let page = 1; page <= maxPages; page++) {
-      if (signal?.aborted) return items.length ? done(items, true) : empty("unavailable")
-      const pageUrl = `${base}/movies/trending?page=${page}&limit=${TRAKT_PAGE_LIMIT}`
-      const res = await fetch(pageUrl, {
-        headers,
-        signal: combineAbortSignals(signal, TRAKT_TIMEOUT_MS),
-      }).catch(() => null)
-
-      if (!res) return items.length ? done(items, true) : empty("unavailable")
-      if (res.status === 401 || res.status === 403) {
-        log.warn("Trakt trending is private or forbidden", { status: res.status })
-        return empty("private")
-      }
-      if (res.status === 404) {
-        log.warn("Trakt trending not found")
-        return empty("not_found")
-      }
-      if (res.status === 429) {
-        const retryAfter = res.headers?.get?.("Retry-After") ?? null
-        log.warn("Trakt rate limited", retryAfter ? { retryAfter } : {})
-        return empty("rate_limited")
-      }
-      if (!res.ok) {
-        log.warn("Trakt trending fetch failed", { status: res.status })
-        return items.length ? done(items, true) : empty("unavailable")
-      }
-
-      const json = await res.json().catch(() => null)
-      // Stessa validazione esplicita di anticipated: un 200 senza array
-      // top-level (es. error body) è una pagina fallita, non una coda vuota
-      // sana. Con prefisso atterrato → partial incomplete (mai long-cache);
-      // senza righe → transient.
-      const rawItems: TraktTrendingItem[] | null = Array.isArray(json)
-        ? (json as TraktTrendingItem[])
-        : null
-      if (rawItems === null) {
-        log.warn("Trakt trending page malformed", { page })
-        return items.length ? done(items, true) : empty("unavailable")
-      }
-      if (rawItems.length === 0) break
-
-      for (const it of rawItems) {
-        const media = it && typeof it === "object" ? it.movie : undefined
-        const ids = media?.ids || {}
-        const title = media?.title || ""
-        const year = Number(media?.year) || 0
-        const imdb = typeof ids.imdb === "string" ? ids.imdb : ""
-        const tmdb = typeof ids.tmdb === "number" && Number.isFinite(ids.tmdb) ? ids.tmdb : undefined
-        if (imdb || tmdb) {
-          items.push({ imdb, tmdb, title, year, mediatype: "movie" })
-        }
-        if (items.length >= limit) break
-      }
-      if (items.length >= limit) break
-      if (rawItems.length < TRAKT_PAGE_LIMIT) break
-      const pageCount = Number(res.headers?.get?.("X-Pagination-Page-Count"))
-      if (Number.isFinite(pageCount) && pageCount > 0 && page >= pageCount) break
-    }
-
-    return done(items)
-  } catch (err) {
-    log.error("Error fetching Trakt trending", { error: (err as Error).message })
+    log.error(`Error fetching Trakt ${kind}`, { error: (err as Error).message })
     return empty("unavailable")
   }
 }

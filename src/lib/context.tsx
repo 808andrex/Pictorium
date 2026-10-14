@@ -1217,7 +1217,7 @@ export function usePictorium(): PictoriumCtx {
       separateRatingsStyle: defaultSeparateRatingsStyle,
       posterLayout: defaultPosterLayout,
       posterFreshScope: defaultPosterFreshScope,
-      networkLogo: defaultNetworkLogo, networkLogoPosition: defaultNetworkLogoPosition, networkLogoFollowTitle: defaultNetworkLogoFollowTitle, ribbonSide: defaultRibbonSide, ribbonEnabled: defaultRibbonEnabled, posterShape: defaultPosterShape,
+      networkLogo: defaultNetworkLogo, networkLogoPosition: defaultNetworkLogoPosition, networkLogoFollowTitle: defaultNetworkLogoFollowTitle, preRelease: defaultPreRelease, ribbonSide: defaultRibbonSide, ribbonEnabled: defaultRibbonEnabled, posterShape: defaultPosterShape,
       logoAlign: defaultLogoAlign, gradientHeight: defaultGradientHeight, blurIntensity: defaultBlurIntensity,
       tintStrength: defaultTintStrength, topShade: defaultTopShade, blurFade: defaultBlurFade, blurDarkness: defaultBlurDarkness,
       blurEnabled: defaultBlurEnabled, topBadgeScale: defaultTopBadgeScale, topBadgeOffsetX: defaultTopBadgeOffsetX,
@@ -1330,6 +1330,19 @@ export function usePictorium(): PictoriumCtx {
       }
     }
     if (changed("ribbonSide")) setRibbonSide(cur.ribbonSide as RibbonSide)
+    // Coming Soon live (unmapped title only, like the other defaults):
+    // portrait follows the flat; landscape follows the effective profile
+    // (`land ?? flat`, same rule as the open path) — a flat edit under an
+    // owned profile resolves back to the profile (harmless no-op, never a
+    // clobber); profile edits arrive via the landscape block below.
+    if (changed("preRelease")) {
+      const curLandRec = (cur.landscape ?? {}) as Record<string, unknown>
+      setPreRelease(
+        posterShape === "landscape"
+          ? ((curLandRec.preRelease as boolean | undefined) ?? (cur.preRelease as boolean))
+          : (cur.preRelease as boolean),
+      )
+    }
     if (changed("ribbonEnabled")) setRibbonEnabled(cur.ribbonEnabled as boolean)
     if (changed("posterShape") || changed("logoAlign")) {
       if (changed("posterShape")) setPosterShape(cur.posterShape as PosterShape)
@@ -1407,6 +1420,10 @@ export function usePictorium(): PictoriumCtx {
         // path. Absent profile key = follow the flat default.
         if (landKeyChanged("posterLayout")) setPosterLayout((eff("posterLayout", defaultPosterLayout) ?? "standard") as PosterLayout)
         if (landKeyChanged("posterFreshScope")) setPosterFreshScope((eff("posterFreshScope", defaultPosterFreshScope) ?? DEFAULT_POSTER_FRESH_SCOPE) as PosterFreshScope)
+        // Coming Soon landscape profile (unmapped title only): the open
+        // poster follows `land ?? flat`, same rule as the server and the open
+        // path. Absent profile key = follow the flat default.
+        if (landKeyChanged("preRelease")) setPreRelease(eff("preRelease", defaultPreRelease) as boolean)
         // Task 3B2: standalone extra + logo alignment follow the landscape
         // profile live (unmapped title only). Owned `null` extra = follow own
         // rank (never the portrait flat); deleted key = follow the flat.

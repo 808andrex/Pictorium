@@ -96,6 +96,7 @@ interface DefaultsPosterPreviewProps {
     defaultNetworkLogo: boolean
     defaultNetworkLogoPosition: import("@/lib/types").NetworkLogoPosition
     defaultNetworkLogoFollowTitle: boolean | null
+    defaultPreRelease: boolean
     defaultRibbonEnabled: boolean
     defaultRibbonSide: "left" | "right"
     defaultPosterShape: import("@/lib/types").PosterShape
@@ -257,6 +258,7 @@ export function buildDefaultsPreviewUrlFromEditor(
       defaultNetworkLogo: ed.defaultNetworkLogo,
       defaultNetworkLogoPosition: ed.defaultNetworkLogoPosition,
       defaultNetworkLogoFollowTitle: ed.defaultNetworkLogoFollowTitle,
+      defaultPreRelease: ed.defaultPreRelease,
       defaultRibbonEnabled: ed.defaultRibbonEnabled,
       defaultRibbonSide: ed.defaultRibbonSide,
       defaultPosterShape: ed.defaultPosterShape,
@@ -378,6 +380,7 @@ export function DefaultsPosterPreview({ compact, floating, suspended, previewSha
     ed.defaultNetworkLogo,
     ed.defaultNetworkLogoPosition,
     ed.defaultNetworkLogoFollowTitle,
+    ed.defaultPreRelease,
     ed.defaultRibbonEnabled,
     ed.defaultRibbonSide,
     ed.defaultPosterShape,

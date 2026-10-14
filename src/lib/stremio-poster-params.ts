@@ -338,6 +338,10 @@ export function buildStremioPosterSearchParams(input: StremioPosterParamsInput):
     // preview manda ON esplicito — emetti sempre esplicito (ON e OFF).
     params.set("badges", globalBadges ? "1" : "0")
     params.set("ranking", rankingBadges ? "1" : "0")
+    // Effetto pre-digitale sempre esplicito con token (come badges/ranking
+    // sopra): un OFF omesso erediterebbe un master ON del token invece del
+    // default effettivo passato qui — e la preview esplicita divergerebbe.
+    params.set("pre", input.preRelease ? "1" : "0")
   } else {
     if (!globalBadges) params.set("badges", "0")
     if (!rankingBadges) params.set("ranking", "0")
