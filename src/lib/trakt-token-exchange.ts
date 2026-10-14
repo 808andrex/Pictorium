@@ -25,15 +25,19 @@
  * callback used to drop (now persisted by the coordinated save).
  *
  * All POSTs are bounded (live-read `TRAKT_TIMEOUT_MS`, clamped like
- * `KV_COMMAND_TIMEOUT_MS`), send the client ID in the JSON body only (never
- * the URL), and never log bodies (status code at most). The official token
- * API base honors the existing `TRAKT_API_URL` test override convention
+ * `KV_COMMAND_TIMEOUT_MS`), send the client ID in the JSON body plus the
+ * required `trakt-api-key` header (never the URL), and never log bodies
+ * (status code at most). The official token API base honors the existing `TRAKT_API_URL` test override convention
  * (same as the public-list client); the authorize host stays fixed.
  */
 import { envWithFallback } from "@/lib/env-compat"
 import { createLogger } from "@/lib/logger"
+import { APP_VERSION } from "@/generated/app-version"
 
 const log = createLogger("trakt-token-exchange")
+
+/** Outbound app identity (canonical `Pictorium/<version>` pattern, same as simkl.ts). */
+const TRAKT_OAUTH_USER_AGENT = `Pictorium/${APP_VERSION}`
 
 /** Deployment OAuth client (structural: matches `TraktOAuthConfig` without importing it). */
 export interface TraktOAuthClient {
@@ -139,13 +143,31 @@ async function isInvalidGrant(res: Response): Promise<boolean> {
   }
 }
 
-async function postTokenFormWithGrantCheck(body: Record<string, string>): Promise<TraktTokenResponse> {
+/**
+ * Required headers for every Trakt `/oauth/*` POST (per the official
+ * required-headers guide): JSON content type, app/version User-Agent,
+ * API version 2, and the caller config client ID as `trakt-api-key`
+ * (the same bundle that lets the token request past the edge). The
+ * client ID comes from the caller's config — never re-read from env —
+ * so test overrides and per-request config stay authoritative. No
+ * Authorization header here: these calls are secretless by design.
+ */
+function traktOAuthHeaders(clientId: string): Record<string, string> {
+  return {
+    "Content-Type": "application/json",
+    "User-Agent": TRAKT_OAUTH_USER_AGENT,
+    "trakt-api-version": "2",
+    "trakt-api-key": clientId,
+  }
+}
+
+async function postTokenFormWithGrantCheck(body: Record<string, string>, clientId: string): Promise<TraktTokenResponse> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), traktTokenTimeoutMs())
   try {
     const res = await fetch(`${traktOAuthBase()}/oauth/token`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: traktOAuthHeaders(clientId),
       body: JSON.stringify(body),
       signal: controller.signal,
     })
@@ -194,13 +216,16 @@ export async function exchangeTraktCode(
   code: string,
   verifier: string,
 ): Promise<TraktTokenResponse> {
-  return postTokenFormWithGrantCheck({
-    code,
-    client_id: config.clientId,
-    redirect_uri: config.redirectUri,
-    grant_type: "authorization_code",
-    code_verifier: checkCodeVerifier(verifier),
-  })
+  return postTokenFormWithGrantCheck(
+    {
+      code,
+      client_id: config.clientId,
+      redirect_uri: config.redirectUri,
+      grant_type: "authorization_code",
+      code_verifier: checkCodeVerifier(verifier),
+    },
+    config.clientId,
+  )
 }
 
 /**
@@ -228,12 +253,15 @@ export async function refreshTraktToken(
   refreshToken: string,
   redirectUri: string | null,
 ): Promise<TraktTokenResponse> {
-  return postTokenFormWithGrantCheck({
-    refresh_token: refreshToken,
-    client_id: config.clientId,
-    redirect_uri: redirectUri ?? config.redirectUri,
-    grant_type: "refresh_token",
-  })
+  return postTokenFormWithGrantCheck(
+    {
+      refresh_token: refreshToken,
+      client_id: config.clientId,
+      redirect_uri: redirectUri ?? config.redirectUri,
+      grant_type: "refresh_token",
+    },
+    config.clientId,
+  )
 }
 
 /**
@@ -261,7 +289,7 @@ export async function revokeTraktToken(
   try {
     const res = await fetch(`${traktOAuthBase()}/oauth/revoke`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: traktOAuthHeaders(config.clientId),
       body: JSON.stringify({ token, client_id: config.clientId }),
       signal: controller.signal,
     })

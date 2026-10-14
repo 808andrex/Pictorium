@@ -433,31 +433,34 @@ describe("portrait: every seed stages the identical Full look", () => {
     expect(screen.getByTestId("settings-save")).toBeDisabled()
   })
 
-  it("all four portrait PUT bodies agree on every Full pixel (landscape frozen per seed)", async () => {
+  it(
+    "all four portrait PUT bodies agree on every Full pixel (landscape frozen per seed)",
+    // Bounded per-test budget only (assertions unchanged): 8 sequential full
+    // SettingsPanel mounts measured 1394ms isolated but 5688ms past the 5s
+    // default in the full 535-file suite from worker scheduling inflation.
+    // A single 4-mount pass collects the pre-click thumb alongside the PUT
+    // body (same seed, same mount, same pre-click read the dropped second
+    // pass performed; the per-seed cases above prove the click cannot move
+    // the Full thumb). Missing-element findBy* still rejects at ~1s, so real
+    // failures keep failing fast.
+    { timeout: 10_000 },
+    async () => {
     vi.useRealTimers()
     const bodies: Record<string, Record<string, unknown>> = {}
+    const thumbs: string[] = []
     for (const { name, seed } of PORTRAIT_SEEDS) {
       localStorage.clear()
       puts = []
       seed()
       const { unmount } = renderPanel()
       await screen.findByTestId("poster-style-full")
+      thumbs.push(thumbIdentity(fullThumb()))
       fireEvent.click(screen.getByTestId("poster-style-full"))
       openPresetTab()
       fireEvent.click(screen.getByTestId("settings-save"))
       await screen.findByText("ui.synced")
       expect(puts).toHaveLength(1)
       bodies[name] = puts[0].body
-      unmount()
-      cleanup()
-    }
-    const thumbs: string[] = []
-    for (const { seed } of PORTRAIT_SEEDS) {
-      localStorage.clear()
-      seed()
-      const { unmount } = renderPanel()
-      await screen.findByTestId("poster-style-full")
-      thumbs.push(thumbIdentity(fullThumb()))
       unmount()
       cleanup()
     }
@@ -474,7 +477,8 @@ describe("portrait: every seed stages the identical Full look", () => {
     for (const { name } of PORTRAIT_SEEDS) {
       expect(snapshotIdentity(stripLandscape(bodies[name]) as Record<string, unknown>), `Full recipe identical after ${name}`).toBe(canon)
     }
-  })
+    },
+  )
 })
 
 describe("landscape: every seed stages the identical Full profile", () => {
