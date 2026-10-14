@@ -31,7 +31,7 @@ npx playwright install chromium     # first time
 npx playwright test e2e/pictorium-visual.spec.ts    # UI and poster visual regression
 npx playwright test e2e/pictorium-parity.spec.ts    # preview vs mapped Stremio parity
 npx playwright test e2e/pictorium-smoke.spec.ts     # functional smoke
-npx playwright test e2e/            # everything
+npx playwright test e2e/ --workers=1   # everything (full serial suite)
 npm run e2e:ui                      # Playwright UI runner
 ```
 
@@ -60,10 +60,11 @@ Scheduling is defined ONLY by `AGENTS.md` → Verification Strategy: run the
 full batch before push/integration, not at intermediate commits or chat closure. During work, run only the narrow relevant
 tests; do not run the full gate for micro-tasks or intermediate refactors. For
 docs-only tasks (no code/render/deps/config changes), static read + `git diff` is
-sufficient. Do not repeat the full gate before push if the exact code/config/lock/render-asset
-state is already verified with a recorded success; any change invalidates it — rerun the
-affected narrow tests and the final full gate before push. CI never replaces local gates.
-Run the full serial E2E (`npx playwright test e2e/`) only for broad UI/contract changes or
+sufficient. Do not repeat a green gate on identical inputs (same code/config/lockfile/render-asset
+state with a recorded success); invalidation is per-input dependent gate only — see
+`AGENTS.md` → Verification Strategy. A change reruns only its dependent gates plus the
+final batch when production inputs require it, never all gates for any change. CI never replaces local gates.
+Run the full serial E2E (`npx playwright test e2e/ --workers=1`) only for broad UI/contract changes or
 before integration, not for every badge edit. On failure: narrow first, understand root cause,
 max 3 focused attempts, never skip/weaken tests; rerun the final full gate after fix when needed.
 Implementation-ready without gate is `verification pending`, not verified.

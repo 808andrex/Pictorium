@@ -3,11 +3,15 @@
 > **Source of truth.** This file is the canonical map of every visual render parameter
 > in Pictorium. The client preview is a single `<img src={previewUrl}>` that loads
 > `/api/poster/{type}/{id}` — the same endpoint used by Stremio. There is no
-> duplication: preview = final poster. When this file and the code disagree,
-> **CODE WINS** — update this file.
+> duplication: preview = final poster. When this file and the code disagree on
+> current behavior, **CODE WINS** — update this file. Vale solo per la
+> descrizione fattuale del comportamento attuale rispetto a documentazione
+> obsoleta: mai su requisiti utente, contratti pubblici o policy di sicurezza.
 
-When you modify a visual render parameter in one file, update its server counterpart
-(or vice versa). The `poster-sync` skill drives this workflow end-to-end.
+Quando modifichi un parametro di resa visiva, ispeziona l'implementazione
+condivisa e i consumer interessati (URL client e lato server) e aggiorna solo
+quelli toccati — mai edit speculari forzati su entrambi i lati per cambi
+solo-server al renderer condiviso. Lo skill `poster-sync` guida il workflow.
 
 ## Livelli di design: Contenuto vs Chrome
 

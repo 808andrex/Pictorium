@@ -1,11 +1,12 @@
 ---
 name: poster-sync
 description: >
-  Synchronize client/server visual render parameters in Pictorium. Every visual
-  render parameter (badges, ranking, gradient, blur, logo, accent) has a client
-  counterpart in the preview (EditView, context, poster-url) and a server
-  counterpart in the poster route (route.ts, svg-badge.ts, badges.ts). When one
-  side changes, the other MUST change too or the WYSIWYG preview diverges from
+  Synchronize client/server visual render parameters in Pictorium. The poster is
+  served by a single shared renderer (`/api/poster/{type}/{id}`): parameters
+  that travel in the preview URL have a client counterpart (EditView, context,
+  poster-url) and a server counterpart (route.ts, svg-badge.ts, badges.ts).
+  When one side of such a pair changes, inspect the shared implementation and
+  update only the affected consumers so the WYSIWYG preview stays aligned with
   the Stremio poster. Also handles RENDER_VERSION regeneration and the visual
   regression check. Trigger: "sync render params", "update badge style",
   "modifica parametro di resa", "change gradient/logo/blur/ranking", or any edit
@@ -28,10 +29,14 @@ paddings/gaps, accent color extraction, ribbon side, overflow protection formula
 ## Sync checklist (do ALL of these)
 
 1. **Locate the server counterpart.** Grep the parameter name across `src/lib/*.ts`
-   and `src/app/api/poster/[type]/[id]/route.ts`. Every server-side constant has a
-   matching client-side usage or query param. The canonical param map lives in
+   and `src/app/api/poster/[type]/[id]/route.ts`. Server-side-only constants in
+   the shared renderer may have no client-side usage or query param — inspect
+   the shared implementation and the client URL/server consumers, and update
+   only the affected consumers. The canonical param map lives in
    `.agents/render-params.md` (URL query params + badge geometry tables).
-   When docs and code disagree, CODE WINS — update `.agents/render-params.md`.
+   When descriptive docs and code disagree on current behavior, CODE WINS —
+   update `.agents/render-params.md`. It never overrides user requirements,
+   public contracts, or security policies.
 
 2. **Shared geometry lives in shared modules.** If the change is geometry (logo box,
    badge dims, text flow), the function likely already exists in `src/lib/logo-layout.ts`
@@ -81,7 +86,8 @@ server anymore. Do not reintroduce them.
 
 - Never edit `src/lib/render-version.ts` by hand.
 - Never duplicate a shared geometry formula in client and server.
-- Never change one side of a param pair without the other.
+- Never change one side of a param pair without checking the other; server-only
+  shared-renderer changes need no mirrored client edit.
 - After any render-affecting change, the final visual pass is required before
   push/integration. Scheduling is defined by `AGENTS.md Verification Strategy`;
   visual during work is only for requested diagnosis or demonstrated need.
