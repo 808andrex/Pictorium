@@ -25,6 +25,7 @@ const InstallModal = dynamic(() => import("@/components/InstallModal").then((m) 
 const OnboardingTour = dynamic(() => import("@/components/OnboardingTour").then((m) => m.OnboardingTour), { ssr: false })
 const PinLockModal = dynamic(() => import("@/components/PinLockModal").then((m) => m.PinLockModal), { ssr: false })
 const UserUnlockModal = dynamic(() => import("@/components/UserUnlockModal").then((m) => m.UserUnlockModal), { ssr: false })
+const TraktCallbackNotice = dynamic(() => import("@/components/TraktCallbackNotice").then((m) => m.TraktCallbackNotice), { ssr: false })
 
 export function AppShell() {
   const setSettingsOpen = usePSelector((v) => v.setSettingsOpen)
@@ -480,6 +481,8 @@ export function AppShell() {
     )}
     {/* Sblocco proprietario multi-user (solo path /u/<uuid>, vedi componente) */}
     <UserUnlockModal />
+    {/* Esito OAuth Trakt (?trakt=connected|denied|failed): toast + pulizia query + tab Spazio */}
+    <TraktCallbackNotice />
     </>
   )
 }

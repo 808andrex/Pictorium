@@ -1063,5 +1063,22 @@
   "ui.activateInInformationHint": "Activa {name} en Información para darle estilo aquí.",
   "ui.activateInTabHint": "Activa {name} en {tab} para ajustar aquí tamaño y posición.",
   "ui.badgePriorityOrderHint": "Solo orden — activa las categorías en Información.",
-  "ui.logoAlignPortraitHint": "Los retratos siempre quedan centrados"
+  "ui.logoAlignPortraitHint": "Los retratos siempre quedan centrados",
+  "ui.customErrTraktReconnect": "Se necesita conexión con Trakt: vuelve a conectar tu cuenta de Trakt en Ajustes e inténtalo de nuevo.",
+  "ui.customErrTemporary": "Trakt no está disponible temporalmente, inténtalo de nuevo en breve.",
+  "ui.traktTitle": "Cuenta de Trakt",
+  "ui.traktDesc": "Conecta tu cuenta de Trakt para importar tu watchlist y tus listas estándar privadas como catálogos personalizados. Solo lectura: Pictorium nunca escribe en Trakt ni lee tu historial. Las Smart Lists no son compatibles.",
+  "ui.traktConnect": "Conectar con Trakt",
+  "ui.traktDisconnect": "Desconectar",
+  "ui.traktConnected": "Conectado",
+  "ui.traktDisconnected": "No conectado",
+  "ui.traktUnavailable": "Trakt no está disponible temporalmente; inténtalo de nuevo en breve.",
+  "ui.traktNotConfigured": "El inicio de sesión con Trakt no está configurado en esta instancia: el operador debe establecer el client ID de Trakt y la URI de redirección.",
+  "ui.traktLockedHint": "Inicia sesión en tu espacio para gestionar la conexión con Trakt.",
+  "ui.traktConnError": "Error de conexión.",
+  "ui.traktDisconnectOk": "Trakt desconectado.",
+  "ui.traktCallbackConnected": "¡Trakt conectado!",
+  "ui.traktCallbackDenied": "Autorización de Trakt denegada.",
+  "ui.traktCallbackFailed": "Conexión con Trakt fallida; inténtalo de nuevo.",
+  "ui.customTraktConnect": "Conectar Trakt en Ajustes"
 }

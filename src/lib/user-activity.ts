@@ -201,7 +201,7 @@ async function listUsersKv(): Promise<UserInfo[]> {
 
 // ── Wipe account (GDPR) ───────────────────────────────────────────────────
 
-const USER_KV_KEYS = ["auth", "keys", "activity"] as const
+const USER_KV_KEYS = ["auth", "keys", "activity", "trakt"] as const
 
 /** Cancella integralmente un namespace (dati + epoch). Ritorna i byte liberati (file) o -1 (KV). */
 export async function deleteUser(userId: string): Promise<number> {
@@ -213,33 +213,72 @@ export async function deleteUser(userId: string): Promise<number> {
   __evictUserStoreCache(userId)
   __evictUserDefaultsCache(userId)
   __evictUserEpochCache(userId)
-  if (isKvMode()) {
-    const kv = getKv()
-    const keys = [
-      ...USER_KV_KEYS.map((k) => `user:${userId}:${k}`),
-      `mappings:${userId}`,
-      `defaults:${userId}`,
-      `catalog_epoch:${userId}`,
-    ]
-    for (const k of keys) {
-      try {
-        await kv.del(k)
-      } catch (e) {
-        log.warn("user wipe KV del failed", { error: e instanceof Error ? e.message : String(e) })
+  // Task 3 fencing: bump the Trakt generation FIRST so an in-flight
+  // callback exchange or refresh save (which captured the old generation
+  // before its network round-trip) aborts at the storage boundary instead
+  // of recreating the namespace. Then serialize the actual deletes under
+  // the profile lock when free (best-effort: contention or a lock outage
+  // must never fail the wipe — fencing already protects the writers).
+  const { acquireTraktProfileLock, bumpTraktGeneration, clearTraktGeneration } = await import(
+    "@/lib/trakt-profile-lock"
+  )
+  try {
+    await bumpTraktGeneration(userId)
+  } catch (e) {
+    log.warn("user wipe trakt fence failed (best-effort)", { error: e instanceof Error ? e.message : String(e) })
+  }
+  let traktLock: { release(): Promise<void> } | null = null
+  try {
+    traktLock = await acquireTraktProfileLock(userId, { waitMs: 5000 })
+  } catch {
+    traktLock = null
+  }
+  try {
+    if (isKvMode()) {
+      const kv = getKv()
+      const keys = [
+        ...USER_KV_KEYS.map((k) => `user:${userId}:${k}`),
+        `user:${userId}:trakt:gen`,
+        // NOTE: the lock key (`user:<uuid>:trakt:lock`) is deliberately NOT
+        // deleted: it may be held by a live refresh worker, and deleting
+        // another holder's mutex lets two writers coexist. The orphaned key
+        // holds no tokens and expires via its server-side TTL.
+        `mappings:${userId}`,
+        `defaults:${userId}`,
+        `catalog_epoch:${userId}`,
+      ]
+      for (const k of keys) {
+        try {
+          await kv.del(k)
+        } catch (e) {
+          log.warn("user wipe KV del failed", { error: e instanceof Error ? e.message : String(e) })
+        }
       }
+      lastTouch.delete(userId)
+      expireUserCache(userId)
+      log.info("User wiped", { uuid: userId })
+      return -1
     }
+    const dir = userDir(userId)
+    const bytes = await userDirBytes(dir)
+    await fsp.rm(dir, { recursive: true, force: true })
+    // Generation sidecar lives inside the namespace: already removed with it
+    // (GDPR-clean, no tombstone). Lock files live OUTSIDE the namespace and
+    // are deliberately LEFT ALONE: unlinking them under a running service
+    // could destroy a live refresh worker's mutex (two writers coexist).
+    // Orphaned lock files hold no tokens; file-mode orphans are removed by
+    // the documented manual procedure (service stopped), KV orphans expire
+    // via TTL. A post-wipe save is still stopped by the existence check +
+    // the no-mkdir write rule (same-UUID recreation is impossible in
+    // practice — createUser mints a fresh randomUUID).
+    await clearTraktGeneration(userId)
     lastTouch.delete(userId)
     expireUserCache(userId)
     log.info("User wiped", { uuid: userId })
-    return -1
+    return bytes
+  } finally {
+    if (traktLock) await traktLock.release()
   }
-  const dir = userDir(userId)
-  const bytes = await userDirBytes(dir)
-  await fsp.rm(dir, { recursive: true, force: true })
-  lastTouch.delete(userId)
-  expireUserCache(userId)
-  log.info("User wiped", { uuid: userId })
-  return bytes
 }
 
 /**

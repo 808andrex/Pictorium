@@ -1063,5 +1063,22 @@
   "ui.activateInInformationHint": "Bật {name} trong Thông tin để tạo kiểu tại đây.",
   "ui.activateInTabHint": "Bật {name} trong {tab} để chỉnh kích thước và vị trí tại đây.",
   "ui.badgePriorityOrderHint": "Chỉ thứ tự — bật/tắt danh mục trong Thông tin.",
-  "ui.logoAlignPortraitHint": "Áp phích dọc luôn căn giữa"
+  "ui.logoAlignPortraitHint": "Áp phích dọc luôn căn giữa",
+  "ui.customErrTraktReconnect": "Trakt connection required: reconnect your Trakt account in Settings, then retry.",
+  "ui.customErrTemporary": "Trakt is temporarily unavailable, try again shortly.",
+  "ui.traktTitle": "Trakt account",
+  "ui.traktDesc": "Connect your Trakt account to import your watchlist and private standard lists as custom catalogs. Read-only: Pictorium never writes to Trakt, never reads your history. Smart Lists are not supported.",
+  "ui.traktConnect": "Connect with Trakt",
+  "ui.traktDisconnect": "Disconnect",
+  "ui.traktConnected": "Connected",
+  "ui.traktDisconnected": "Not connected",
+  "ui.traktUnavailable": "Trakt is temporarily unavailable — try again shortly.",
+  "ui.traktNotConfigured": "Trakt login is not configured on this instance: the operator must set the Trakt client ID and redirect URI.",
+  "ui.traktLockedHint": "Sign in to your space to manage the Trakt connection.",
+  "ui.traktConnError": "Connection error.",
+  "ui.traktDisconnectOk": "Trakt disconnected.",
+  "ui.traktCallbackConnected": "Trakt connected!",
+  "ui.traktCallbackDenied": "Trakt authorization was denied.",
+  "ui.traktCallbackFailed": "Trakt connection failed — try again.",
+  "ui.customTraktConnect": "Connect Trakt in Settings"
 }

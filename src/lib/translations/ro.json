@@ -1063,5 +1063,22 @@
   "ui.activateInInformationHint": "Activează {name} în Informații pentru a-i stabili stilul aici.",
   "ui.activateInTabHint": "Activează {name} în {tab} pentru a-i ajusta dimensiunea și poziția aici.",
   "ui.badgePriorityOrderHint": "Doar ordinea — comută categoriile în Informații.",
-  "ui.logoAlignPortraitHint": "Portretele rămân mereu centrate"
+  "ui.logoAlignPortraitHint": "Portretele rămân mereu centrate",
+  "ui.customErrTraktReconnect": "Conexiune Trakt necesară: reconectează-ți contul Trakt în Setări, apoi încearcă din nou.",
+  "ui.customErrTemporary": "Trakt este temporar indisponibil, încearcă din nou în scurt timp.",
+  "ui.traktTitle": "Cont Trakt",
+  "ui.traktDesc": "Conectează-ți contul Trakt pentru a importa lista de vizionat și listele standard private ca cataloage personalizate. Doar citire: Pictorium nu scrie niciodată în Trakt și nu îți citește istoricul. Listele Smart nu sunt acceptate.",
+  "ui.traktConnect": "Conectează cu Trakt",
+  "ui.traktDisconnect": "Deconectează",
+  "ui.traktConnected": "Conectat",
+  "ui.traktDisconnected": "Neconectat",
+  "ui.traktUnavailable": "Trakt este temporar indisponibil — încearcă din nou în scurt timp.",
+  "ui.traktNotConfigured": "Autentificarea Trakt nu este configurată pe această instanță: operatorul trebuie să seteze ID-ul de client Trakt și URI-ul de redirect.",
+  "ui.traktLockedHint": "Conectează-te la spațiul tău pentru a gestiona conexiunea Trakt.",
+  "ui.traktConnError": "Eroare de conexiune.",
+  "ui.traktDisconnectOk": "Trakt deconectat.",
+  "ui.traktCallbackConnected": "Trakt conectat!",
+  "ui.traktCallbackDenied": "Autorizare Trakt refuzată.",
+  "ui.traktCallbackFailed": "Conexiunea Trakt a eșuat — încearcă din nou.",
+  "ui.customTraktConnect": "Conectează Trakt în Setări"
 }

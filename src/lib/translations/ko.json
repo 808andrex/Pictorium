@@ -1063,5 +1063,22 @@
   "ui.activateInInformationHint": "여기서 스타일을 지정하려면 정보에서 {name}을(를) 켜세요.",
   "ui.activateInTabHint": "여기서 크기와 위치를 조정하려면 {tab}에서 {name}을(를) 켜세요.",
   "ui.badgePriorityOrderHint": "순서만 — 카테고리 전환은 정보에서 하세요.",
-  "ui.logoAlignPortraitHint": "세로 포스터는 항상 가운데 정렬됩니다"
+  "ui.logoAlignPortraitHint": "세로 포스터는 항상 가운데 정렬됩니다",
+  "ui.customErrTraktReconnect": "Trakt connection required: reconnect your Trakt account in Settings, then retry.",
+  "ui.customErrTemporary": "Trakt is temporarily unavailable, try again shortly.",
+  "ui.traktTitle": "Trakt account",
+  "ui.traktDesc": "Connect your Trakt account to import your watchlist and private standard lists as custom catalogs. Read-only: Pictorium never writes to Trakt, never reads your history. Smart Lists are not supported.",
+  "ui.traktConnect": "Connect with Trakt",
+  "ui.traktDisconnect": "Disconnect",
+  "ui.traktConnected": "Connected",
+  "ui.traktDisconnected": "Not connected",
+  "ui.traktUnavailable": "Trakt is temporarily unavailable — try again shortly.",
+  "ui.traktNotConfigured": "Trakt login is not configured on this instance: the operator must set the Trakt client ID and redirect URI.",
+  "ui.traktLockedHint": "Sign in to your space to manage the Trakt connection.",
+  "ui.traktConnError": "Connection error.",
+  "ui.traktDisconnectOk": "Trakt disconnected.",
+  "ui.traktCallbackConnected": "Trakt connected!",
+  "ui.traktCallbackDenied": "Trakt authorization was denied.",
+  "ui.traktCallbackFailed": "Trakt connection failed — try again.",
+  "ui.customTraktConnect": "Connect Trakt in Settings"
 }

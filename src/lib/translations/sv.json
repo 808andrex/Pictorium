@@ -1063,5 +1063,22 @@
   "ui.activateInInformationHint": "Aktivera {name} i Information för att styla här.",
   "ui.activateInTabHint": "Aktivera {name} i {tab} för att justera storlek och position här.",
   "ui.badgePriorityOrderHint": "Endast ordning — växla kategorier i Information.",
-  "ui.logoAlignPortraitHint": "Porträtt förblir alltid centrerade"
+  "ui.logoAlignPortraitHint": "Porträtt förblir alltid centrerade",
+  "ui.customErrTraktReconnect": "Trakt-anslutning krävs: anslut ditt Trakt-konto igen i Inställningar och försök sedan igen.",
+  "ui.customErrTemporary": "Trakt är tillfälligt otillgängligt, försök igen om en stund.",
+  "ui.traktTitle": "Trakt-konto",
+  "ui.traktDesc": "Anslut ditt Trakt-konto för att importera din bevakningslista och privata standardlistor som egna kataloger. Endast läsning: Pictorium skriver aldrig till Trakt och läser aldrig din historik. Smarta listor stöds inte.",
+  "ui.traktConnect": "Anslut med Trakt",
+  "ui.traktDisconnect": "Koppla från",
+  "ui.traktConnected": "Anslutet",
+  "ui.traktDisconnected": "Inte anslutet",
+  "ui.traktUnavailable": "Trakt är tillfälligt otillgängligt — försök igen om en stund.",
+  "ui.traktNotConfigured": "Trakt-inloggning är inte konfigurerad på den här instansen: operatören måste ställa in Trakt-klient-ID och omdirigerings-URI.",
+  "ui.traktLockedHint": "Logga in på din yta för att hantera Trakt-anslutningen.",
+  "ui.traktConnError": "Anslutningsfel.",
+  "ui.traktDisconnectOk": "Trakt frånkopplat.",
+  "ui.traktCallbackConnected": "Trakt anslutet!",
+  "ui.traktCallbackDenied": "Trakt-auktorisering nekad.",
+  "ui.traktCallbackFailed": "Trakt-anslutningen misslyckades — försök igen.",
+  "ui.customTraktConnect": "Anslut Trakt i Inställningar"
 }

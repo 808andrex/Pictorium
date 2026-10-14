@@ -16,7 +16,7 @@ import { resolveRankingSource } from "@/lib/ranking-source"
 import { fetchCustomRankingTop20, findRankingCustomCatalog } from "@/lib/custom-ranking"
 import { buildNoticeMeta, noticeCatalogId, NOTICE_CUSTOM_RANKING_UNAVAILABLE, NOTICE_CUSTOM_RANKING_UNAVAILABLE_DESCRIPTION, NOTICE_CUSTOM_RANKING_UNAVAILABLE_TITLE, NOTICE_MISSING_TVDB_KEY, NOTICE_MISSING_TVDB_KEY_TITLE, NOTICE_MISSING_TVDB_KEY_DESCRIPTION } from "@/lib/notice-meta"
 import { fetchUnifiedCatalogResult } from "@/lib/custom-catalog-providers"
-import { detectCatalogProvider } from "@/lib/catalog-provider-detect"
+import { detectCatalogProvider, isTraktUserContentUrl } from "@/lib/catalog-provider-detect"
 import { fetchAddonCatalogPage } from "@/lib/stremio-addon-server"
 import { parseSupportedTmdbRef } from "@/lib/stremio-addon"
 import { buildStremioPosterUrl, stremioPosterShape } from "@/lib/stremio-poster-url"
@@ -788,16 +788,84 @@ export async function pictoriumCatalog(
   // (intercettata dal ramo TMDB globale), ma gli addon con `search` dichiarato
   // la inoltrano alla fonte — senza, due ricerche diverse colliderebbero.
   const searchFragment = extra.search ? `:q${hashFragment(extra.search)}` : ""
-  const cacheKey = `stremio:catalog:v2:${stType}:${catalogId}:pv${POSTER_URL_VERSION}${scopedUser ? `:u${hashUserFragment(scopedUser)}` : ""}:ak${apiKey ? hashFragment(apiKey) : "none"}${configParam ? `:cfg${hashFragment(configParam)}` : ""}${mdblistKey ? `:mk${hashFragment(mdblistKey)}` : ""}${tvdbKey ? `:tv${hashFragment(tvdbKey)}` : ""}${genreFragment}${skipFragment}${searchFragment}${regionFragment}${rankingFragment}${freshness}`
+  // Isolamento Trakt autenticato (task 4, correction cycle 1): per i custom
+  // catalog Trakt di contenuto-utente (`users/<name>/lists|watchlist`) nel
+  // namespace del proprietario, una identità verificata token+generation
+  // (snapshot coerente via `getTraktCatalogLease` — mai un token vecchio
+  // legato a un fence nuovo) entra nel key come hash (mai plaintext né
+  // token). L'identità è stabilita PRIMA di qualsiasi lookup L1/L2: senza
+  // identità verificata (fencing illeggibile, connessione persa/transient,
+  // OAuth non configurato) la cache esterna è interamente bypassata — né
+  // lettura né scrittura di item privati sotto chiavi indovinate (mai più
+  // `:tgunknown`). I fallback pubblici indipendenti restano cachabili con
+  // le semantiche invariate. Dopo disconnect/wipe/reconnect la chiave
+  // cambia: un body con item privati cachato prima del disconnect (L1 o KV
+  // L2 condivisa) non viene più servito. Path non-Trakt, globali e
+  // `/lists/<id>` numeriche: frammento vuoto, key byte-identiche a prima.
+  // (`traktFencedGen` porta il fence verificato per la rivalidazione
+  // post-fetch; l'access token dello snapshot non viene mai letto qui.)
+  let traktGenFragment = ""
+  let traktPrivatePath = false
+  let traktFencedGen: string | null | undefined
+  let traktUnfencedPrivate = false
+  if (scopedUser && catalogId.startsWith("pictorium-custom-")) {
+    let customIdForGen = catalogId.replace(/^pictorium-custom-/, "")
+    if (customIdForGen.startsWith("movie-")) customIdForGen = customIdForGen.slice(6)
+    else if (customIdForGen.startsWith("series-")) customIdForGen = customIdForGen.slice(7)
+    const genCat = (userConfig?.customCatalogs as Array<{ id: string; url?: string; enabled?: boolean; addon?: unknown }> | undefined)
+      ?.find((c) => c.id === customIdForGen)
+    if (genCat && genCat.enabled !== false && !genCat.addon && typeof genCat.url === "string" && isTraktUserContentUrl(genCat.url)) {
+      traktPrivatePath = true
+      try {
+        const { getTraktCatalogLease } = await import("@/lib/trakt-auth")
+        const lease = await getTraktCatalogLease(scopedUser)
+        if (lease.ok && !lease.noCache) {
+          traktFencedGen = lease.generation ?? null
+          traktGenFragment = `:tg${hashFragment(lease.generation ?? "none")}`
+        } else {
+          traktUnfencedPrivate = true
+        }
+      } catch {
+        traktUnfencedPrivate = true
+      }
+    }
+  }
+  const cacheKey = `stremio:catalog:v2:${stType}:${catalogId}:pv${POSTER_URL_VERSION}${scopedUser ? `:u${hashUserFragment(scopedUser)}` : ""}:ak${apiKey ? hashFragment(apiKey) : "none"}${configParam ? `:cfg${hashFragment(configParam)}` : ""}${mdblistKey ? `:mk${hashFragment(mdblistKey)}` : ""}${tvdbKey ? `:tv${hashFragment(tvdbKey)}` : ""}${genreFragment}${skipFragment}${searchFragment}${regionFragment}${rankingFragment}${traktGenFragment}${freshness}`
   // C1: L1 + L2 condivisa (KV su multi-istanza, no-op locale/VPS).
   // Il selettore conserva il TTL originale anche dopo il ripopolamento L1
   // da KV (il payload KV non trasporta la scadenza): pieno → 1h, vuoto → 60s.
-  const cached = await cacheGetShared<{ metas: StremioMeta[] }>(cacheKey, ["stremio", "catalog"], (body) =>
-    body?.metas?.length ? CATALOG_TTL_MS : CATALOG_EMPTY_TTL_MS,
-  )
+  // Su identità Trakt non verificata il lookup è interamente saltato
+  // (fail-closed): un body privato cachato prima del disconnect non deve mai
+  // essere servito quando la connessione non è più dimostrabile.
+  let cached: { metas: StremioMeta[] } | null = null
+  if (!traktUnfencedPrivate) {
+    cached = await cacheGetShared<{ metas: StremioMeta[] }>(cacheKey, ["stremio", "catalog"], (body) =>
+      body?.metas?.length ? CATALOG_TTL_MS : CATALOG_EMPTY_TTL_MS,
+    )
+    // Rivalidazione dell'hit (correction cycle 1): la sola generation non è
+    // identità — a parità di fence ma connessione persa/transient (store
+    // token illeggibile, encryption rimossa) l'hit va ignorato e la
+    // richiesta prosegue come miss verso il provider (che risponderà con lo
+    // stato tipizzato, senza mai servire titoli privati cached).
+    if (cached && traktPrivatePath && scopedUser) {
+      try {
+        const { getTraktCatalogLease: getHitLease } = await import("@/lib/trakt-auth")
+        const hitLease = await getHitLease(scopedUser)
+        if (!hitLease.ok || hitLease.noCache || (hitLease.generation ?? null) !== traktFencedGen) {
+          cached = null
+        }
+      } catch {
+        cached = null
+      }
+    }
+  }
   if (cached) return catalogResponse(cached)
 
   let isCustomGenreFiltered = false
+  // Provenienza privata del provider per la coerenza outer-cache (correction
+  // cycle 1): true quando il body in costruzione contiene item fetchati con
+  // il Bearer del proprietario. Vedi coda della funzione prima del cacheSet.
+  let traktPrivateServed = false
   // Budget-incomplete flag (task B): when the shared 10s deadline fires
   // before the scan/details/enrichment prove the window, the body stays
   // servable but caches short (60s, like empties) so a retry refetches
@@ -934,11 +1002,24 @@ export async function pictoriumCatalog(
         const incomingSignal = (req as unknown as { signal?: AbortSignal }).signal ?? undefined
         const customBudgetSignal = combineAbortSignals(incomingSignal, CATALOG_CUSTOM_BUDGET_MS)
 
-        const providerResult = await fetchUnifiedCatalogResult(customCat2.url, { apiKey, mdblistKey, tvdbKey, limit: 500, datasetId: customCat2.datasetId, userId: scopedUser, signal: customBudgetSignal })
+        const providerResult = await fetchUnifiedCatalogResult(customCat2.url, { apiKey, mdblistKey, tvdbKey, limit: 500, datasetId: customCat2.datasetId, userId: scopedUser, traktUserId: scopedUser, signal: customBudgetSignal })
         // Interrupted provider pagination (abort/page error) is servable
         // but partial: flag it so the body caches short (60s) and the retry
         // refetches instead of freezing a shifted window for an hour.
         if (providerResult.incomplete) customBudgetIncomplete = true
+        // Auth Trakt non risolta (disconnesso/transient/fencing illeggibile):
+        // il body (vuoto o pubblico) non deve mai congelare a lungo — stati
+        // espliciti, mai downgrade silenziosi, retry alla riconnessione.
+        // Su identità non verificata la cache esterna è comunque bypassata
+        // (vedi lookup sopra e coda prima del cacheSet).
+        if (
+          providerResult.status === "connection_required" ||
+          providerResult.status === "temporary" ||
+          traktUnfencedPrivate
+        ) {
+          customBudgetIncomplete = true
+        }
+        traktPrivateServed = providerResult.traktPrivate === true
         let items = providerResult.items
         // Se la lista è mista o contiene mediatype, filtra in base al tipo di catalogo richiesto
         if (customCat2.type === "mixed") {
@@ -1456,6 +1537,28 @@ export async function pictoriumCatalog(
     }
 
     const body = { metas }
+    // Coerenza outer-cache ↔ provider fetch (correction cycle 1, solo path
+    // Trakt privati con item owner-fetchati): un fence mai verificato per
+    // questa richiesta serve fresco senza mai persistere; un fence
+    // verificato pre-fetch è ricontrollato dopo il fetch e, se mosso
+    // (disconnect/wipe/reconnect durante la fetch), il body è soppresso
+    // invece di essere servito o cachato sotto il vecchio fence.
+    if (traktPrivatePath && traktPrivateServed && metas.length > 0) {
+      if (traktUnfencedPrivate) {
+        return catalogResponse(body)
+      }
+      if (scopedUser) {
+        try {
+          const { getTraktCatalogLease: getPostLease } = await import("@/lib/trakt-auth")
+          const postLease = await getPostLease(scopedUser)
+          if (!postLease.ok || postLease.noCache || (postLease.generation ?? null) !== traktFencedGen) {
+            return catalogResponse({ metas: [] })
+          }
+        } catch {
+          return catalogResponse({ metas: [] })
+        }
+      }
+    }
     // Budget-incomplete custom pages (deadline hit mid-scan/details, lost
     // genre data, unproven stable skip) must not poison the long cache:
     // short TTL like empties so the retry refetches. Healthy 1h/60s and all

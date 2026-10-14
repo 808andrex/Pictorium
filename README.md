@@ -288,7 +288,8 @@ npm install --ignore-scripts && npm run build && npm start
 | `PICTORIUM_TVDB_API_KEY` | *(optional)* | TheTVDB key for alternate season ordering, episode descriptions, and TheTVDB custom lists (BYOK: request header, `tvdb_key` query, or user profile key win over this). |
 | `PICTORIUM_MDBLIST_KEY` | *(optional)* | MDBList key for custom lists and anime catalogs. |
 | `PICTORIUM_FANART_KEY` | *(optional)* | Fanart.tv project key for the vertical-posters section in the editor (server-only, never exposed to the browser). Without it the section explains it is not configured. |
-| `PICTORIUM_TRAKT_CLIENT_ID` | *(optional)* | Trakt API client ID (single Pictorium app registration) for public Trakt lists as custom catalogs. Public lists only, no OAuth. |
+| `PICTORIUM_TRAKT_CLIENT_ID` | *(optional)* | Trakt API client ID (single Pictorium app registration) for public Trakt lists as custom catalogs. Public lists only, no OAuth. Same app covers per-space OAuth (PKCE, no secret). |
+| `PICTORIUM_TRAKT_REDIRECT_URI` | *(optional)* | Exact OAuth redirect URI registered in the Trakt app dashboard (path is always `/api/trakt/callback`, e.g. `https://your-instance/api/trakt/callback`). HTTPS only (PKCE requires `https://` redirects; test locally through an HTTPS tunnel serving the whole UI origin). One instance may serve both registered domains; never derived from the request. |
 | `PICTORIUM_REGION` | `IT` | Default country for streaming charts and availability (`IT`, `US`, `GB`, `FR`, `DE`, `ES`, etc.). |
 | `PICTORIUM_DATA_DIR` | `./data` | Directory path for persisting settings and saved posters on disk. In Docker it must point at a persistent volume (`/data`, `posterium-data` volume, writable by uid 1000): the data file is created on first save, so "not found" with 0 posters on a fresh install is normal. |
 | `PICTORIUM_REDIS_URL` | *(empty)* | Native Redis (TCP) for multi-replica HA without a `/data` volume: mappings, defaults, profiles, epochs and rate limits become shared across replicas. Wins over `KV_REST_*` when both are set (no automatic migration). On ElfHosted/K8s plain `REDIS_URL` is enough (read as fallback). |
@@ -305,10 +306,12 @@ npm install --ignore-scripts && npm run build && npm start
 | Variable | Default | Description |
 |---|:---:|---|
 | `PICTORIUM_MULTI_USER` | `0` | Set `1` to enable isolated user spaces on `/u/<uuid>/configure`. |
-| `PROFILE_ENCRYPTION_KEY` | *(empty)* | **Required** when `MULTI_USER=1`. 64-character hex key (AES-256-GCM, generate via `openssl rand -hex 32`). |
+| `PROFILE_ENCRYPTION_KEY` | *(empty)* | **Required** when `MULTI_USER=1`. 64-character hex key (AES-256-GCM, generate via `openssl rand -hex 32`). Set once and keep it: rotating it makes stored API keys and Trakt tokens unreadable until re-entered, so never rotate it gratuitously. |
 | `PICTORIUM_MAX_MAPPINGS_PER_USER` | `500` | Maximum number of saved posters allowed per user space. |
 | `PICTORIUM_MAX_USERS` | *(unlimited)* | Maximum number of user spaces that can be created. |
 | `PICTORIUM_PUBLIC_STATS` | `1` | Set `0` to return user counts from `/api/status` only to admins (the home "spaces" strip is then hidden for visitors). |
+
+Trakt OAuth notes (multi-user): one Trakt app registration per instance (client ID + redirect URI above — NO client secret: new Trakt apps sign users in with PKCE and receive no secret; a `PICTORIUM_TRAKT_CLIENT_SECRET` variable left over from an earlier version is ignored, remove it). Users connect their own Trakt account from Settings → Space; Pictorium imports only the watchlist and private standard lists, read-only (no writes, no history, Smart Lists unsupported — the app simply performs no writes). The redirect URI must be `https://` (PKCE rule): for local development register the HTTPS tunnel URL that serves the whole UI origin (both HTTPS callback URIs may stay registered). Never edit the live env file to rotate keys: set variables before start and restart. OAuth tokens are encrypted with `PROFILE_ENCRYPTION_KEY` on persistent storage (disk `/data` volume or KV); without persistence, connections are lost on restart. Disconnect deletes the local tokens (verified, fenced); the upstream revocation call is best-effort and currently unverified against official docs, so to guarantee the Trakt-side authorization is gone also remove the app under Trakt Settings → Applications (https://trakt.tv/settings/apps). If a file-backend lock is left orphaned, recover only with the service stopped — never delete a live lock.
 
 <details>
 <summary><strong>⚙️ Advanced Variables, Default Styles & Performance Pipeline</strong></summary>

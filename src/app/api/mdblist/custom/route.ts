@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server"
 import { rateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit"
-import { fetchUnifiedCatalogResult, detectCatalogProvider } from "@/lib/custom-catalog-providers"
+import { fetchUnifiedCatalogResult, detectCatalogProvider, isTraktWatchlistUrl } from "@/lib/custom-catalog-providers"
 import { getDetails, resolveRouteApiKey, tmdbFindByImdb, tmdbFindByTvdb } from "@/lib/tmdb"
 import { checkUserAuth, extractUserParam, getScopedUserId, invalidUserResponse, isMultiUserEnabled, userAuthResponse } from "@/lib/user-auth"
 import { checkAdminToken, adminAuthResponse } from "@/lib/auth"
@@ -50,6 +50,29 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // Trakt owner-private (task 4): la watchlist richiede SEMPRE il proprietario
+  // autenticato via header (l'UUID da solo — capability della manifest URL —
+  // non basta sul browser, altrimenti un UUID arbitrario esporrebbe item
+  // privati). Le liste standard restano pubblicamente anteprimabili senza
+  // login; con `?u=` + header validi il proprietario sblocca anche le
+  // private. `?u=` presente ma non autorizzato → 400/401, mai fallback
+  // cross-user e mai token forniti dall'utente (il Bearer è solo server-side).
+  const previewDetection = detectCatalogProvider(url)
+  const isTraktPreview = previewDetection?.provider === "trakt"
+  const isWatchlistPreview = isTraktPreview && isTraktWatchlistUrl(url)
+  let traktUserId: string | null = null
+  if (isWatchlistPreview) {
+    const ownerId = getScopedUserId(rawUser)
+    if (rawUser && isMultiUserEnabled() && !ownerId) return invalidUserResponse()
+    if (!ownerId || !(await checkUserAuth(req, ownerId))) return userAuthResponse()
+    traktUserId = ownerId
+  } else if (isTraktPreview && rawUser) {
+    const ownerId = getScopedUserId(rawUser)
+    if (isMultiUserEnabled() && !ownerId) return invalidUserResponse()
+    if (ownerId && !(await checkUserAuth(req, ownerId))) return userAuthResponse()
+    traktUserId = ownerId
+  }
+
   const apiKey = await resolveRouteApiKey(req)
   const mdblistKey = await resolveRouteApiKey(req, "mdblist")
   const tvdbKey = await resolveRouteApiKey(req, "tvdb")
@@ -62,7 +85,7 @@ export async function GET(req: NextRequest) {
     // pagine della griglia) ma si arricchisce solo la finestra
     // richiesta, così la preview resta leggera.
     const fetchLimit = Math.min(Math.max(limit, 500), 1000)
-    const { items: rawItems, status } = await fetchUnifiedCatalogResult(url, { apiKey, mdblistKey, tvdbKey, limit: fetchLimit, datasetId, userId })
+    const { items: rawItems, status } = await fetchUnifiedCatalogResult(url, { apiKey, mdblistKey, tvdbKey, limit: fetchLimit, datasetId, userId, traktUserId })
     const mediaTypeOf = (it: (typeof rawItems)[number]) =>
       ["show", "tv", "anime"].includes(it.mediatype || "") ? "tv" : "movie"
     const filtered = section ? rawItems.filter(it => mediaTypeOf(it) === section) : rawItems

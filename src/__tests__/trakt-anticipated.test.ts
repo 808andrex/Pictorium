@@ -49,8 +49,8 @@ describe("detectCatalogProvider: Trakt anticipated (film-only)", () => {
       expect(res?.provider).toBe("trakt")
       expect(res?.defaultType).toBe("movie")
     }
-    // Other discovery pages are out of scope.
-    expect(detectCatalogProvider("https://app.trakt.tv/discover/trending?mode=movie")).toBeNull()
+    // Other discovery pages are out of scope (trending has its own support).
+    expect(detectCatalogProvider("https://app.trakt.tv/discover/popular?mode=movie")).toBeNull()
   })
 
   it("rejects lookalike hosts (exact host restriction)", () => {

@@ -5,6 +5,7 @@ import { X, Plus, ListPlus, Film, Tv, Shuffle, Check, AlertCircle } from "lucide
 import { usePSelector } from "@/lib/context"
 import { useT } from "@/lib/contexts/TranslationContext"
 import { detectCatalogProvider, catalogStatusErrorKey } from "@/lib/catalog-provider-detect"
+import { requestSettingsTab } from "@/lib/settings-tab"
 import { parseImdbCsv, IMDB_CSV_MAX_BYTES } from "@/lib/imdb-csv"
 import { userFetch } from "@/lib/http"
 import { EmojiPicker } from "@/components/ui"
@@ -18,6 +19,7 @@ interface CustomCatalogModalProps {
 export function CustomCatalogModal({ isOpen, onClose }: CustomCatalogModalProps) {
   const { t } = useT()
   const addCustomCatalog = usePSelector((v) => v.addCustomCatalog)
+  const setSettingsOpen = usePSelector((v) => v.setSettingsOpen)
   const tmdbKey = usePSelector((v) => v.tmdbKey)
   const mdblistApiKey = usePSelector((v) => v.mdblistApiKey)
   const [url, setUrl] = useState("")
@@ -26,6 +28,11 @@ export function CustomCatalogModal({ isOpen, onClose }: CustomCatalogModalProps)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [previewItems, setPreviewItems] = useState<Array<{ title: string; year: number }> | null>(null)
+  // Esito tipizzato dell'ultima preview (provider + status): serve il prompt
+  // di collegamento Trakt quando il proprietario deve (ri)collegare
+  // l'account nelle Impostazioni. Resettato a ogni nuovo invio.
+  const [previewStatus, setPreviewStatus] = useState<string | null>(null)
+  const [previewProvider, setPreviewProvider] = useState<string | null>(null)
   // Import CSV IMDb: anteprima parsata in locale, snapshot salvato server-side.
   const [mode, setMode] = useState<"url" | "csv">("url")
   const [csvText, setCsvText] = useState<string | null>(null)
@@ -171,6 +178,8 @@ export function CustomCatalogModal({ isOpen, onClose }: CustomCatalogModalProps)
   const handleTestAndSave = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
+    setPreviewStatus(null)
+    setPreviewProvider(null)
     const trimmedUrl = url.trim()
     const trimmedName = name.trim()
 
@@ -217,7 +226,20 @@ export function CustomCatalogModal({ isOpen, onClose }: CustomCatalogModalProps)
             year: it.year || 0,
           })))
         }
+      } else if (res && !res.ok) {
+        // Preview auth failure (owner-private Trakt senza login valido):
+        // mai un vuoto generico — il proprietario va guidato al collegamento
+        // nelle Impostazioni. Gli altri provider restano invariati.
+        const errData = await res.json().catch(() => null)
+        if (typeof errData?.status === "string") previewStatus = errData.status
+        if (typeof errData?.provider === "string") previewProvider = errData.provider
+        if (res.status === 401 && detection?.provider === "trakt") {
+          previewStatus = "connection_required"
+          previewProvider = "trakt"
+        }
       }
+      setPreviewStatus(previewStatus ?? null)
+      setPreviewProvider(previewProvider ?? null)
 
       // Mai salvare un catalogo morto: senza titoli la preview su Stremio e
       // nella sezione Cataloghi resterebbe vuota (provider non supportato,
@@ -247,6 +269,17 @@ export function CustomCatalogModal({ isOpen, onClose }: CustomCatalogModalProps)
       setLoading(false)
       return
     }
+  }
+
+  // Prompt di collegamento Trakt: la preview owner-private richiede
+  // l'account collegato — apre le Impostazioni sul tab Spazio (stesso
+  // idioma della scorciatoia UUID in AppShell). Solo provider/status
+  // noti: mai un bottone su flussi pubblici o altri provider.
+  const showTraktConnect = previewProvider === "trakt" && previewStatus === "connection_required"
+  const handleTraktConnect = () => {
+    onClose()
+    requestSettingsTab("spazio")
+    setSettingsOpen(true)
   }
 
   return (
@@ -431,6 +464,16 @@ export function CustomCatalogModal({ isOpen, onClose }: CustomCatalogModalProps)
             <AlertCircle className="w-3.5 h-3.5 shrink-0" />
             <span>{error}</span>
           </div>
+        )}
+
+        {showTraktConnect && (
+          <button
+            type="button"
+            onClick={handleTraktConnect}
+            className="w-full py-2 rounded-xl text-[11px] font-semibold bg-amber-500 text-black hover:bg-amber-400 active:scale-[0.99] transition-all cursor-pointer"
+          >
+            {t("ui.customTraktConnect")}
+          </button>
         )}
 
         {previewItems && previewItems.length > 0 && (

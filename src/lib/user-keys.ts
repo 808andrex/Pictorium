@@ -1,10 +1,17 @@
-import crypto from "node:crypto"
 import fsp from "node:fs/promises"
 import path from "node:path"
 import { createLogger } from "@/lib/logger"
 import { userDir } from "@/lib/user-auth"
 import { atomicWriteFile } from "@/lib/atomic-write"
 import { getKv, getStorageMode } from "@/lib/kv"
+import {
+  decryptProfileSecret,
+  encryptProfileSecret,
+  isProfileEncryptionAvailable,
+  isValidEncBundle,
+  profileEncryptionKey,
+  type EncBundle,
+} from "@/lib/profile-crypto"
 
 const log = createLogger("user-keys")
 
@@ -39,25 +46,8 @@ function assertValidUserId(userId: string): void {
   if (!/^[0-9a-f-]{36}$/i.test(userId)) throw new Error("Invalid user id")
 }
 
-/**
- * Chiave AES-256-GCM da PROFILE_ENCRYPTION_KEY (`openssl rand -hex 32`).
- * Stretta di proposito: solo 64 hex chars (= 32 byte). Qualsiasi altro
- * formato → null (fail-closed, mai cifratura debole/silente).
- */
-function encryptionKey(): Buffer | null {
-  const raw = process.env.PROFILE_ENCRYPTION_KEY?.trim()
-  if (!raw || !/^[0-9a-f]{64}$/i.test(raw)) return null
-  return Buffer.from(raw, "hex")
-}
-
 export function isUserKeysEncryptionAvailable(): boolean {
-  return encryptionKey() !== null
-}
-
-interface EncBundle {
-  iv: string
-  tag: string
-  data: string
+  return isProfileEncryptionAvailable()
 }
 
 interface KeysFile {
@@ -69,35 +59,12 @@ interface KeysFile {
   updatedAt: string
 }
 
-function encryptSecret(plaintext: string, key: Buffer): EncBundle {
-  const iv = crypto.randomBytes(12)
-  const cipher = crypto.createCipheriv("aes-256-gcm", key, iv)
-  const data = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()])
-  return {
-    iv: iv.toString("base64"),
-    tag: cipher.getAuthTag().toString("base64"),
-    data: data.toString("base64"),
-  }
-}
-
-function decryptSecret(bundle: EncBundle, key: Buffer): string {
-  const decipher = crypto.createDecipheriv("aes-256-gcm", key, Buffer.from(bundle.iv, "base64"))
-  decipher.setAuthTag(Buffer.from(bundle.tag, "base64"))
-  return Buffer.concat([decipher.update(Buffer.from(bundle.data, "base64")), decipher.final()]).toString("utf8")
-}
-
 function keysFile(userId: string): string {
   return path.join(userDir(userId), "keys.json")
 }
 
 function keysKvKey(userId: string): string {
   return `user:${userId}:keys`
-}
-
-function isValidBundle(v: unknown): v is EncBundle {
-  if (!v || typeof v !== "object") return false
-  const b = v as Record<string, unknown>
-  return typeof b.iv === "string" && typeof b.tag === "string" && typeof b.data === "string"
 }
 
 async function readKeysFile(userId: string): Promise<KeysFile | null> {
@@ -139,7 +106,7 @@ export async function getUserKeys(userId: string, opts?: { includeDisabled?: boo
   assertValidUserId(userId)
   const file = await readKeysFile(userId)
   if (!file) return {}
-  const key = encryptionKey()
+  const key = profileEncryptionKey()
   if (!key) {
     log.error("user keys present but PROFILE_ENCRYPTION_KEY is missing/invalid — treating as key-missing")
     return {}
@@ -149,9 +116,9 @@ export async function getUserKeys(userId: string, opts?: { includeDisabled?: boo
   for (const kind of USER_KEY_KINDS) {
     if (!opts?.includeDisabled && disabled[kind] === true) continue
     const bundle = file.keys[kind]
-    if (!isValidBundle(bundle)) continue
+    if (!isValidEncBundle(bundle)) continue
     try {
-      const value = decryptSecret(bundle, key)
+      const value = decryptProfileSecret(bundle, key)
       if (value) out[kind] = value
     } catch {
       // Tamper o env cambiata: la singola kind degrada ad assente.
@@ -180,11 +147,11 @@ export async function getUserKeysStatus(userId: string): Promise<Record<UserKeyK
   assertValidUserId(userId)
   const file = await readKeysFile(userId)
   return {
-    tmdb: isValidBundle(file?.keys.tmdb),
-    mdblist: isValidBundle(file?.keys.mdblist),
-    tvdb: isValidBundle(file?.keys.tvdb),
-    simkl: isValidBundle(file?.keys.simkl),
-    fanart: isValidBundle(file?.keys.fanart),
+    tmdb: isValidEncBundle(file?.keys.tmdb),
+    mdblist: isValidEncBundle(file?.keys.mdblist),
+    tvdb: isValidEncBundle(file?.keys.tvdb),
+    simkl: isValidEncBundle(file?.keys.simkl),
+    fanart: isValidEncBundle(file?.keys.fanart),
   }
 }
 
@@ -205,22 +172,22 @@ export async function getUserKeysHealth(userId: string): Promise<UserKeysHealth>
   assertValidUserId(userId)
   const file = await readKeysFile(userId)
   const present = {
-    tmdb: isValidBundle(file?.keys.tmdb),
-    mdblist: isValidBundle(file?.keys.mdblist),
-    tvdb: isValidBundle(file?.keys.tvdb),
-    simkl: isValidBundle(file?.keys.simkl),
-    fanart: isValidBundle(file?.keys.fanart),
+    tmdb: isValidEncBundle(file?.keys.tmdb),
+    mdblist: isValidEncBundle(file?.keys.mdblist),
+    tvdb: isValidEncBundle(file?.keys.tvdb),
+    simkl: isValidEncBundle(file?.keys.simkl),
+    fanart: isValidEncBundle(file?.keys.fanart),
   }
-  const key = encryptionKey()
+  const key = profileEncryptionKey()
   if (!key) {
     return { present, decryptable: { tmdb: false, mdblist: false, tvdb: false, simkl: false, fanart: false }, encryptionAvailable: false }
   }
   const decryptable: Record<UserKeyKind, boolean> = { tmdb: false, mdblist: false, tvdb: false, simkl: false, fanart: false }
   for (const kind of USER_KEY_KINDS) {
     const bundle = file?.keys[kind]
-    if (!isValidBundle(bundle)) continue
+    if (!isValidEncBundle(bundle)) continue
     try {
-      decryptSecret(bundle, key)
+      decryptProfileSecret(bundle, key)
       decryptable[kind] = true
     } catch {
       decryptable[kind] = false
@@ -281,10 +248,10 @@ export async function setUserKeys(userId: string, input: Partial<Record<UserKeyK
   const current: KeysFile = (await readKeysFile(userId)) ?? { version: 1 as const, keys: {}, updatedAt: new Date().toISOString() }
   for (const kind of deletes) delete current.keys[kind]
   if (Object.keys(writes).length > 0) {
-    const key = encryptionKey()
+    const key = profileEncryptionKey()
     if (!key) throw new KeysEncryptionUnavailableError()
     for (const [kind, value] of Object.entries(writes) as [UserKeyKind, string][]) {
-      current.keys[kind] = encryptSecret(value, key)
+      current.keys[kind] = encryptProfileSecret(value, key)
     }
   }
   const disabled = current.disabled ?? {}

@@ -1063,5 +1063,22 @@
   "ui.activateInInformationHint": "Włącz {name} w Informacjach, aby nadać styl tutaj.",
   "ui.activateInTabHint": "Włącz {name} w {tab}, aby dostosować rozmiar i położenie tutaj.",
   "ui.badgePriorityOrderHint": "Tylko kolejność — kategorie przełączaj w Informacjach.",
-  "ui.logoAlignPortraitHint": "Portrety zawsze pozostają wyśrodkowane"
+  "ui.logoAlignPortraitHint": "Portrety zawsze pozostają wyśrodkowane",
+  "ui.customErrTraktReconnect": "Wymagane połączenie z Trakt: połącz ponownie konto Trakt w Ustawieniach, a następnie spróbuj ponownie.",
+  "ui.customErrTemporary": "Trakt jest tymczasowo niedostępny, spróbuj ponownie za chwilę.",
+  "ui.traktTitle": "Konto Trakt",
+  "ui.traktDesc": "Połącz konto Trakt, aby importować swoją listę do obejrzenia oraz prywatne listy standardowe jako własne katalogi. Tylko do odczytu: Pictorium nigdy nie zapisuje na Trakt ani nie odczytuje Twojej historii. Listy Smart List nie są obsługiwane.",
+  "ui.traktConnect": "Połącz z Trakt",
+  "ui.traktDisconnect": "Rozłącz",
+  "ui.traktConnected": "Połączono",
+  "ui.traktDisconnected": "Nie połączono",
+  "ui.traktUnavailable": "Trakt jest tymczasowo niedostępny — spróbuj ponownie za chwilę.",
+  "ui.traktNotConfigured": "Logowanie Trakt nie jest skonfigurowane na tej instancji: operator musi ustawić identyfikator klienta Trakt i URI przekierowania.",
+  "ui.traktLockedHint": "Zaloguj się do swojej przestrzeni, aby zarządzać połączeniem Trakt.",
+  "ui.traktConnError": "Błąd połączenia.",
+  "ui.traktDisconnectOk": "Rozłączono Trakt.",
+  "ui.traktCallbackConnected": "Połączono Trakt!",
+  "ui.traktCallbackDenied": "Odmówiono autoryzacji Trakt.",
+  "ui.traktCallbackFailed": "Połączenie Trakt nie powiodło się — spróbuj ponownie.",
+  "ui.customTraktConnect": "Połącz Trakt w Ustawieniach"
 }

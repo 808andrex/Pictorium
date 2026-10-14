@@ -1063,5 +1063,22 @@
   "ui.activateInInformationHint": "Burada stil vermek için Bilgiler'de {name} öğesini açın.",
   "ui.activateInTabHint": "Burada boyut ve konumu ayarlamak için {tab} içinde {name} öğesini açın.",
   "ui.badgePriorityOrderHint": "Yalnızca sıra — kategorileri Bilgiler'de açıp kapatın.",
-  "ui.logoAlignPortraitHint": "Dikey posterler her zaman ortalanır"
+  "ui.logoAlignPortraitHint": "Dikey posterler her zaman ortalanır",
+  "ui.customErrTraktReconnect": "Trakt bağlantısı gerekli: Trakt hesabını Ayarlar'da yeniden bağla, ardından tekrar dene.",
+  "ui.customErrTemporary": "Trakt geçici olarak kullanılamıyor, birazdan tekrar dene.",
+  "ui.traktTitle": "Trakt hesabı",
+  "ui.traktDesc": "İzleme listeni ve özel standart listeleri özel kataloglar olarak içe aktarmak için Trakt hesabını bağla. Salt okunur: Pictorium Trakt'a asla yazmaz ve geçmişini okumaz. Akıllı Listeler desteklenmez.",
+  "ui.traktConnect": "Trakt ile bağlan",
+  "ui.traktDisconnect": "Bağlantıyı kes",
+  "ui.traktConnected": "Bağlı",
+  "ui.traktDisconnected": "Bağlı değil",
+  "ui.traktUnavailable": "Trakt geçici olarak kullanılamıyor — birazdan tekrar dene.",
+  "ui.traktNotConfigured": "Trakt girişi bu örnekte yapılandırılmamış: operatörün Trakt istemci kimliğini ve yönlendirme URI'sini ayarlaması gerekir.",
+  "ui.traktLockedHint": "Trakt bağlantısını yönetmek için alanında oturum aç.",
+  "ui.traktConnError": "Bağlantı hatası.",
+  "ui.traktDisconnectOk": "Trakt bağlantısı kesildi.",
+  "ui.traktCallbackConnected": "Trakt bağlandı!",
+  "ui.traktCallbackDenied": "Trakt yetkilendirmesi reddedildi.",
+  "ui.traktCallbackFailed": "Trakt bağlantısı başarısız — tekrar dene.",
+  "ui.customTraktConnect": "Trakt'ı Ayarlar'da bağla"
 }

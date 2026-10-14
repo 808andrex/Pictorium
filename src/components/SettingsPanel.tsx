@@ -7,6 +7,7 @@ import { PosterEditorValueOverride } from "@/lib/contexts/PosterEditorContext"
 import { useSettingsSession } from "@/components/settings/useSettingsSession"
 import { UserKeysSection } from "@/components/UserKeysSection"
 import { UserSpaceSection } from "@/components/UserSpaceSection"
+import { TraktAccountSection } from "@/components/TraktAccountSection"
 import { BadgeDefaultsSection } from "@/components/settings/BadgeDefaultsSection"
 import { TransformPanel } from "@/components/settings/TransformPanel"
 import { DataPanel } from "@/components/settings/DataPanel"
@@ -773,6 +774,7 @@ export function SettingsPanel({ setSettingsOpen, exportData, importData, mobile,
             >
               <UserSpaceSection />
               <UserKeysSection />
+              <TraktAccountSection active={activeTab === "spazio"} onRequestExternalAction={requestAction} />
             </div>
           )}
         </div>

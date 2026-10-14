@@ -33,10 +33,31 @@ export function catalogStatusErrorKey(status?: string, provider?: string): strin
     case "not_found": return "ui.customErrNotFound"
     case "rate_limited": return "ui.customErrRateLimited"
     case "key_missing": return provider === "tvdb" ? "ui.customErrTvdbKey" : "ui.customErrUnavailable"
+    case "connection_required": return "ui.customErrTraktReconnect"
+    case "temporary": return "ui.customErrTemporary"
     case "unsupported": return "ui.customErrUnsupported"
     case "unavailable": return "ui.customErrUnavailable"
     default: return "ui.customNoTitles"
   }
+}
+
+/**
+ * True per gli URL Trakt di contenuto utente (`users/<name>/lists/<slug>` o
+ * `users/<name>/watchlist`): gli unici path dove un Bearer del proprietario
+ * può sbloccare liste private. Discovery (anticipated/trending), smart-list e
+ * `/lists/<id>` numeriche restano fuori (pubbliche o non supportate).
+ */
+export function isTraktUserContentUrl(input: string): boolean {
+  const trimmed = input.trim()
+  if (!trimmed) return false
+  return /^(?:https?:\/\/)?(?:www\.|app\.)?trakt\.tv\/users\/[a-zA-Z0-9_.-]+\/(?:lists\/[a-zA-Z0-9_.-]+|watchlist)\/?(?:[?#].*)?$/i.test(trimmed)
+}
+
+/** True per gli URL Trakt watchlist (`users/<name>/watchlist`): sempre privati, mai pubblici. */
+export function isTraktWatchlistUrl(input: string): boolean {
+  const trimmed = input.trim()
+  if (!trimmed) return false
+  return /^(?:https?:\/\/)?(?:www\.|app\.)?trakt\.tv\/users\/[a-zA-Z0-9_.-]+\/watchlist\/?(?:[?#].*)?$/i.test(trimmed)
 }
 
 /**
@@ -91,6 +112,39 @@ export function detectCatalogProvider(input: string): ProviderDetectionResult | 
     return {
       provider: "trakt",
       nameSuggestion: "Trakt Anticipated Movies",
+      defaultType: "movie",
+    }
+  }
+
+  // 2c. Trakt Discovery "trending" (SOLO film, custom catalog):
+  // es. https://app.trakt.tv/discover/trending?mode=movie
+  // Stesse garanzie di anticipated: il detect riconosce il path a prescindere
+  // dal mode così il fetch risponde con lo status tipizzato `unsupported`
+  // (rifiuto esplicito) invece di cadere nel fallback MDBList con un
+  // generico `empty`; solo mode=movie viene davvero scaricato (film-only).
+  // Mode mancante/sconosciuto → mai default implicito, mai serie senza
+  // requirement: il salvataggio resta bloccato dalla preview senza titoli.
+  const traktTrendingMatch = trimmed.match(/^(?:https?:\/\/)?(?:www\.|app\.)?trakt\.tv\/discover\/trending\/?(?:[?#].*)?$/i)
+  if (traktTrendingMatch) {
+    return {
+      provider: "trakt",
+      nameSuggestion: "Trakt Trending Movies",
+      defaultType: "movie",
+    }
+  }
+
+  // 2d. Trakt smart-list web view (es. https://app.trakt.tv/lists/smart/view/films-5b36850652cd19c0?mode=movie):
+  // gli ID web `films-...` sono opachi — le docs ufficiali richiedono un
+  // integer id per GET /lists/{id} (solo liste pubbliche) e non documentano
+  // alcun endpoint smart-list con sola Client ID. Il detect instrada a trakt
+  // così il fetch risponde `unsupported` esplicito invece di cadere nel
+  // fallback MDBList o, peggio, inviare l'ID opaco a /lists/{id}.
+  // Mai retrieval speculativo, mai scraping, mai sostituzioni.
+  const traktSmartMatch = trimmed.match(/^(?:https?:\/\/)?(?:www\.|app\.)?trakt\.tv\/lists\/smart\/view\/([a-zA-Z0-9_.-]+)\/?(?:[?#].*)?$/i)
+  if (traktSmartMatch) {
+    return {
+      provider: "trakt",
+      nameSuggestion: "Trakt Smart List",
       defaultType: "movie",
     }
   }

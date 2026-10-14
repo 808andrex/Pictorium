@@ -1063,5 +1063,22 @@
   "ui.activateInInformationHint": "Schakel {name} in bij Informatie om hier de stijl in te stellen.",
   "ui.activateInTabHint": "Schakel {name} in bij {tab} om hier grootte en positie aan te passen.",
   "ui.badgePriorityOrderHint": "Alleen volgorde — schakel categorieën in bij Informatie.",
-  "ui.logoAlignPortraitHint": "Portretten blijven altijd gecentreerd"
+  "ui.logoAlignPortraitHint": "Portretten blijven altijd gecentreerd",
+  "ui.customErrTraktReconnect": "Trakt-verbinding vereist: verbind je Trakt-account opnieuw in Instellingen en probeer het dan opnieuw.",
+  "ui.customErrTemporary": "Trakt is tijdelijk niet beschikbaar, probeer het zo opnieuw.",
+  "ui.traktTitle": "Trakt-account",
+  "ui.traktDesc": "Verbind je Trakt-account om je watchlist en privé-standaardlijsten als aangepaste catalogi te importeren. Alleen lezen: Pictorium schrijft nooit naar Trakt en leest nooit je geschiedenis. Smart Lists worden niet ondersteund.",
+  "ui.traktConnect": "Verbinden met Trakt",
+  "ui.traktDisconnect": "Verbinding verbreken",
+  "ui.traktConnected": "Verbonden",
+  "ui.traktDisconnected": "Niet verbonden",
+  "ui.traktUnavailable": "Trakt is tijdelijk niet beschikbaar — probeer het zo opnieuw.",
+  "ui.traktNotConfigured": "Trakt-login is niet geconfigureerd op deze instantie: de beheerder moet de Trakt-client-ID en redirect-URI instellen.",
+  "ui.traktLockedHint": "Log in op je ruimte om de Trakt-verbinding te beheren.",
+  "ui.traktConnError": "Verbindingsfout.",
+  "ui.traktDisconnectOk": "Trakt losgekoppeld.",
+  "ui.traktCallbackConnected": "Trakt verbonden!",
+  "ui.traktCallbackDenied": "Trakt-autorisatie geweigerd.",
+  "ui.traktCallbackFailed": "Trakt-verbinding mislukt — probeer het opnieuw.",
+  "ui.customTraktConnect": "Trakt verbinden in Instellingen"
 }

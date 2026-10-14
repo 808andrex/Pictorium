@@ -1063,5 +1063,22 @@
   "ui.activateInInformationHint": "Zapněte {name} v Informacích a upravte styl zde.",
   "ui.activateInTabHint": "Zapněte {name} v {tab} a upravte zde velikost a polohu.",
   "ui.badgePriorityOrderHint": "Pouze pořadí — kategorie přepínejte v Informacích.",
-  "ui.logoAlignPortraitHint": "Portréty zůstávají vždy vycentrované"
+  "ui.logoAlignPortraitHint": "Portréty zůstávají vždy vycentrované",
+  "ui.customErrTraktReconnect": "Vyžadováno připojení k Trakt: znovu připoj svůj účet Trakt v Nastavení a zkus to znovu.",
+  "ui.customErrTemporary": "Trakt je dočasně nedostupný, zkus to prosím za chvíli.",
+  "ui.traktTitle": "Účet Trakt",
+  "ui.traktDesc": "Připoj svůj účet Trakt a importuj svůj watchlist a soukromé standardní seznamy jako vlastní katalogy. Pouze pro čtení: Pictorium nikdy do Traktu nezapisuje ani nečte tvou historii. Smart listy nejsou podporovány.",
+  "ui.traktConnect": "Připojit přes Trakt",
+  "ui.traktDisconnect": "Odpojit",
+  "ui.traktConnected": "Připojeno",
+  "ui.traktDisconnected": "Nepřipojeno",
+  "ui.traktUnavailable": "Trakt je dočasně nedostupný — zkus to prosím za chvíli.",
+  "ui.traktNotConfigured": "Přihlášení přes Trakt není na této instanci nastaveno: provozovatel musí nastavit client ID aplikace Trakt a URI přesměrování.",
+  "ui.traktLockedHint": "Přihlas se do svého prostoru pro správu připojení Trakt.",
+  "ui.traktConnError": "Chyba připojení.",
+  "ui.traktDisconnectOk": "Trakt odpojen.",
+  "ui.traktCallbackConnected": "Trakt připojen!",
+  "ui.traktCallbackDenied": "Autorizace Trakt zamítnuta.",
+  "ui.traktCallbackFailed": "Připojení k Trakt se nezdařilo — zkus to znovu.",
+  "ui.customTraktConnect": "Připojit Trakt v Nastavení"
 }
