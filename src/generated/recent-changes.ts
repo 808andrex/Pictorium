@@ -11,6 +11,9 @@ export interface RecentChange {
 }
 
 export const RECENT_CHANGES: RecentChange[] = [
+  { type: "feature", text: "Make poster customization clearer and desktop notifications less intrusive", sha: "8343654", date: "2026-10-13" },
+  { type: "fix", text: "Restore desktop poster save confirmations to bottom right", sha: "c50cf1b", date: "2026-10-13" },
+  { type: "feature", text: "Redesign poster settings with independent presets and adaptive colors", sha: "480138e", date: "2026-10-13" },
   { type: "feature", text: "Add independent poster controls and ratings", sha: "2a80ec7", date: "2026-10-11" },
   { type: "feature", text: "Add age ratings, Trakt discovery and clearer poster controls", sha: "bd38a5a", date: "2026-10-11" },
 ]
