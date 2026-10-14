@@ -30,6 +30,24 @@ export interface ChangelogRelease {
  *  (which bumps on every commit and would leave the dot permanently on). */
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    version: "1.25.4",
+    date: "2026-10-14",
+    title: "Release 1.25.4",
+    items: [
+      { type: "fix", text: "Refresh ranked catalog posters when their position changes" },
+      { type: "feature", text: "Choose JustWatch catalog sources and control catalog name emojis" },
+      { type: "fix", text: "Keep imported ranks and poster previews in sync" },
+      { type: "feature", text: "Connect your Trakt account with PKCE" },
+      { type: "feature", text: "Add Brazilian Portuguese language choice" },
+      { type: "feature", text: "Make poster customization clearer and desktop notifications less intrusive" },
+      { type: "fix", text: "Restore desktop poster save confirmations to bottom right" },
+      { type: "feature", text: "Redesign poster settings with independent presets and adaptive colors" },
+      { type: "feature", text: "Add independent poster controls and ratings" },
+      { type: "feature", text: "Add age ratings, Trakt discovery and clearer poster controls" },
+      { type: "fix", text: "Keep poster requests and saved settings reliable" },
+    ],
+  },
+  {
     version: "1.25.3",
     date: "2026-10-10",
     title: "Release 1.25.3",
