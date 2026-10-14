@@ -320,6 +320,7 @@ async function pictoriumPosterAndShape(
   posterLang = "it",
   posterRegion?: string | null,
   catalogId?: string | null,
+  rankBusterParam?: number | string | null,
 ): Promise<{ poster: string; banner: string; landscapePoster?: string; posterShape: PosterShape }> {
   const scopedUser = getScopedUserId(userParam)
   const serverDefaults = scopedUser ? await getServerDefaultsForUser(scopedUser) : await getServerDefaultsChecked()
@@ -337,6 +338,7 @@ async function pictoriumPosterAndShape(
     config: configParam || undefined,
     user: userParam || undefined,
     animerank: animeRankParam ?? undefined,
+    rankBuster: rankBusterParam ?? undefined,
   } as const
   // Per-catalog format (TaskB): an explicit poster|landscape override for THIS
   // catalog id always wins (either direction, mapping ignored); absent keys
@@ -1214,7 +1216,7 @@ export async function pictoriumCatalog(
       // as an explicit (uncached) notice — never a silent JustWatch fallback.
       // The JW genre drill-down stays JustWatch-only; the tail post-filter
       // still applies to custom rows.
-      let uniqueRows: Array<{ tmdbId: number; imdbId: string | null; title?: string | null | undefined }>
+      let uniqueRows: Array<{ tmdbId: number; imdbId: string | null; title?: string | null | undefined; rank?: number | string | null }>
       const isJwPopularOrTrending =
         rankingSource.kind === "justwatch" &&
         (rankingSource.mode === "popular" || rankingSource.mode === "trending")
@@ -1249,7 +1251,43 @@ export async function pictoriumCatalog(
           genres: jwGenreCode ? [jwGenreCode] : undefined,
           overfetch: false,
         })
-        uniqueRows = rows.map((r) => ({ tmdbId: r.tmdbId, imdbId: r.imdbId || null, title: r.title || null }))
+        // Canonical Top-20 snapshot (ONE per request, shared 6h JW cache with
+        // the renderer — never per-title): maps page rows at arbitrary skip
+        // to their exact global rank. Genre-local or platform-local positions
+        // are never used as global rank — lookup is by tmdbId against the
+        // unfiltered snapshot, unranked titles get explicit rk=0.
+        let canonicalRank: Map<number, number> | null = null
+        if (rows.length > 0) {
+          try {
+            const snapshot = await fetchTop20Ranking({
+              slot: stType,
+              source: rankingSource,
+              regionCode: region.code,
+              regionLang: tmdbLang,
+              customCatalogs: userConfig?.customCatalogs,
+              apiKey,
+              mdblistKey,
+              tvdbKey,
+              userId: scopedUser,
+            })
+            if (snapshot.items.length > 0) {
+              canonicalRank = new Map(snapshot.items.map((it) => [it.tmdbId, it.rank]))
+            }
+          } catch {
+            canonicalRank = null
+          }
+        }
+        uniqueRows = rows.map((r, idx) => {
+          if (canonicalRank) {
+            // Same title → same URL on every page (skip 0/5/19/20) and in
+            // genre drill-downs: exact global rank, or explicit unranked.
+            return { tmdbId: r.tmdbId, imdbId: r.imdbId || null, title: r.title || null, rank: canonicalRank.get(r.tmdbId) ?? 0 }
+          }
+          // Snapshot unavailable (fail-closed legacy): only window-proven claims.
+          const isTop20Window = !hasGenre && jwSkip === 0 && idx < 20
+          const rank = isTop20Window ? (idx + 1) : (jwSkip >= 20 ? 0 : undefined)
+          return { tmdbId: r.tmdbId, imdbId: r.imdbId || null, title: r.title || null, rank }
+        })
       } else {
         // Custom e Classifiche storiche: mantengono il comportamento Top 20 (skip >= 20 vuoto)
         const top20Skip = typeof extra.skip === "number" && extra.skip > 0 ? extra.skip : 0
@@ -1282,7 +1320,7 @@ export async function pictoriumCatalog(
           }
           uniqueRows = ranking.items
             .slice(top20Skip, top20Skip + 20)
-            .map((item) => ({ tmdbId: item.tmdbId, imdbId: item.imdbId, title: item.title }))
+            .map((item) => ({ tmdbId: item.tmdbId, imdbId: item.imdbId, title: item.title, rank: item.rank }))
         }
       }
 
@@ -1291,19 +1329,19 @@ export async function pictoriumCatalog(
           // D4: external_ids in append — niente secondo fetch per-titolo.
           // Tetto fail-open: uno straggler non appende tutto il catalogo.
           const d = await getDetailsWithExternalIds(stType === "movie" ? "movie" : "tv", row.tmdbId, tmdbLang, apiKey, catalogTimeoutSignal(), CATALOG_TMDB_TIMEOUT_MS)
-          if (!d?.id) return { d: null, tmdbId: row.tmdbId, imdbId: row.imdbId, title: row.title }
-          return { d, tmdbId: row.tmdbId, imdbId: row.imdbId, title: row.title }
+          if (!d?.id) return { d: null, tmdbId: row.tmdbId, imdbId: row.imdbId, title: row.title, rank: row.rank }
+          return { d, tmdbId: row.tmdbId, imdbId: row.imdbId, title: row.title, rank: row.rank }
         } catch {
           // Fail-open come il ramo piattaforme: il titolo JustWatch resta
           // anche senza dettagli (prima la riga veniva scartata del tutto).
-          return { d: null, tmdbId: row.tmdbId, imdbId: row.imdbId, title: row.title }
+          return { d: null, tmdbId: row.tmdbId, imdbId: row.imdbId, title: row.title, rank: row.rank }
         }
       }, 5)
-      const validResults = results.filter((r): r is { d: TMDBDetails | null; tmdbId: number; imdbId: string | null; title: string | null | undefined } => r !== null && (!!r.d || !!(r.title && r.title.length > 0)))
+      const validResults = results.filter((r): r is NonNullable<typeof r> => r !== null && (!!r.d || !!(r.title && r.title.length > 0)))
       metas = await concurrentMap(validResults, async (r) => {
         const [imdbId, posterAndShape, logo] = await Promise.all([
           r.imdbId || r.d?.external_ids?.imdb_id || null,
-          pictoriumPosterAndShape(req, stType, r.tmdbId, configParam, userParam, undefined, posterLang, region.code, catalogId),
+          pictoriumPosterAndShape(req, stType, r.tmdbId, configParam, userParam, undefined, posterLang, region.code, catalogId, r.rank),
           apiKey ? catalogLogo(stType === "movie" ? "movie" : "tv", r.tmdbId, apiKey, tmdbLang) : Promise.resolve(undefined),
         ])
         const { poster, banner, landscapePoster, posterShape } = posterAndShape

@@ -187,11 +187,11 @@ describe("Stremio Popular & Trending Pagination (Task B, C, D)", () => {
   })
 
   it("applies genre server-side in JustWatch query and bypasses post-filtering", async () => {
-    let capturedBody: JwGraphQLRequestBody | null = null
+    const capturedBodies: JwGraphQLRequestBody[] = []
     vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
       const urlStr = String(url)
       if (urlStr.includes("graphql") || urlStr.includes("justwatch")) {
-        capturedBody = JSON.parse(init?.body as string)
+        capturedBodies.push(JSON.parse(init?.body as string))
         return makeJwTitlesResponse([{ tmdbId: 301, title: "Action Movie 301" }])
       }
       return makeTmdbDetailsResponse(301, "Action Movie 301")
@@ -202,10 +202,17 @@ describe("Stremio Popular & Trending Pagination (Task B, C, D)", () => {
     const body = await res.json()
     expect(res.status).toBe(200)
     expect(body.metas).toHaveLength(1)
-    expect(capturedBody).not.toBeNull()
+    expect(capturedBodies.length).toBeGreaterThan(0)
+    // Page window still carries the server-side genre filter and skip.
+    const pageCall = capturedBodies.find((b) => b.variables.offset === 20)
+    expect(pageCall).not.toBeUndefined()
     // Genre "Azione" maps to "act" in JustWatch
-    expect(capturedBody!.variables.filter.genres).toEqual(["act"])
-    expect(capturedBody!.variables.offset).toBe(20)
+    expect(pageCall!.variables.filter.genres).toEqual(["act"])
+    // Canonical snapshot (offset 0, unfiltered) backs the rk mapping — it
+    // must never carry the genre-local filter as a global rank source.
+    const snapshotCall = capturedBodies.find((b) => b.variables.offset === 0)
+    expect(snapshotCall).not.toBeUndefined()
+    expect(snapshotCall!.variables.filter.genres).toBeUndefined()
   })
 
   it("returns empty fail-closed for out-of-scope editorial genres", async () => {

@@ -121,6 +121,7 @@ export function normalizePosterCacheParams(searchParams: URLSearchParams): URLSe
   }
   params.delete("rv")
   params.delete("v")
+  params.delete("rk")
   params.delete(POSTER_REFRESH_PARAM)
 
   const ac = params.get("ac")

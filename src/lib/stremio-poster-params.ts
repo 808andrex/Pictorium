@@ -18,6 +18,12 @@ export interface StremioPosterParamsInput {
   // render. Unico caso con chiavi in URL: `buildUrlPattern` (template che
   // l'utente copia per sé, come la manifest URL) le accoda da solo.
   readonly animerank?: number
+  /**
+   * Token di cache-busting per il ranking: varia l'URL del poster per il
+   * client/dispositivo quando cambia la posizione in classifica, senza
+   * influenzare il render del server (che calcola autonomamente i rank effettivi).
+   */
+  readonly rankBuster?: number | string | null
   readonly lang?: string | null
   readonly globalBadges?: boolean
   readonly rankingBadges?: boolean
@@ -332,6 +338,13 @@ export function buildStremioPosterSearchParams(input: StremioPosterParamsInput):
   // Rank anime noto al catalogo (posizione in lista): rende il badge Anime
   // deterministico su Stremio, indipendentemente dalle chiavi lato server.
   if (input.animerank) params.set("animerank", String(input.animerank))
+  // Token deterministico di cache-busting per il ranking (rk): varia l'identità
+  // dell'URL per il client/dispositivo quando cambia la posizione in classifica.
+  // Emesso solo quando i badge di classifica sono abilitati per evitare
+  // invalidazioni superflue; non costituisce override per il renderer.
+  if (globalBadges && rankingBadges && input.rankBuster !== undefined && input.rankBuster !== null) {
+    params.set("rk", String(input.rankBuster))
+  }
   if (input.config) {
     // Con token stateless il server applica query > mapping > config: un ON
     // per-titolo omesso perderebbe contro un master OFF del token mentre la

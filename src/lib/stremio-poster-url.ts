@@ -24,6 +24,7 @@ export interface BuildStremioPosterUrlInput {
   // Niente chiavi (vedi stremio-poster-params.ts): questo URL viene servito
   // a Stremio e persistito nel suo DB — mai segreti dentro.
   readonly animerank?: number
+  readonly rankBuster?: number | string | null
   readonly lang?: string | null
   readonly config?: string | null
   readonly user?: string | null
@@ -116,6 +117,7 @@ export function buildStremioPosterUrl(input: BuildStremioPosterUrlInput): URL {
   const params = buildStremioPosterSearchParams({
     config: input.config,
     animerank: input.animerank,
+    rankBuster: input.rankBuster,
     user: input.user,
     region: input.region ?? sd.region,
     lang: input.lang || "it",

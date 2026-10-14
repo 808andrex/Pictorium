@@ -269,6 +269,8 @@ export const posterQuerySchema = z.object({
   netPos: boundedQueryString(8),
   // Segui-spazio: politica di rivalidazione (non forza render). Solo 0/1.
   live: z.enum(["0", "1"]).optional(),
+  // Cache-busting del ranking: token deterministico client-side (non forza render).
+  rk: boundedQueryString(16).optional(),
 })
 
 export type PosterQuery = z.infer<typeof posterQuerySchema>

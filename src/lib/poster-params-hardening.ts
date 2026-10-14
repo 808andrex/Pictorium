@@ -118,6 +118,9 @@ export const POSTER_CACHE_ALLOWLIST: ReadonlySet<string> = new Set([
   // Demo samples (Settings defaults preview only): separa le chiavi con/senza
   // campioni; il valore è fail-closed in normalizePosterCacheParams.
   "demosamples",
+  // Cache-busting del ranking client-side: allowlisted per transitare all'handler,
+  // rimosso da normalizePosterCacheParams per non frammentare la cache interna del server.
+  "rk",
 ])
 
 // Numerici 0-100 (gradienti/blur/tinta/fade/ombra-alta) e offset px: step 5.
