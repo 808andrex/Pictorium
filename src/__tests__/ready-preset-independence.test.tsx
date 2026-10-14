@@ -352,7 +352,14 @@ describe("ready snapshots are complete (unit)", () => {
 describe.each(READY_IDS.map((id) => [id] as [ReadyId]))(
   "portrait: %s is independent of the previous look",
   (id) => {
-    it("rotated-ready, tuned, Fresh and Card seeds converge", async () => {
+    it(
+      "rotated-ready, tuned, Fresh and Card seeds converge",
+      // Bounded per-test budget only (assertions unchanged): ~1.5s isolated,
+      // ~2.6s under 4-file contention, 5.3s in the full 534-file suite from
+      // worker scheduling inflation with identical assertions. Missing-element
+      // findBy* still rejects at ~1s, so real failures keep failing fast.
+      { timeout: 10_000 },
+      async () => {
       vi.useRealTimers()
       const seeds: Array<{ name: string; seed: () => void }> = [
         { name: "rotated-ready", seed: () => seedRotatedReady(id) },
@@ -399,7 +406,8 @@ describe.each(READY_IDS.map((id) => [id] as [ReadyId]))(
       }
       expect(new Set(thumbs).size, `${id} thumb identical from every seed`).toBe(1)
       expect(new Set(bodies).size, `${id} recipe identical from every seed`).toBe(1)
-    })
+      },
+    )
   },
 )
 

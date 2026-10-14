@@ -13,7 +13,14 @@ const MOCK_IMG = "http://127.0.0.1:8790/t/p"
 const CUSTOM_OK = `${MOCK_IMG}/w342/e2e-custom-valido.jpg`
 const CUSTOM_NEW = `${MOCK_IMG}/w342/e2e-custom-nuovo.jpg`
 const CUSTOM_IGNORED = `${MOCK_IMG}/w342/e2e-custom-ignored.jpg`
-const BROKEN = "http://127.0.0.1:9/e2e-rotto.jpg" // porta chiusa: errore deterministico
+// Fallimento deterministico via page.route (abort "failed"): il mock serve
+// QUALSIASI /t/p/* come JPEG 200, quindi senza intercettazione questo URL
+// caricherebbe. La precedente porta chiusa :9 era non deterministica sotto
+// carico (origin fuori CSP img-src + unsafe-port + tile lazy/content-
+// visibility: nel full-suite l'onError non scattava entro 10s mentre il
+// lightbox eager con stesso URL passava). Stessa origin dei validi → CSP ok,
+// pattern stretto solo sul rotto → nessun masking di altri image failure.
+const BROKEN = `${MOCK_IMG}/w342/e2e-rotto.jpg`
 const FALLBACK_B = `${MOCK_IMG}/w342/e2e-fallback-b.jpg`
 const FALLBACK_B_LB = `${MOCK_IMG}/w500/e2e-fallback-b.jpg` // lightbox: fallback TMDB a w500 (storico)
 const BACKDROP = `${MOCK_IMG}/w780/e2e-backdrop.jpg`
@@ -57,6 +64,13 @@ async function putCustom(page: Page, id: string, url: string) {
 
 const widthOf = (loc: Locator) => loc.evaluate((img: HTMLImageElement) => img.naturalWidth)
 
+// Il mock risponde 200 JPEG a QUALSIASI /t/p/*: solo l'abort su questo
+// pattern stretto rende BROKEN un errore reale d'immagine (<img> onError →
+// fallback React), senza mutare il DOM né mascherare altri failure.
+async function failBroken(page: Page) {
+  await page.route("**/e2e-rotto.jpg", (route) => route.abort("failed"))
+}
+
 test.describe("customPosterUrl in Miei poster", () => {
   test.beforeEach(async ({ page }) => {
     await page.addInitScript(() => {
@@ -82,6 +96,7 @@ test.describe("customPosterUrl in Miei poster", () => {
   })
 
   test("miniatura: custom valido, fallback su rotto, landscape invariato, cambio URL in place", async ({ page }) => {
+    await failBroken(page)
     await page.goto("/")
     await expect(page.getByPlaceholder(/cerca/i)).toBeVisible({ timeout: 30_000 })
     await seed(page)
@@ -120,6 +135,7 @@ test.describe("customPosterUrl in Miei poster", () => {
   })
 
   test("ingrandimento: custom valido, fallback su rotto, landscape, nuovo URL dopo errore", async ({ page }) => {
+    await failBroken(page)
     await page.goto("/")
     await expect(page.getByPlaceholder(/cerca/i)).toBeVisible({ timeout: 30_000 })
     await seed(page)

@@ -504,126 +504,142 @@ describe("Fresh apply is independent of the previous look", () => {
     { name: "fresh-tuned", seed: seedFreshTunedPrior },
   ]
 
-  it("portrait: every prior converges to the own Fresh recipe, other shape frozen", async () => {
-    vi.useRealTimers()
-    const thumbs: string[] = []
-    const recipes: string[] = []
-    for (const { name, seed } of PRIORS) {
-      localStorage.clear()
-      puts = []
-      seed()
-      const beforeStorage = localStorage.getItem("badgeDefaults")
-      const seedRaw = JSON.parse(beforeStorage ?? "{}") as Record<string, unknown>
-      const { unmount } = renderPanel()
-      await screen.findByTestId("poster-style-fresh")
-      // Mount normalizes the stored payload into canonical shape; the apply
-      // itself must not persist anything further before the global Save.
-      const stagedStorage = localStorage.getItem("badgeDefaults")
-      thumbs.push(thumbIdentity(thumbParams("fresh").toString()))
-      expect(screen.getByTestId("poster-style-fresh"), `no false highlight from ${name}`).toHaveAttribute(
-        "aria-pressed",
-        "false",
-      )
-      fireEvent.click(screen.getByTestId("poster-style-fresh"))
-      expect(screen.getByTestId("poster-style-fresh")).toHaveAttribute("aria-pressed", "true")
-      expect(thumbIdentity(thumbParams("fresh").toString()), `thumb stable after ${name}`).toBe(
-        thumbs[thumbs.length - 1],
-      )
-      expect(puts, `no PUT before Save (${name})`).toHaveLength(0)
-      expect(localStorage.getItem("badgeDefaults"), `no storage persist before Save (${name})`).toBe(stagedStorage)
-      openPresetTab()
-      fireEvent.click(screen.getByTestId("settings-save"))
-      await screen.findByText("ui.synced")
-      expect(puts, `single Save (${name})`).toHaveLength(1)
-      const body = puts[0].body
-      recipes.push(recipeIdentity(body))
-      expect(body).toMatchObject({
-        posterLayout: "fresh",
-        posterFreshScope: "ranked",
-        rankingBadgeStyle: "netflix",
-        badgeStyle: "minimal",
-        qualityBadgeStyle: "knockout",
-        ageBadge: false,
-        extraBadgeStyle: null,
-      })
-      expect(body.ratingSources).toEqual(["imdb", "tmdb"])
-      expect(body.posterShape).toBe("poster")
-      expect(body.defaultPortraitFitEnabled).toBe(false)
-      expect(body.defaultLandscapeFitEnabled).toBe(true)
-      // Other shape frozen: the profile keeps the prior effective layout
-      // (absent/null scope never follows Fresh; explicit Card keeps nuvio).
-      const land = (body.landscape ?? {}) as Record<string, unknown>
-      expect(land.posterLayout, `other shape frozen (${name})`).toBe(seedRaw.defaultPosterLayout)
-      if (name === "card") {
-        expect(land.extraBadgeStyle, "explicit profile extra preserved").toBe("corner")
+  it("portrait: every prior converges to the own Fresh recipe, other shape frozen",
+    // Bounded per-test budget only (assertions unchanged): ~2.3s under
+    // 2-file contention, past the 5s default in the full 534-file suite
+    // from worker scheduling inflation with identical assertions (5
+    // sequential full SettingsPanel mounts). Missing-element findBy*
+    // still rejects at ~1s, so real failures keep failing fast.
+    { timeout: 10_000 },
+    async () => {
+      vi.useRealTimers()
+      const thumbs: string[] = []
+      const recipes: string[] = []
+      for (const { name, seed } of PRIORS) {
+        localStorage.clear()
+        puts = []
+        seed()
+        const beforeStorage = localStorage.getItem("badgeDefaults")
+        const seedRaw = JSON.parse(beforeStorage ?? "{}") as Record<string, unknown>
+        const { unmount } = renderPanel()
+        await screen.findByTestId("poster-style-fresh")
+        // Mount normalizes the stored payload into canonical shape; the apply
+        // itself must not persist anything further before the global Save.
+        const stagedStorage = localStorage.getItem("badgeDefaults")
+        thumbs.push(thumbIdentity(thumbParams("fresh").toString()))
+        expect(screen.getByTestId("poster-style-fresh"), `no false highlight from ${name}`).toHaveAttribute(
+          "aria-pressed",
+          "false",
+        )
+        fireEvent.click(screen.getByTestId("poster-style-fresh"))
+        expect(screen.getByTestId("poster-style-fresh")).toHaveAttribute("aria-pressed", "true")
+        expect(thumbIdentity(thumbParams("fresh").toString()), `thumb stable after ${name}`).toBe(
+          thumbs[thumbs.length - 1],
+        )
+        expect(puts, `no PUT before Save (${name})`).toHaveLength(0)
+        expect(localStorage.getItem("badgeDefaults"), `no storage persist before Save (${name})`).toBe(stagedStorage)
+        openPresetTab()
+        fireEvent.click(screen.getByTestId("settings-save"))
+        await screen.findByText("ui.synced")
+        expect(puts, `single Save (${name})`).toHaveLength(1)
+        const body = puts[0].body
+        recipes.push(recipeIdentity(body))
+        expect(body).toMatchObject({
+          posterLayout: "fresh",
+          posterFreshScope: "ranked",
+          rankingBadgeStyle: "netflix",
+          badgeStyle: "minimal",
+          qualityBadgeStyle: "knockout",
+          ageBadge: false,
+          extraBadgeStyle: null,
+        })
+        expect(body.ratingSources).toEqual(["imdb", "tmdb"])
+        expect(body.posterShape).toBe("poster")
+        expect(body.defaultPortraitFitEnabled).toBe(false)
+        expect(body.defaultLandscapeFitEnabled).toBe(true)
+        // Other shape frozen: the profile keeps the prior effective layout
+        // (absent/null scope never follows Fresh; explicit Card keeps nuvio).
+        const land = (body.landscape ?? {}) as Record<string, unknown>
+        expect(land.posterLayout, `other shape frozen (${name})`).toBe(seedRaw.defaultPosterLayout)
+        if (name === "card") {
+          expect(land.extraBadgeStyle, "explicit profile extra preserved").toBe("corner")
+        }
+        unmount()
+        cleanup()
       }
-      unmount()
-      cleanup()
-    }
-    expect(new Set(thumbs).size, "fresh thumb identical from every prior").toBe(1)
-    expect(new Set(recipes).size, "fresh portrait recipe identical from every prior").toBe(1)
-  })
+      expect(new Set(thumbs).size, "fresh thumb identical from every prior").toBe(1)
+      expect(new Set(recipes).size, "fresh portrait recipe identical from every prior").toBe(1)
+    },
+  )
 
-  it("landscape: every prior converges to the own Fresh profile, portrait flats frozen", async () => {
-    vi.useRealTimers()
-    const thumbs: string[] = []
-    const profiles: string[] = []
-    for (const { name, seed } of PRIORS) {
-      localStorage.clear()
-      puts = []
-      seed()
-      const beforeStorage = localStorage.getItem("badgeDefaults")
-      const seedRaw = JSON.parse(beforeStorage ?? "{}") as Record<string, unknown>
-      const { unmount } = renderPanel()
-      await screen.findByTestId("poster-style-fresh")
-      switchEditTargetToLandscape()
-      await screen.findByTestId("poster-style-fresh")
-      // Mount normalizes the stored payload into canonical shape; the apply
-      // itself must not persist anything further before the global Save.
-      const stagedStorage = localStorage.getItem("badgeDefaults")
-      thumbs.push(thumbIdentity(thumbParams("fresh").toString()))
-      fireEvent.click(screen.getByTestId("poster-style-fresh"))
-      expect(screen.getByTestId("poster-style-fresh")).toHaveAttribute("aria-pressed", "true")
-      expect(thumbIdentity(thumbParams("fresh").toString()), `thumb stable after ${name}`).toBe(
-        thumbs[thumbs.length - 1],
-      )
-      expect(puts, `no PUT before Save (${name})`).toHaveLength(0)
-      expect(localStorage.getItem("badgeDefaults"), `no storage persist before Save (${name})`).toBe(stagedStorage)
-      openPresetTab()
-      fireEvent.click(screen.getByTestId("settings-save"))
-      await screen.findByText("ui.synced")
-      expect(puts, `single Save (${name})`).toHaveLength(1)
-      const body = puts[0].body
-      const land = body.landscape as Record<string, unknown>
-      expect(land).toMatchObject({
-        posterLayout: "fresh",
-        posterFreshScope: "ranked",
-        rankingBadgeStyle: "number",
-        qualityBadgeStyle: "color",
-        extraBadgeStyle: "follow-rank",
-        badgeStyle: "minimal",
-        ageBadge: false,
-      })
-      profiles.push(
-        snapshotIdentity({
-          posterLayout: land.posterLayout,
-          posterFreshScope: land.posterFreshScope,
-          rankingBadgeStyle: land.rankingBadgeStyle,
-          qualityBadgeStyle: land.qualityBadgeStyle,
-          extraBadgeStyle: land.extraBadgeStyle,
-          badgeStyle: land.badgeStyle,
-          ageBadge: land.ageBadge,
-        }),
-      )
-      // Portrait flats frozen (seed-owned, never the Fresh look).
-      expect(body.badgeFont, `portrait flat frozen (${name})`).toBe(seedRaw.defaultBadgeFont)
-      expect(body.badgeStyle, `portrait flat frozen (${name})`).toBe(seedRaw.defaultBadgeStyle)
-      expect(body.ratingSources).toEqual(["imdb", "tmdb"])
-      expect(body.posterShape).toBe("poster")
-      unmount()
-      cleanup()
-    }
-    expect(new Set(thumbs).size, "fresh landscape thumb identical from every prior").toBe(1)
-    expect(new Set(profiles).size, "fresh landscape profile identical from every prior").toBe(1)
-  })
+  it("landscape: every prior converges to the own Fresh profile, portrait flats frozen",
+    // Bounded per-test budget only (assertions unchanged): ~2.4s under
+    // 2-file contention, past the 5s default in the full 534-file suite
+    // from worker scheduling inflation with identical assertions (5
+    // sequential full SettingsPanel mounts). Missing-element findBy*
+    // still rejects at ~1s, so real failures keep failing fast.
+    { timeout: 10_000 },
+    async () => {
+      vi.useRealTimers()
+      const thumbs: string[] = []
+      const profiles: string[] = []
+      for (const { name, seed } of PRIORS) {
+        localStorage.clear()
+        puts = []
+        seed()
+        const beforeStorage = localStorage.getItem("badgeDefaults")
+        const seedRaw = JSON.parse(beforeStorage ?? "{}") as Record<string, unknown>
+        const { unmount } = renderPanel()
+        await screen.findByTestId("poster-style-fresh")
+        switchEditTargetToLandscape()
+        await screen.findByTestId("poster-style-fresh")
+        // Mount normalizes the stored payload into canonical shape; the apply
+        // itself must not persist anything further before the global Save.
+        const stagedStorage = localStorage.getItem("badgeDefaults")
+        thumbs.push(thumbIdentity(thumbParams("fresh").toString()))
+        fireEvent.click(screen.getByTestId("poster-style-fresh"))
+        expect(screen.getByTestId("poster-style-fresh")).toHaveAttribute("aria-pressed", "true")
+        expect(thumbIdentity(thumbParams("fresh").toString()), `thumb stable after ${name}`).toBe(
+          thumbs[thumbs.length - 1],
+        )
+        expect(puts, `no PUT before Save (${name})`).toHaveLength(0)
+        expect(localStorage.getItem("badgeDefaults"), `no storage persist before Save (${name})`).toBe(stagedStorage)
+        openPresetTab()
+        fireEvent.click(screen.getByTestId("settings-save"))
+        await screen.findByText("ui.synced")
+        expect(puts, `single Save (${name})`).toHaveLength(1)
+        const body = puts[0].body
+        const land = body.landscape as Record<string, unknown>
+        expect(land).toMatchObject({
+          posterLayout: "fresh",
+          posterFreshScope: "ranked",
+          rankingBadgeStyle: "number",
+          qualityBadgeStyle: "color",
+          extraBadgeStyle: "follow-rank",
+          badgeStyle: "minimal",
+          ageBadge: false,
+        })
+        profiles.push(
+          snapshotIdentity({
+            posterLayout: land.posterLayout,
+            posterFreshScope: land.posterFreshScope,
+            rankingBadgeStyle: land.rankingBadgeStyle,
+            qualityBadgeStyle: land.qualityBadgeStyle,
+            extraBadgeStyle: land.extraBadgeStyle,
+            badgeStyle: land.badgeStyle,
+            ageBadge: land.ageBadge,
+          }),
+        )
+        // Portrait flats frozen (seed-owned, never the Fresh look).
+        expect(body.badgeFont, `portrait flat frozen (${name})`).toBe(seedRaw.defaultBadgeFont)
+        expect(body.badgeStyle, `portrait flat frozen (${name})`).toBe(seedRaw.defaultBadgeStyle)
+        expect(body.ratingSources).toEqual(["imdb", "tmdb"])
+        expect(body.posterShape).toBe("poster")
+        unmount()
+        cleanup()
+      }
+      expect(new Set(thumbs).size, "fresh landscape thumb identical from every prior").toBe(1)
+      expect(new Set(profiles).size, "fresh landscape profile identical from every prior").toBe(1)
+    },
+  )
 })
