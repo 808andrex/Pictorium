@@ -117,8 +117,9 @@ export interface UiLangMeta {
 /**
  * Canonical source of UI languages (BCP47 code + display metadata).
  * Almost all are 2-letter codes; `es-419` (Latin American Spanish,
- * UN M.49 419) is the exception: UI-only, never sent to providers
- * (TMDB/JustWatch expect ISO639-1 + ISO3166, e.g. es-MX).
+ * UN M.49 419) and `pt-br` (Brazilian Portuguese) are the exceptions:
+ * UI-only, never sent to providers
+ * (TMDB/JustWatch expect ISO639-1 + ISO3166, e.g. es-MX / pt-BR).
  * `SUPPORTED_UI_LANGS` (validazione, qui sotto) e `UI_LANGUAGES` (voci picker,
  * in utils.ts) derivano entrambi da questa lista: aggiungere una lingua
  * significa aggiungere una riga qui. `vi` è solo lingua UI senza regione
@@ -136,7 +137,8 @@ export const UI_LANG_META: readonly UiLangMeta[] = [
   { code: "es-419", flag: "🌎", name: "Español (Latinoamérica)" },
   { code: "ja", flag: "🇯🇵", name: "日本語" },
   { code: "ko", flag: "🇰🇷", name: "한국어" },
-  { code: "pt", flag: "🇵🇹", name: "Português" },
+  { code: "pt", flag: "🇵🇹", name: "Português (Portugal)" },
+  { code: "pt-br", flag: "🇧🇷", name: "Português (Brasil)" },
   { code: "he", flag: "🇮🇱", name: "עברית" },
   { code: "cs", flag: "🇨🇿", name: "Čeština" },
   { code: "ro", flag: "🇷🇴", name: "Română" },
@@ -160,6 +162,10 @@ export function contentLanguageForUiLang(lang: string | null | undefined, region
   // es-419 is UI-only: providers always receive es-MX (valid TMDB locale
   // ISO639-1 + ISO3166; es-419 is never sent), in any chart.
   if (code === "es-419") return "es-MX"
+  // pt-br is an explicit UI choice: providers always receive pt-BR,
+  // independently of the chart country (a US/global chart keeps pt-BR
+  // details). Every other UI language keeps the historic behavior below.
+  if (code === "pt-br") return "pt-BR"
   return isSupportedUiLang(code) && code !== region.lang2 ? code! : region.lang
 }
 
@@ -182,14 +188,18 @@ export function defaultRegionForLang(lang: string | null | undefined, currentReg
   if (parseRegion(currentRegion) === GLOBAL_REGION_CODE) return GLOBAL_REGION_CODE
   // es-419 shares the es family (ES/MX): the current Spanish region is
   // preserved as with "es" (never force a change of an explicit country).
-  const family = l === "es-419" ? "es" : l
+  // pt-br shares the pt family (PT/BR) the same way.
+  const family = l === "es-419" ? "es" : l === "pt-br" ? "pt" : l
   if (currentRegion) {
     const cur = getRegionDef(currentRegion)
     if (cur && cur.lang2 === family) return cur.code
   }
   // Without a current region (or outside the family): the Latin American
   // variant points to Mexico (es-MX), never Spain; "es" stays on ES (historic).
+  // Likewise the Brazilian variant points to Brazil (pt-BR), never Portugal;
+  // "pt" stays on PT (historic).
   if (l === "es-419") return "MX"
+  if (l === "pt-br") return "BR"
   const found = REGIONS.find((r) => r.lang2 === l)
   return found?.code ?? GLOBAL_REGION_CODE
 }

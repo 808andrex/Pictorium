@@ -70,14 +70,15 @@ describe("es-419 provider wiring", () => {
     expect(toImageLanguages("es-MX,en,null")).toBe("es,en,null")
     expect(toImageLanguages("ES-mx,en,null")).toBe("es,en,null")
     // Restricted scope: every other token (including other full locales
-    // and whitespace) is preserved byte-identically.
+    // and whitespace) is preserved byte-identically. pt-BR is intentionally
+    // absent here: the pt-br feature collapses it to the pt base (asserted
+    // in ptbr-lang.test.ts).
     for (const untouched of [
       "it,en,null",
       "en,null",
       "it-IT,en,null",
       "en-US,en,null",
       "fr-FR,en,null",
-      "pt-BR,en,null",
       "es-419 ,en,null",
       " es,en,null",
     ]) {

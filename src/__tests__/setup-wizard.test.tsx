@@ -28,12 +28,15 @@ describe("SetupWizard", () => {
 
   it("mostra le lingue UI al passo lingua", () => {
     renderWizard()
-    // 18 voci lingua UI (incl. Español (Latinoamérica) e Tiếng Việt, senza regione chart) + tasto back assente al passo 1
+    // 19 voci lingua UI (incl. Español (Latinoamérica), Português (Portugal),
+    // Português (Brasil) e Tiếng Việt, senza regione chart) + tasto back assente al passo 1
     expect(screen.getByText("Italiano")).toBeInTheDocument()
     expect(screen.getByText("English")).toBeInTheDocument()
     expect(screen.getByText("Español (Latinoamérica)")).toBeInTheDocument()
+    expect(screen.getByText("Português (Portugal)")).toBeInTheDocument()
+    expect(screen.getByText("Português (Brasil)")).toBeInTheDocument()
     expect(screen.getByText("Tiếng Việt")).toBeInTheDocument()
-    expect(screen.getAllByRole("button")).toHaveLength(18)
+    expect(screen.getAllByRole("button")).toHaveLength(19)
     // Lo step lingua non accoppia più paese e lingua (vi non ha regione chart)
     expect(screen.queryByText("USA · English")).not.toBeInTheDocument()
     expect(screen.queryByText("ui.back")).not.toBeInTheDocument()

@@ -492,7 +492,13 @@ export function usePictorium(): PictoriumCtx {
   const defaultRegionLiveRef = useRef(editorCtx.defaultRegion)
   defaultRegionLiveRef.current = editorCtx.defaultRegion
   const trending = useTrending(tmdbKey, mdblistApiKey, editorCtx.defaultRegion, serverHasTmdbKey)
-  const tmdbLang = getRegionDef(editorCtx.defaultRegion).lang
+  // pt-br only: an explicit Brazilian UI choice searches pt-BR independently
+  // of the chart country. Every other UI language keeps the historic wiring
+  // (region locale only), so e.g. pt/fr + US still search en-US.
+  const tmdbLang =
+    lang.toLowerCase() === "pt-br"
+      ? contentLanguageForUiLang(lang, editorCtx.defaultRegion)
+      : getRegionDef(editorCtx.defaultRegion).lang
   const search = useSearch(tmdbKey, tmdbLang, serverHasTmdbKey)
   const { mappings, mappingsMap, loadMappings, removeMapping, exportData, importData } = useMappingsStore()
   const {

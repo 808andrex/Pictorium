@@ -133,8 +133,8 @@ describe("regions", () => {
   })
 
   it("supports only the picker UI languages", () => {
-    expect(SUPPORTED_UI_LANGS).toEqual(["it", "pl", "en", "fr", "de", "es", "es-419", "ja", "ko", "pt", "he", "cs", "ro", "ar", "tr", "nl", "sv", "vi"])
-    for (const l of ["it", "pl", "en", "fr", "de", "es", "es-419", "ja", "ko", "pt", "he", "cs", "ro", "ar", "tr", "nl", "sv", "vi"]) {
+    expect(SUPPORTED_UI_LANGS).toEqual(["it", "pl", "en", "fr", "de", "es", "es-419", "ja", "ko", "pt", "pt-br", "he", "cs", "ro", "ar", "tr", "nl", "sv", "vi"])
+    for (const l of ["it", "pl", "en", "fr", "de", "es", "es-419", "ja", "ko", "pt", "pt-br", "he", "cs", "ro", "ar", "tr", "nl", "sv", "vi"]) {
       expect(isSupportedUiLang(l)).toBe(true)
     }
     // Lingue del vecchio picker (zh/ru) non più offerte

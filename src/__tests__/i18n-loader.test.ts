@@ -9,6 +9,7 @@ import enDict from "@/lib/translations/en.json"
 import frDict from "@/lib/translations/fr.json"
 import jaDict from "@/lib/translations/ja.json"
 import es419Dict from "@/lib/translations/es-419.json"
+import ptDict from "@/lib/translations/pt.json"
 
 // Minimal transport mock: only the vi chunk fails, every other language loads
 // the real JSON. A throwing factory makes the dynamic import reject, which is
@@ -21,6 +22,7 @@ const en = enDict as Record<string, string>
 const fr = frDict as Record<string, string>
 const ja = jaDict as Record<string, string>
 const es419 = es419Dict as Record<string, string>
+const pt = ptDict as Record<string, string>
 
 describe("i18n-loader", () => {
   it("keeps en/it synchronously available without loading", () => {
@@ -57,6 +59,21 @@ describe("i18n-loader", () => {
     // Sequential call after completion is served from the registry.
     await expect(loadLanguage("ja")).resolves.toBe(a)
     expect(createT("ja")("badge.today")).toBe(ja["badge.today"])
+  })
+
+  it("loads an unloaded pt-br from the pt chunk without English fallback", async () => {
+    // Lazy-client proof: pt/pt-br start unloaded here (only en/it are
+    // bundled), so this load exercises the real dynamic import + alias,
+    // not the eager i18n-server registration used elsewhere.
+    expect(isDictionaryLoaded("pt")).toBe(false)
+    expect(isDictionaryLoaded("pt-br")).toBe(false)
+    const dict = await loadLanguage("pt-br")
+    expect(dict).toBe(getDictionary("pt"))
+    expect(dict).not.toBe(getDictionary("en"))
+    expect(dict["badge.today"]).toBe(pt["badge.today"])
+    expect(dict["badge.today"]).not.toBe(en["badge.today"])
+    expect(isDictionaryLoaded("pt-br")).toBe(true)
+    expect(createT("pt-br")("badge.today")).toBe(pt["badge.today"])
   })
 
   it("never caches failures: the language stays unloaded and the loader keeps working", async () => {

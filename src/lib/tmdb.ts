@@ -614,29 +614,37 @@ export interface TMDBSearchResponse {
 /**
  * Provider-facing TMDB language for a requested locale.
  * Alias-only mapping: es-419 (UI-only, never a valid TMDB locale) becomes
- * the canonical es-MX. Every other locale passes through untouched, so
+ * the canonical es-MX, and pt-br (explicit Brazilian UI choice) becomes the
+ * canonical pt-BR. Every other locale passes through untouched, so
  * region flows (es-ES, it-IT, ...) and their cache entries are unchanged.
  * The normalized locale enters the tmdbFetch cache key: es-419 requests
  * share the es-MX entries (identical provider content), while es stays
- * a separate entry.
+ * a separate entry; pt-br shares the pt-BR entries, while pt stays separate.
  */
 export function toProviderLanguage(lang: string): string {
-  return lang.toLowerCase() === "es-419" ? "es-MX" : lang
+  const lower = lang.toLowerCase()
+  if (lower === "es-419") return "es-MX"
+  if (lower === "pt-br") return "pt-BR"
+  return lang
 }
 
 /**
  * Token list for `include_image_language` (ISO 639-1 codes only): only the
  * Spanish variants collapse to their base (es-419/es-MX -> es, case
- * insensitive), matching what region flows already request. Every other
- * token is preserved byte-identically (including whitespace and locales
- * such as it-IT/en-US), and the current en/null fallback order is unchanged.
+ * insensitive) and the Brazilian Portuguese variants to theirs
+ * (pt-br/pt-BR -> pt, case insensitive), matching what region flows already
+ * request. Every other token is preserved byte-identically (including
+ * whitespace and locales such as it-IT/en-US), and the current en/null
+ * fallback order is unchanged.
  */
 export function toImageLanguages(languages: string): string {
   return languages
     .split(",")
     .map((token) => {
       const c = token.toLowerCase()
-      return c === "es-419" || c === "es-mx" ? "es" : token
+      if (c === "es-419" || c === "es-mx") return "es"
+      if (c === "pt-br") return "pt"
+      return token
     })
     .join(",")
 }

@@ -8,7 +8,7 @@ import it from "./translations/it.json"
 
 export type Lang =
   | "en" | "it" | "pl" | "fr" | "de" | "es" | "es-419" | "ja" | "ko"
-  | "pt" | "he" | "cs" | "ro" | "ar" | "tr" | "nl" | "sv" | "vi"
+  | "pt" | "pt-br" | "he" | "cs" | "ro" | "ar" | "tr" | "nl" | "sv" | "vi"
 
 export type Dictionary = Record<string, string>
 
@@ -101,6 +101,9 @@ export function canonicalDictLang(lang: string): string {
   // The canonical TMDB locale es-MX has no dedicated UI dictionary: it
   // reuses the Latin American one (never the English fallback).
   if (c === "es-mx") return "es-419"
+  // Brazilian Portuguese reuses the Portuguese dictionary (no separate
+  // pt-br fork): pt-br UI strings resolve from pt, never English.
+  if (c === "pt-br") return "pt"
   return c
 }
 
