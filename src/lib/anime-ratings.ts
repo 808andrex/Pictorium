@@ -4,7 +4,7 @@ import { timedFetch } from "./outbound-stats"
 import { createLogger } from "@/lib/logger"
 import { envWithFallback } from "@/lib/env-compat"
 import { createCircuitBreaker, parseRetryAfterMs } from "@/lib/circuit-breaker"
-import { combineAbortSignals } from "@/lib/abort-signal"
+import { combineAbortSignals, raceWithAbort } from "@/lib/abort-signal"
 
 const log = createLogger("anime-ratings")
 
@@ -65,17 +65,74 @@ export function __resetAnimeNullForTest(): void {
 }
 
 // Deduplica i fetch concorrenti sullo stesso ID (griglie catalogo: N render
-// dello stesso titolo condividono un solo upstream, come tmdb.ts).
-const animeInflight = new Map<string, Promise<unknown>>()
+// dello stesso titolo condividono un solo upstream, come tmdb.ts). Il trasporto
+// condiviso gira sul controller POSSEDUTO dalla entry (mai sul signal del primo
+// chiamante): ogni subscriber — il primo incluso — gareggia col proprio signal
+// ed esce subito, il trasporto è abortito solo quando resta senza subscriber.
+// Il timeout interno resta sempre attivo (mai aggirabile da un subscriber vivo)
+// e l'identità della entry impedisce a un settle tardivo di cancellare una entry
+// sostitutiva.
+interface AnimeInflight<T> {
+  promise: Promise<T>
+  controller: AbortController
+  subscribers: number
+  settled: boolean
+  key: string
+}
 
-function coalesceAnime<T>(key: string, run: () => Promise<T>): Promise<T> {
-  const existing = animeInflight.get(key) as Promise<T> | undefined
-  if (existing) return existing
-  const promise = run().finally(() => {
-    if (animeInflight.get(key) === promise) animeInflight.delete(key)
-  })
-  animeInflight.set(key, promise)
-  return promise
+const animeInflight = new Map<string, AnimeInflight<unknown>>()
+
+function releaseAnimeSubscriber(entry: AnimeInflight<unknown>): void {
+  entry.subscribers -= 1
+  if (entry.subscribers <= 0 && !entry.settled) {
+    try {
+      entry.controller.abort(new DOMException("Aborted", "AbortError"))
+    } catch { /* noop */ }
+    if (animeInflight.get(entry.key) === entry) animeInflight.delete(entry.key)
+  }
+}
+
+/**
+ * Coalesce di un fetch anime sulla chiave `key`. `signal` è il budget del
+ * subscriber: alla sua cancellazione il subscriber esce subito con `fallback`
+ * (mai reject: i provider anime non devono lanciare). `run` riceve il signal
+ * POSSEDUTO dal trasporto (per timeout/guardie) e non deve mai rifiutare.
+ */
+function coalesceAnime<T>(
+  key: string,
+  signal: AbortSignal | undefined,
+  fallback: T,
+  run: (owned: AbortSignal) => Promise<T>,
+): Promise<T> {
+  // Chiamante già cancellato: nessun nuovo upstream, nessuna negativa.
+  if (signal?.aborted) return Promise.resolve(fallback)
+  const existing = animeInflight.get(key) as AnimeInflight<T> | undefined
+  if (existing && !existing.controller.signal.aborted) {
+    existing.subscribers += 1
+    return raceWithAbort(existing.promise, signal)
+      .catch(() => fallback)
+      .finally(() => releaseAnimeSubscriber(existing))
+  }
+  const controller = new AbortController()
+  let resolveShared!: (value: T) => void
+  const shared = new Promise<T>((resolve) => { resolveShared = resolve })
+  const entry: AnimeInflight<T> = { promise: shared, controller, subscribers: 1, settled: false, key }
+  animeInflight.set(key, entry)
+  void (async () => {
+    try {
+      const value = await run(controller.signal)
+      entry.settled = true
+      resolveShared(value)
+    } catch {
+      entry.settled = true
+      resolveShared(fallback)
+    } finally {
+      if (animeInflight.get(key) === entry) animeInflight.delete(key)
+    }
+  })()
+  return raceWithAbort(shared, signal)
+    .catch(() => fallback)
+    .finally(() => releaseAnimeSubscriber(entry))
 }
 
 export interface AnimeRatingOptions {
@@ -218,40 +275,58 @@ export async function resolveAnimeIds(
     if (cached) return cached
     if (animeNullFresh(cacheKey)) continue
 
-    const outcome = await coalesceAnime(cacheKey, async (): Promise<{ status: "ok" | "miss" | "error"; ids: AnimeIds | null }> => {
-      try {
-        const res = await timedFetch(`${ANIZIP_BASE}/mappings?${attempt.qp}`, {
-          headers: { Accept: "application/json" },
-          signal: combineAbortSignals(signal, ANIME_TIMEOUT_MS),
-        })
-        if (res.status === 429 || res.status >= 500) {
-          anizipBreaker.recordFailure(parseRetryAfterMs((n) => res.headers.get(n)))
+    const outcome = await coalesceAnime<{ status: "ok" | "miss" | "error"; ids: AnimeIds | null }>(
+      cacheKey,
+      signal,
+      { status: "error", ids: null },
+      async (owned) => {
+        const transportSignal = combineAbortSignals(owned, ANIME_TIMEOUT_MS)
+        try {
+          const res = await timedFetch(`${ANIZIP_BASE}/mappings?${attempt.qp}`, {
+            headers: { Accept: "application/json" },
+            signal: transportSignal,
+          })
+          if (res.status === 429 || res.status >= 500) {
+            anizipBreaker.recordFailure(parseRetryAfterMs((n) => res.headers.get(n)))
+            return { status: "error", ids: null }
+          }
+          // 404 = non-anime (o mapping assente): miss genuino in negativa, senza
+          // far scattare il breaker per tutti i titoli non-anime.
+          if (!res.ok) {
+            animeNullSet(cacheKey)
+            return { status: "miss", ids: null }
+          }
+          anizipBreaker.recordSuccess()
+          let data: { mappings?: AnizipMappings } | null = null
+          try {
+            data = (await res.json()) as { mappings?: AnizipMappings } | null
+          } catch {
+            // Body-read abortito (cancellazione/timeout): mai un miss genuino,
+            // niente negativa. La cancellazione (owned abortito) non è un guasto
+            // del breaker; un timeout sì.
+            if (transportSignal.aborted) {
+              if (!owned.aborted) anizipBreaker.recordFailure()
+              return { status: "error", ids: null }
+            }
+            // JSON malformato: policy esistente invariata (miss genuino sotto).
+          }
+          const ids: AnimeIds = {
+            anilistId: toPositiveInt(data?.mappings?.anilist_id),
+            kitsuId: toPositiveInt(data?.mappings?.kitsu_id),
+          }
+          if (ids.anilistId === null && ids.kitsuId === null) {
+            animeNullSet(cacheKey)
+            return { status: "miss", ids: null }
+          }
+          cacheSet(cacheKey, ids, ["anime", "ratings"])
+          return { status: "ok", ids }
+        } catch (e) {
+          if (!owned.aborted) anizipBreaker.recordFailure()
+          log.error("AniZip mapping fetch failed", { error: e instanceof Error ? e.message : String(e) })
           return { status: "error", ids: null }
         }
-        // 404 = non-anime (o mapping assente): miss genuino in negativa, senza
-        // far scattare il breaker per tutti i titoli non-anime.
-        if (!res.ok) {
-          animeNullSet(cacheKey)
-          return { status: "miss", ids: null }
-        }
-        anizipBreaker.recordSuccess()
-        const data = (await res.json().catch(() => null)) as { mappings?: AnizipMappings } | null
-        const ids: AnimeIds = {
-          anilistId: toPositiveInt(data?.mappings?.anilist_id),
-          kitsuId: toPositiveInt(data?.mappings?.kitsu_id),
-        }
-        if (ids.anilistId === null && ids.kitsuId === null) {
-          animeNullSet(cacheKey)
-          return { status: "miss", ids: null }
-        }
-        cacheSet(cacheKey, ids, ["anime", "ratings"])
-        return { status: "ok", ids }
-      } catch (e) {
-        if (!signal?.aborted) anizipBreaker.recordFailure()
-        log.error("AniZip mapping fetch failed", { error: e instanceof Error ? e.message : String(e) })
-        return { status: "error", ids: null }
-      }
-    })
+      },
+    )
 
     if (outcome.status === "ok") return outcome.ids
     if (outcome.status === "error") return null
@@ -267,7 +342,8 @@ async function fetchAnilistRating(anilistId: number, signal?: AbortSignal): Prom
   if (animeNullFresh(cacheKey)) return null
   if (anilistBreaker.isOpen()) return null
 
-  return coalesceAnime(cacheKey, async (): Promise<number | null> => {
+  return coalesceAnime<number | null>(cacheKey, signal, null, async (owned) => {
+    const transportSignal = combineAbortSignals(owned, ANIME_TIMEOUT_MS)
     try {
       const res = await timedFetch(ANILIST_BASE, {
         method: "POST",
@@ -276,7 +352,7 @@ async function fetchAnilistRating(anilistId: number, signal?: AbortSignal): Prom
           query: "query ($id: Int) { Media(id: $id, type: ANIME) { averageScore } }",
           variables: { id: anilistId },
         }),
-        signal: combineAbortSignals(signal, ANIME_TIMEOUT_MS),
+        signal: transportSignal,
       })
       if (res.status === 429 || res.status >= 500) {
         anilistBreaker.recordFailure(parseRetryAfterMs((n) => res.headers.get(n)))
@@ -287,7 +363,16 @@ async function fetchAnilistRating(anilistId: number, signal?: AbortSignal): Prom
         return null
       }
       anilistBreaker.recordSuccess()
-      const data = (await res.json().catch(() => null)) as { data?: { Media?: { averageScore?: unknown } | null } } | null
+      let data: { data?: { Media?: { averageScore?: unknown } | null } } | null = null
+      try {
+        data = (await res.json()) as { data?: { Media?: { averageScore?: unknown } | null } } | null
+      } catch {
+        // Body-read abortito: mai un miss genuino (vedi AniZip).
+        if (transportSignal.aborted) {
+          if (!owned.aborted) anilistBreaker.recordFailure()
+          return null
+        }
+      }
       const rating = toTen(data?.data?.Media?.averageScore)
       if (rating === null) {
         animeNullSet(cacheKey)
@@ -296,7 +381,7 @@ async function fetchAnilistRating(anilistId: number, signal?: AbortSignal): Prom
       cacheSet(cacheKey, rating, ["anime", "ratings"])
       return rating
     } catch (e) {
-      if (!signal?.aborted) anilistBreaker.recordFailure()
+      if (!owned.aborted) anilistBreaker.recordFailure()
       log.error("AniList rating fetch failed", { error: e instanceof Error ? e.message : String(e) })
       return null
     }
@@ -310,11 +395,12 @@ async function fetchKitsuRating(kitsuId: number, signal?: AbortSignal): Promise<
   if (animeNullFresh(cacheKey)) return null
   if (kitsuBreaker.isOpen()) return null
 
-  return coalesceAnime(cacheKey, async (): Promise<number | null> => {
+  return coalesceAnime<number | null>(cacheKey, signal, null, async (owned) => {
+    const transportSignal = combineAbortSignals(owned, ANIME_TIMEOUT_MS)
     try {
       const res = await timedFetch(`${KITSU_BASE}/anime/${kitsuId}`, {
         headers: { Accept: "application/vnd.api+json" },
-        signal: combineAbortSignals(signal, ANIME_TIMEOUT_MS),
+        signal: transportSignal,
       })
       if (res.status === 429 || res.status >= 500) {
         kitsuBreaker.recordFailure(parseRetryAfterMs((n) => res.headers.get(n)))
@@ -325,7 +411,16 @@ async function fetchKitsuRating(kitsuId: number, signal?: AbortSignal): Promise<
         return null
       }
       kitsuBreaker.recordSuccess()
-      const data = (await res.json().catch(() => null)) as { data?: { attributes?: { averageRating?: unknown } } } | null
+      let data: { data?: { attributes?: { averageRating?: unknown } } } | null = null
+      try {
+        data = (await res.json()) as { data?: { attributes?: { averageRating?: unknown } } } | null
+      } catch {
+        // Body-read abortito: mai un miss genuino (vedi AniZip).
+        if (transportSignal.aborted) {
+          if (!owned.aborted) kitsuBreaker.recordFailure()
+          return null
+        }
+      }
       const rating = toTen(data?.data?.attributes?.averageRating)
       if (rating === null) {
         animeNullSet(cacheKey)
@@ -334,7 +429,7 @@ async function fetchKitsuRating(kitsuId: number, signal?: AbortSignal): Promise<
       cacheSet(cacheKey, rating, ["anime", "ratings"])
       return rating
     } catch (e) {
-      if (!signal?.aborted) kitsuBreaker.recordFailure()
+      if (!owned.aborted) kitsuBreaker.recordFailure()
       log.error("Kitsu rating fetch failed", { error: e instanceof Error ? e.message : String(e) })
       return null
     }

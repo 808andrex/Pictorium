@@ -50,8 +50,31 @@ export function __resetCinemetaNullForTest(): void {
   cinemetaNullAt.clear()
 }
 
-// Deduplica i fetch concorrenti sullo stesso ID (griglie catalogo).
-const cinemetaInflight = new Map<string, Promise<CinemetaOutcome>>()
+// Deduplica i fetch concorrenti sullo stesso ID (griglie catalogo). Ogni entry
+// possiede un controller: il trasporto condiviso gira sul signal POSSEDUTO
+// (mai su quello del primo chiamante) e ogni subscriber — owner incluso —
+// gareggia col proprio signal. L'owned è abortito solo quando resta senza
+// subscriber (o al timeout interno, sempre attivo); l'identità dell'entry
+// impedisce a un settle tardivo di cancellare una entry sostitutiva.
+interface CinemetaInflight {
+  promise: Promise<CinemetaOutcome>
+  controller: AbortController
+  subscribers: number
+  settled: boolean
+  key: string
+}
+
+const cinemetaInflight = new Map<string, CinemetaInflight>()
+
+function releaseCinemetaSubscriber(entry: CinemetaInflight): void {
+  entry.subscribers -= 1
+  if (entry.subscribers <= 0 && !entry.settled) {
+    try {
+      entry.controller.abort(new DOMException("Aborted", "AbortError"))
+    } catch { /* noop */ }
+    if (cinemetaInflight.get(entry.key) === entry) cinemetaInflight.delete(entry.key)
+  }
+}
 
 interface CinemetaOutcome {
   status: "ok" | "miss" | "error"
@@ -82,47 +105,99 @@ async function fetchCinemetaType(
   if (cinemetaBreaker.isOpen()) return { status: "error", rating: null }
 
   const existing = cinemetaInflight.get(cacheKey)
-  // Coalescing preservato (stesso trasporto condiviso), ma ogni waiter
-  // gareggia col proprio signal: un fetch lento condiviso non deve tenere
-  // in ostaggio il budget di fallback del chiamante.
-  if (existing) return raceWithAbort(existing, signal)
+  if (existing) {
+    if (!existing.controller.signal.aborted) {
+      // Join coalescente: il waiter esce sul proprio signal (reject), mai
+      // ostaggio del trasporto altrui.
+      existing.subscribers += 1
+      try {
+        return await raceWithAbort(existing.promise, signal)
+      } finally {
+        releaseCinemetaSubscriber(existing)
+      }
+    }
+    // Entry condannata (owned già abortito): mai accodarsi, parte una fetch
+    // fresca; l'identità della vecchia non cancellerà la nuova al settle.
+    if (cinemetaInflight.get(cacheKey) === existing) cinemetaInflight.delete(cacheKey)
+  }
+  // Chiamante già cancellato: nessun nuovo upstream.
+  if (signal?.aborted) return { status: "error", rating: null }
 
-  const promise: Promise<CinemetaOutcome> = (async (): Promise<CinemetaOutcome> => {
+  const controller = new AbortController()
+  // Timeout interno SEMPRE attivo (anche senza signal del chiamante) e mai
+  // aggirabile da un subscriber vivo: abortisce solo l'owned quando tutti se
+  // ne vanno.
+  const transportSignal = combineAbortSignals(controller.signal, CINEMETA_TIMEOUT_MS)
+  let resolveShared!: (value: CinemetaOutcome) => void
+  const shared = new Promise<CinemetaOutcome>((resolve) => { resolveShared = resolve })
+  const entry: CinemetaInflight = { promise: shared, controller, subscribers: 1, settled: false, key: cacheKey }
+  cinemetaInflight.set(cacheKey, entry)
+
+  void (async () => {
     try {
       const res = await timedFetch(`${CINEMETA_BASE}/meta/${type}/${encodeURIComponent(imdbId)}.json`, {
         headers: { Accept: "application/json" },
-        signal: combineAbortSignals(signal, CINEMETA_TIMEOUT_MS),
+        signal: transportSignal,
       })
       if (res.status === 429 || res.status >= 500) {
         cinemetaBreaker.recordFailure(parseRetryAfterMs((n) => res.headers.get(n)))
-        return { status: "error", rating: null }
+        entry.settled = true
+        resolveShared({ status: "error", rating: null })
+        return
       }
       // Cinemeta NON fa 404 sugli id ignoti (200 con meta vuoto): il miss si
       // rileva da imdbRating assente, mai dallo status.
       if (!res.ok) {
         cinemetaNullSet(cacheKey)
-        return { status: "miss", rating: null }
+        entry.settled = true
+        resolveShared({ status: "miss", rating: null })
+        return
       }
       cinemetaBreaker.recordSuccess()
-      const data = (await res.json().catch(() => null)) as { meta?: CinemetaMeta } | null
+      let data: { meta?: CinemetaMeta } | null = null
+      try {
+        data = (await res.json()) as { meta?: CinemetaMeta } | null
+      } catch {
+        // Body-read abortito (cancellazione/timeout): mai un miss genuino,
+        // niente negativa. La cancellazione (owned abortito) non è un guasto
+        // del breaker; un timeout sì.
+        if (transportSignal.aborted) {
+          if (!controller.signal.aborted) cinemetaBreaker.recordFailure()
+          entry.settled = true
+          resolveShared({ status: "error", rating: null })
+          return
+        }
+        // JSON malformato: policy esistente invariata (miss genuino sotto).
+      }
       const rating = toTen(data?.meta?.imdbRating)
       if (rating === null) {
         cinemetaNullSet(cacheKey)
-        return { status: "miss", rating: null }
+        entry.settled = true
+        resolveShared({ status: "miss", rating: null })
+        return
       }
       cacheSet(cacheKey, rating, ["cinemeta"])
-      return { status: "ok", rating }
+      entry.settled = true
+      resolveShared({ status: "ok", rating })
     } catch (e) {
-      if (!signal?.aborted) cinemetaBreaker.recordFailure()
+      if (!controller.signal.aborted) cinemetaBreaker.recordFailure()
       log.error("Cinemeta rating fetch failed", { error: e instanceof Error ? e.message : String(e) })
-      return { status: "error", rating: null }
+      entry.settled = true
+      resolveShared({ status: "error", rating: null })
+    } finally {
+      if (cinemetaInflight.get(cacheKey) === entry) cinemetaInflight.delete(cacheKey)
     }
   })()
-  cinemetaInflight.set(cacheKey, promise)
+
+  // Owner (primo subscriber): esce subito al proprio abort con esito
+  // transiente (mai reject, come prima del fix) e senza toccare il trasporto
+  // altrui.
   try {
-    return await promise
+    return await raceWithAbort(shared, signal)
+  } catch {
+    return { status: "error", rating: null }
   } finally {
-    if (cinemetaInflight.get(cacheKey) === promise) cinemetaInflight.delete(cacheKey)
+    releaseCinemetaSubscriber(entry)
   }
 }
 
