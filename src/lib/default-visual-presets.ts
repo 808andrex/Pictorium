@@ -71,7 +71,7 @@ const SHARED_VISUAL_BASE = {
   defaultLogoOffsetX: null,
   defaultLogoOffsetY: null,
   defaultBlurIntensity: 20,
-  defaultTopShade: 80,
+  defaultTopShade: 50,
   defaultTopBadgeScale: 100,
   defaultTopBadgeOffsetX: 0,
   defaultTopBadgeOffsetY: 0,
@@ -167,7 +167,7 @@ export const APPLE_VISUAL_DEFAULTS: VisualPresetValues = captureVisualPreset({
   defaultBlurFade: 50,
   defaultBlurDarkness: 100,
   defaultTintStrength: 0,
-  defaultTopShade: 80,
+  defaultTopShade: 50,
   defaultGradientHeight: 50,
   defaultTopBadgeScale: 100,
   defaultTopBadgeOffsetX: 0,
@@ -206,7 +206,7 @@ export const APPLE_VISUAL_DEFAULTS: VisualPresetValues = captureVisualPreset({
     blurFade: 100,
     blurDarkness: 100,
     tintStrength: 0,
-    topShade: 80,
+    topShade: 50,
     topBadgeScale: 100,
     topBadgeOffsetX: 0,
     topBadgeOffsetY: 0,
@@ -254,9 +254,9 @@ export const FRESH_PRESET_LABEL = "Fresh"
  * custom/separate off; minimal badges, `netflix` rank + left ribbon,
  * Inter font, knockout quality icons; file transforms verbatim
  * (logo null/null/null, grade 35, network on/auto/follow, preRelease on,
- * ribbon left). Intentional universal-default override: the canonical
- * top-shade default moved to 80, so this snapshot carries `topShade` 80 on
- * both shapes (the export's 50 is superseded here; the readonly desktop JSON
+ * ribbon left). Intentional universal-default alignment: the canonical
+ * top-shade default is 50 (matching the export), so this snapshot carries
+ * `topShade` 50 on both shapes; the readonly desktop JSON
  * `C:\Users\lucaf\Desktop\fresh.json` is never edited). The export predates
  * layout/scope/age keys, so they are injected explicitly here (never at
  * runtime from the desktop file):
@@ -314,7 +314,7 @@ export const FRESH_VISUAL_DEFAULTS: VisualPresetValues =
     defaultBlurFade: 50,
     defaultBlurDarkness: 30,
     defaultTintStrength: 20,
-    defaultTopShade: 80,
+    defaultTopShade: 50,
     defaultGradientHeight: 35,
     defaultTopBadgeScale: 100,
     defaultTopBadgeOffsetX: 0,
@@ -358,7 +358,7 @@ export const FRESH_VISUAL_DEFAULTS: VisualPresetValues =
       blurFade: 100,
       blurDarkness: 100,
       tintStrength: 0,
-      topShade: 80,
+      topShade: 50,
       topBadgeScale: 100,
       topBadgeOffsetX: 0,
       topBadgeOffsetY: 0,

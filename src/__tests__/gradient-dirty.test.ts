@@ -10,6 +10,7 @@ const DEFAULTS: GradientTuning = {
   blurDarkness: 30,
   tintStrength: 20,
   topShade: 50,
+  topShadeHeight: 25,
 }
 
 const mapping = (partial: Partial<Mapping> = {}): Mapping => ({
@@ -27,13 +28,14 @@ describe("isGradientDirty", () => {
   it("true quando un preset/slider muove un solo campo", () => {
     expect(isGradientDirty({ ...DEFAULTS, blurFade: 60 }, null, DEFAULTS, "poster")).toBe(true)
     expect(isGradientDirty({ ...DEFAULTS, topShade: 0 }, null, DEFAULTS, "poster")).toBe(true)
+    expect(isGradientDirty({ ...DEFAULTS, topShadeHeight: 60 }, null, DEFAULTS, "poster")).toBe(true)
     expect(isGradientDirty({ ...DEFAULTS, blurEnabled: false }, null, DEFAULTS, "poster")).toBe(true)
   })
 
   it("false quando corrente e mapping congelato coincidono", () => {
     const m = mapping({ gradientHeight: 40, blurIntensity: 20, blurFade: 60, blurDarkness: 0, tintStrength: 100, topShade: 70, blurEnabled: true })
     expect(isGradientDirty(
-      { gradientHeight: 40, blurEnabled: true, blurIntensity: 20, blurFade: 60, blurDarkness: 0, tintStrength: 100, topShade: 70 },
+      { gradientHeight: 40, blurEnabled: true, blurIntensity: 20, blurFade: 60, blurDarkness: 0, tintStrength: 100, topShade: 70, topShadeHeight: 25 },
       m, DEFAULTS, "poster",
     )).toBe(false)
   })

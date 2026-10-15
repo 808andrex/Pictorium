@@ -142,6 +142,12 @@ export interface GenerationInput {
    * fa risaltare badge/testi superiori. Sotto logo e badge.
    */
   topShade?: number
+  /**
+   * Altezza dell'ombra superiore in % del canvas 0-100 (default 25 = look
+   * storico). Solo flat (vale per entrambi i canvas). 0 = ombra disattivata
+   * qualunque sia `topShade`.
+   */
+  topShadeHeight?: number
 
   // Badge flags
   badgesEnabled: boolean
@@ -485,14 +491,15 @@ async function getPreReleaseDim(canvasW: number = STD_W, canvasH: number = STD_H
   return p
 }
 
-// ---- Top shade overlay (una entry per dimensioni canvas + intensità) ----
+// ---- Top shade overlay (una entry per dimensioni canvas + intensità + altezza) ----
 const _topShadeCache = new Map<string, Promise<Buffer>>()
-async function getTopShade(canvasW: number, canvasH: number, strength: number): Promise<Buffer> {
+async function getTopShade(canvasW: number, canvasH: number, strength: number, heightPct = 25): Promise<Buffer> {
   const s = Math.min(Math.max(Math.round(strength), 0), 100)
-  const key = `${canvasW}x${canvasH}:${s}`
+  const h = Number.isFinite(heightPct) ? Math.min(Math.max(Math.round(heightPct), 0), 100) : 25
+  const key = `${canvasW}x${canvasH}:${s}:${h}`
   let p = _topShadeCache.get(key)
   if (!p) {
-    const fresh = sharp(Buffer.from(topShadeSVG(canvasW, canvasH, s))).png().toBuffer()
+    const fresh = sharp(Buffer.from(topShadeSVG(canvasW, canvasH, s, h))).png().toBuffer()
     // Reset su reject: vedi getVignette sopra.
     fresh.catch(() => { if (_topShadeCache.get(key) === fresh) _topShadeCache.delete(key) })
     _topShadeCache.set(key, fresh)
@@ -848,6 +855,7 @@ const NETWORK_FILES_COMBINED: Record<string, string> = {
   bellanova: "bellanova-big.png",
   anton: "Anton_United_Kingdom_logo.png",
   comix_wave: "CoMix Wave Films logo.svg",
+  filmauro: "cdnlogo.com_filmauro-logo.svg",
 }
 
 // B4: memo per (networkKey, targetH, fg). Gli SVG in public/networks/ sono
@@ -1463,8 +1471,10 @@ export async function generatePosterBuffer(input: GenerationInput): Promise<Buff
     blurEnabled, blurHeight, blurIntensity, blurFade, blurDarkness,
     // Default 20 quando il chiamante non lo passa (test diretti, vecchi adapter).
     tintStrength = 20,
-    // Ombra superiore: default 80 = catena di default (test diretti inclusi).
-    topShade = 80,
+    // Ombra superiore: default 50 = catena di default (test diretti inclusi).
+    topShade = 50,
+    // Altezza ombra superiore (% canvas): default 25 = look storico.
+    topShadeHeight = 25,
     badgesEnabled, rankingEnabled, genreName, voteAverage, badgeStyle,
     rankingBadgeStyle, extraBadgeStyle, badgeGenre, badgeYear, badgeRating, badgeQuality, quality,
     qualityBadgeStyle, videoFormats,
@@ -1756,7 +1766,7 @@ export async function generatePosterBuffer(input: GenerationInput): Promise<Buff
   // (portrait STD_W × STD_H, landscape LAND_W × LAND_H — near-identity
   // resize, no new fetch, at most one small cached crop decode per band per
   // title): top 8% strip veiled by the black top-shade edge alpha
-  // (0.75·topShade/100; topShade = 0 = no veil) for rank/extra, bottom 8%
+  // (0.75·topShade/100; topShade = 0 or topShadeHeight = 0 = no veil) for rank/extra, bottom 8%
   // strip veiled by blurDarkness ONLY when the bottom blur is actually
   // enabled for genre. Two-band approximation, NOT per-badge pixel-exact:
   // explicit offsets can move a badge outside its band (anchor-nearest still
@@ -1788,7 +1798,7 @@ export async function generatePosterBuffer(input: GenerationInput): Promise<Buff
         }).catch(() => null)
       : Promise.resolve(null),
   ])
-  const topBgLum = topBand ? effectiveTopBackgroundLuminance(topBand, topShade) : null
+  const topBgLum = topBand ? effectiveTopBackgroundLuminance(topBand, topShade, topShadeHeight) : null
   const bottomBgLum = bottomBand ? effectiveBottomBackgroundLuminance(bottomBand, blurDarkness, blurEnabled) : null
   const accentColorGenre = accentOverride?.genreColor ?? adaptiveAccentHexForBand(sceneTintHex, GENRE_FALLBACK[genreName || ""] || "#555555", bottomBgLum)
   const accentColorRank = accentOverride?.rankColor ?? adaptiveAccentHexForBand(sceneTintHex, "#555555", topBgLum)
@@ -1900,10 +1910,11 @@ export async function generatePosterBuffer(input: GenerationInput): Promise<Buff
   if (preRelease) {
     composites.push({ input: await getPreReleaseDim(CW, CH), top: 0, left: 0 })
   }
-  // Ombra lineare superiore (default 50): sopra vignetta/velo ma sotto logo
-  // e badge (restano luminosi). A 0 nessun composite (zero pixel cambiati).
-  if (topShade > 0) {
-    composites.push({ input: await getTopShade(CW, CH, topShade), top: 0, left: 0 })
+  // Ombra lineare superiore (default 50 × 25% canvas): sopra vignetta/velo
+  // ma sotto logo e badge (restano luminosi). A forza 0 o altezza 0 nessun
+  // composite (zero pixel cambiati).
+  if (topShade > 0 && topShadeHeight > 0) {
+    composites.push({ input: await getTopShade(CW, CH, topShade, topShadeHeight), top: 0, left: 0 })
   }
   // Fresh: il logo titolo riusa il bitmap già ridimensionato ma ancorato in
   // basso a destra (composeFreshOverlay) — qui nessun composite storico.

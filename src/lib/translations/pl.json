@@ -847,6 +847,7 @@
   "ui.minimal": "Minimalny",
   "ui.tintStrength": "Siła barwienia",
   "ui.topShade": "Cień u góry",
+  "ui.topShadeHeight": "Wysokość górnego cienia",
   "ui.gradientPresetNatural": "Naturalny",
   "ui.gradientPresetColor": "Kolorowy",
   "ui.gradientPresetAdd": "Zapisz bieżący jako preset",

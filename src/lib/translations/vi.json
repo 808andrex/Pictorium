@@ -868,6 +868,7 @@
   "ui.minimal": "Tối giản",
   "ui.tintStrength": "Độ nhuộm",
   "ui.topShade": "Bóng trên",
+  "ui.topShadeHeight": "Chiều cao bóng đổ trên",
   "ui.gradientPresetNatural": "Tự nhiên",
   "ui.gradientPresetColor": "Màu",
   "ui.gradientPresetAdd": "Lưu hiện tại làm preset",

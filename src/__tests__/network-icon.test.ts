@@ -509,5 +509,23 @@ describe("network-svgs", () => {
       expect(pill!.h).toBeGreaterThan(0)
     }
   })
+
+  it("matches Filmauro and renders its logo (SVG-first + pill)", async () => {
+    expect(getNetworkSvgResult("Filmauro", 500)?.networkKey).toBe("filmauro")
+    expect(getNetworkSvgResult("FILMAURO", 500)?.networkKey).toBe("filmauro")
+    const res = await renderNetworkLogoBadge("Filmauro", 500)
+    expect(res).not.toBeNull()
+    expect(res!.networkKey).toBe("filmauro")
+    expect(res!.png).toBeInstanceOf(Buffer)
+    expect(res!.w).toBeGreaterThan(0)
+    expect(res!.h).toBeGreaterThan(0)
+    const hybrid = await renderFirstMatchingNetworkLogoBadgeHybrid([{ name: "Filmauro", logoPath: null }], 500)
+    expect(hybrid).not.toBeNull()
+    expect(hybrid!.networkKey).toBe("filmauro")
+    expect(hybrid!.matchedName).toBe("Filmauro")
+    const pill = await renderNetworkOnlyLargePill("filmauro", 500, false)
+    expect(pill).not.toBeNull()
+    expect(pill!.png).toBeInstanceOf(Buffer)
+  })
 })
 

@@ -51,6 +51,7 @@ export async function saveDefaults(ed: PosterEditorCtx): Promise<boolean> {
     blurDarkness: ed.defaultBlurDarkness,
     tintStrength: ed.defaultTintStrength,
     topShade: ed.defaultTopShade,
+    topShadeHeight: ed.defaultTopShadeHeight,
     gradientHeight: ed.defaultGradientHeight,
     topBadgeScale: ed.defaultTopBadgeScale,
     topBadgeOffsetX: ed.defaultTopBadgeOffsetX,

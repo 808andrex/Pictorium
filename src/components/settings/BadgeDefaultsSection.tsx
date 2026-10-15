@@ -699,7 +699,8 @@ export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange, pre
       effTarget("blurFade", ed.defaultBlurFade) === NATURAL_GRADIENT_DEFAULTS.blurFade &&
       effTarget("blurDarkness", ed.defaultBlurDarkness) === NATURAL_GRADIENT_DEFAULTS.blurDarkness &&
       effTarget("tintStrength", ed.defaultTintStrength) === NATURAL_GRADIENT_DEFAULTS.tintStrength &&
-      effTarget("topShade", ed.defaultTopShade) === 80 &&
+      effTarget("topShade", ed.defaultTopShade) === 50 &&
+      effTarget("topShadeHeight", ed.defaultTopShadeHeight) === 25 &&
       effTarget("logoScale", ed.defaultLogoScale) === null &&
       effTarget("logoOffsetX", ed.defaultLogoOffsetX) === null &&
       effTarget("logoOffsetY", ed.defaultLogoOffsetY) === null &&
@@ -897,6 +898,7 @@ export function BadgeDefaultsSection({ active, shape, onPreviewFamilyChange, pre
     defaultBlurDarkness: "blurDarkness",
     defaultTintStrength: "tintStrength",
     defaultTopShade: "topShade",
+    defaultTopShadeHeight: "topShadeHeight",
     defaultGradientHeight: "gradientHeight",
     defaultTopBadgeScale: "topBadgeScale",
     defaultTopBadgeOffsetX: "topBadgeOffsetX",

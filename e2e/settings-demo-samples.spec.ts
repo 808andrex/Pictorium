@@ -553,12 +553,12 @@ test.describe("Settings demo samples: search, zoom, badges", () => {
     })
     const seen: Seen = { urls: [] }
     collectPreviewRequests(page, seen)
-    // Settled arrange-state gate: the first tv XHR can fire pre-hydration
-    // with the code-factory topShade (ts=80, PosterEditorContext:52) before
-    // the arranged FACTORY_DEFAULTS topShade (ts=50) is adopted (proven
-    // first=ts80/reopen=ts50 drift, bs=shadow both = dialog rows, single
-    // param delta). Byte-equality must compare settled rows, not the
-    // transient — same flaw class as the u4 noop baselines.
+    // Settled arrange-state gate: the preview carries the unified topShade
+    // default (ts=50, PosterEditorContext:52) both pre-hydration and after
+    // the arranged FACTORY_DEFAULTS topShade (ts=50) is adopted — no
+    // first/reopen drift on this axis (bs=shadow both = dialog rows, single
+    // param delta). Byte-equality must compare settled rows, not transients
+    // — same flaw class as the u4 noop baselines.
     const settledTv = (u: URL) => u.searchParams.get("ts") === "50"
     const tvUrl = (from: number, pred: (u: URL) => boolean = settledTv): Promise<string> => {
       let out: string | null = null

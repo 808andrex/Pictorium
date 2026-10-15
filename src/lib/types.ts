@@ -235,8 +235,14 @@ export interface Mapping {
   blurDarkness?: number | null
   /** Intensità tinta di scena 0-100 (default 20). Solo flat: vale per entrambi i canvas. */
   tintStrength?: number | null
-  /** Ombra lineare superiore 0-100 (default 0 = spenta). Solo flat: vale per entrambi i canvas. */
+  /** Ombra lineare superiore 0-100 (default 50). Solo flat: vale per entrambi i canvas. */
   topShade?: number | null
+  /**
+   * Altezza dell'ombra superiore in % del canvas 0-100 (default 25 = look
+   * storico). Solo flat: vale per entrambi i canvas. 0 = ombra disattivata
+   * qualunque sia `topShade`.
+   */
+  topShadeHeight?: number | null
   gradientHeight?: number | null
   cleanPosters?: string[] | null
   cleanPosterIndex?: number | null
@@ -337,6 +343,11 @@ export interface LandscapeSettings {
   blurDarkness?: number | null
   tintStrength?: number | null
   topShade?: number | null
+  /**
+   * Altezza dell'ombra superiore in % del canvas 0-100 (default 25 = look
+   * storico). 0 = ombra disattivata qualunque sia `topShade`.
+   */
+  topShadeHeight?: number | null
 }
 
 /**
@@ -382,6 +393,7 @@ export function effectiveMappingForShape(mapping: Mapping | null, shape: PosterS
     blurDarkness: l.blurDarkness ?? mapping.blurDarkness,
     tintStrength: l.tintStrength ?? mapping.tintStrength,
     topShade: l.topShade ?? mapping.topShade,
+    topShadeHeight: l.topShadeHeight ?? mapping.topShadeHeight,
   }
 }
 

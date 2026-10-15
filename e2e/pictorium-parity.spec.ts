@@ -27,6 +27,8 @@ const MAPPING = (id: number) => ({
   blurDarkness: 30,
   blurEnabled: true,
   tintStrength: 20,
+  topShade: 50,
+  topShadeHeight: 25,
 })
 
 function previewUrl(id: number): string {
@@ -46,6 +48,8 @@ function previewUrl(id: number): string {
     bf: "50",
     bd: "30",
     tint: "20",
+    ts: "50",
+    tsh: "25",
     lang: "it",
     region: "IT",
     preview: "1",
@@ -104,6 +108,12 @@ test.describe("parity preview-vs-Stremio (mapped title)", () => {
       expect(stre.badge.computed.badge).toEqual(prev.badge.computed.badge)
       expect(stre.appearance.blurHeight).toBe(prev.appearance.blurHeight)
       expect(stre.appearance.blurFade).toBe(prev.appearance.blurFade)
+      // Upper shadow strength + height roundtrip: mapping and explicit
+      // preview query resolve identically (query > mapping > defaults).
+      expect(stre.appearance.topShade).toBe(50)
+      expect(prev.appearance.topShade).toBe(50)
+      expect(stre.appearance.topShadeHeight).toBe(25)
+      expect(prev.appearance.topShadeHeight).toBe(25)
       expect(stre.genre).toEqual(prev.genre)
       expect(stre.vote).toEqual(prev.vote)
     } finally {

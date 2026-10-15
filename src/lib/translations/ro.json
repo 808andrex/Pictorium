@@ -847,6 +847,7 @@
   "ui.minimal": "Minimal",
   "ui.tintStrength": "Intensitate nuanță",
   "ui.topShade": "Umbrire superioară",
+  "ui.topShadeHeight": "Înălțimea umbrei superioare",
   "ui.gradientPresetNatural": "Natural",
   "ui.gradientPresetColor": "Color",
   "ui.gradientPresetAdd": "Salvează stilul curent ca presetare",

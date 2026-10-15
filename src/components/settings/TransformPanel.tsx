@@ -324,7 +324,8 @@ function PortraitEffectiveGeometry({ editVal, editTxt, setEditVal, setEditTxt, e
             {slider(<Minus className="w-3.5 h-3.5" />, t("ui.fade"), ed.defaultBlurFade, 0, 100, 0, 100, (v) => { ed.setDefaultBlurFade(v) }, () => { ed.setDefaultBlurFade(NATURAL_GRADIENT_DEFAULTS.blurFade) }, "bf", "%")}
             {slider(<Circle className="w-3.5 h-3.5" />, t("ui.darkness"), ed.defaultBlurDarkness, 0, 100, 0, 100, (v) => { ed.setDefaultBlurDarkness(v) }, () => { ed.setDefaultBlurDarkness(30) }, "bd", "%")}
             {slider(<Cloud className="w-3.5 h-3.5" />, t("ui.tintStrength"), ed.defaultTintStrength, 0, 100, 0, 100, (v) => { ed.setDefaultTintStrength(v) }, () => { ed.setDefaultTintStrength(20) }, "tint", "%")}
-            {slider(<Circle className="w-3.5 h-3.5" />, t("ui.topShade"), ed.defaultTopShade, 0, 100, 0, 100, (v) => { ed.setDefaultTopShade(v) }, () => { ed.setDefaultTopShade(80) }, "tsdef", "%")}
+            {slider(<Circle className="w-3.5 h-3.5" />, t("ui.topShade"), ed.defaultTopShade, 0, 100, 0, 100, (v) => { ed.setDefaultTopShade(v) }, () => { ed.setDefaultTopShade(50) }, "tsdef", "%")}
+            {slider(<Ruler className="w-3.5 h-3.5" />, t("ui.topShadeHeight"), ed.defaultTopShadeHeight, 0, 100, 0, 100, (v) => { ed.setDefaultTopShadeHeight(v) }, () => { ed.setDefaultTopShadeHeight(25) }, "tshdef", "%")}
           </div>
         </>
       ) : (
@@ -358,7 +359,7 @@ function PortraitEffectiveGeometry({ editVal, editTxt, setEditVal, setEditTxt, e
         </div>
       ))}
       <div hidden={hideFor("background")} data-testid="transform-geo-gradient">{gradientCard}</div>
-      <button type="button" onClick={() => { ed.setDefaultTopBadgeScale(100); ed.setDefaultTopBadgeOffsetX(0); ed.setDefaultTopBadgeOffsetY(0); ed.setDefaultExtraBadgeScale(null); ed.setDefaultExtraBadgeOffsetX(null); ed.setDefaultExtraBadgeOffsetY(null); ed.setDefaultGenreBadgeScale(100); ed.setDefaultGenreBadgeOffsetX(0); ed.setDefaultGenreBadgeOffsetY(0); ed.setDefaultQualityBadgeScale(100); ed.setDefaultQualityBadgeOffsetX(DEFAULT_QUALITY_BADGE_OFFSET_X); ed.setDefaultQualityBadgeOffsetY(DEFAULT_QUALITY_BADGE_OFFSET_Y); ed.setDefaultNetworkLogoFollowTitle(true); ed.setDefaultNetworkLogoScale(100); ed.setDefaultNetworkLogoOffsetX(0); ed.setDefaultNetworkLogoOffsetY(0); ed.setDefaultBlurEnabled(true); ed.setDefaultGradientHeight(NATURAL_GRADIENT_DEFAULTS.gradientHeight); ed.setDefaultBlurIntensity(NATURAL_GRADIENT_DEFAULTS.blurIntensity); ed.setDefaultBlurFade(NATURAL_GRADIENT_DEFAULTS.blurFade); ed.setDefaultBlurDarkness(NATURAL_GRADIENT_DEFAULTS.blurDarkness); ed.setDefaultTintStrength(NATURAL_GRADIENT_DEFAULTS.tintStrength); ed.setDefaultTopShade(80) }} className="w-full py-1.5 rounded-lg text-[11px] font-semibold text-muted hover:text-zinc-200 bg-white/5 hover:bg-white/10 border border-white/10 transition-colors cursor-pointer">
+      <button type="button" onClick={() => { ed.setDefaultTopBadgeScale(100); ed.setDefaultTopBadgeOffsetX(0); ed.setDefaultTopBadgeOffsetY(0); ed.setDefaultExtraBadgeScale(null); ed.setDefaultExtraBadgeOffsetX(null); ed.setDefaultExtraBadgeOffsetY(null); ed.setDefaultGenreBadgeScale(100); ed.setDefaultGenreBadgeOffsetX(0); ed.setDefaultGenreBadgeOffsetY(0); ed.setDefaultQualityBadgeScale(100); ed.setDefaultQualityBadgeOffsetX(DEFAULT_QUALITY_BADGE_OFFSET_X); ed.setDefaultQualityBadgeOffsetY(DEFAULT_QUALITY_BADGE_OFFSET_Y); ed.setDefaultNetworkLogoFollowTitle(true); ed.setDefaultNetworkLogoScale(100); ed.setDefaultNetworkLogoOffsetX(0); ed.setDefaultNetworkLogoOffsetY(0); ed.setDefaultBlurEnabled(true); ed.setDefaultGradientHeight(NATURAL_GRADIENT_DEFAULTS.gradientHeight); ed.setDefaultBlurIntensity(NATURAL_GRADIENT_DEFAULTS.blurIntensity); ed.setDefaultBlurFade(NATURAL_GRADIENT_DEFAULTS.blurFade); ed.setDefaultBlurDarkness(NATURAL_GRADIENT_DEFAULTS.blurDarkness); ed.setDefaultTintStrength(NATURAL_GRADIENT_DEFAULTS.tintStrength); ed.setDefaultTopShade(50); ed.setDefaultTopShadeHeight(25) }} className="w-full py-1.5 rounded-lg text-[11px] font-semibold text-muted hover:text-zinc-200 bg-white/5 hover:bg-white/10 border border-white/10 transition-colors cursor-pointer">
         {t("ui.reset")} · {t("ui.posterShapePortrait")}
       </button>
     </>
@@ -1522,13 +1523,34 @@ export function TransformPanel({ active, previewShape, onPreviewShapeChange, onP
                 ed.setDefaultTopShade(v)
               }}
               onDoubleClick={() => {
-                ed.setDefaultTopShade(80)
+                ed.setDefaultTopShade(50)
               }}
               editingValue={editVal}
               editText={editTxt}
               setEditingValue={setEditVal}
               setEditText={setEditTxt}
               editingKey="tsdef"
+              suffix="%"
+            />
+            <SliderRow
+              icon={<Ruler className="w-3.5 h-3.5" />}
+              label={t("ui.topShadeHeight")}
+              value={ed.defaultTopShadeHeight}
+              min={0}
+              max={100}
+              boundsMin={0}
+              boundsMax={100}
+              onChange={(v) => {
+                ed.setDefaultTopShadeHeight(v)
+              }}
+              onDoubleClick={() => {
+                ed.setDefaultTopShadeHeight(25)
+              }}
+              editingValue={editVal}
+              editText={editTxt}
+              setEditingValue={setEditVal}
+              setEditText={setEditTxt}
+              editingKey="tshdef"
               suffix="%"
             />
           </div>
@@ -1564,7 +1586,8 @@ export function TransformPanel({ active, previewShape, onPreviewShapeChange, onP
           ed.setDefaultBlurFade(NATURAL_GRADIENT_DEFAULTS.blurFade)
           ed.setDefaultBlurDarkness(NATURAL_GRADIENT_DEFAULTS.blurDarkness)
           ed.setDefaultTintStrength(NATURAL_GRADIENT_DEFAULTS.tintStrength)
-          ed.setDefaultTopShade(80)
+          ed.setDefaultTopShade(50)
+          ed.setDefaultTopShadeHeight(25)
         }}
         className="w-full py-1.5 rounded-lg text-[11px] font-semibold text-muted hover:text-zinc-200 bg-white/5 hover:bg-white/10 border border-white/10 transition-colors cursor-pointer"
       >

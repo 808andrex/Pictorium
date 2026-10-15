@@ -169,7 +169,7 @@ export default function EditView() {
       : {
         gradientHeight: ed.gradientHeight, blurEnabled: ed.blurEnabled,
         blurIntensity: ed.blurIntensity, blurFade: ed.blurFade, blurDarkness: ed.blurDarkness,
-        tintStrength: ed.tintStrength, topShade: ed.topShade,
+        tintStrength: ed.tintStrength, topShade: ed.topShade, topShadeHeight: ed.topShadeHeight,
       },
     selectedMapping ?? null,
     isLandscapeTuning
@@ -181,11 +181,13 @@ export default function EditView() {
         blurDarkness: ed.landscape?.blurDarkness ?? ed.defaultBlurDarkness,
         tintStrength: ed.landscape?.tintStrength ?? ed.defaultTintStrength,
         topShade: ed.landscape?.topShade ?? ed.defaultTopShade,
+        topShadeHeight: ed.landscape?.topShadeHeight ?? ed.defaultTopShadeHeight,
       }
       : {
         gradientHeight: ed.defaultGradientHeight, blurEnabled: ed.defaultBlurEnabled,
         blurIntensity: ed.defaultBlurIntensity, blurFade: ed.defaultBlurFade, blurDarkness: ed.defaultBlurDarkness,
         tintStrength: ed.defaultTintStrength, topShade: ed.defaultTopShade,
+        topShadeHeight: ed.defaultTopShadeHeight,
       },
     ed.posterShape,
   ), [ed, selectedMapping, isLandscapeTuning])
@@ -224,7 +226,7 @@ export default function EditView() {
         : {
           gradientHeight: ed.gradientHeight, blurEnabled: ed.blurEnabled,
           blurIntensity: ed.blurIntensity, blurFade: ed.blurFade, blurDarkness: ed.blurDarkness,
-          tintStrength: ed.tintStrength, topShade: ed.topShade,
+          tintStrength: ed.tintStrength, topShade: ed.topShade, topShadeHeight: ed.topShadeHeight,
         },
       logoScale: ed.logoScale,
       logoOffsetX: ed.logoOffsetX,
@@ -282,11 +284,13 @@ export default function EditView() {
         blurDarkness: ed.landscape?.blurDarkness ?? ed.defaultBlurDarkness,
         tintStrength: ed.landscape?.tintStrength ?? ed.defaultTintStrength,
         topShade: ed.landscape?.topShade ?? ed.defaultTopShade,
+        topShadeHeight: ed.landscape?.topShadeHeight ?? ed.defaultTopShadeHeight,
       }
       : {
         gradientHeight: ed.defaultGradientHeight, blurEnabled: ed.defaultBlurEnabled,
         blurIntensity: ed.defaultBlurIntensity, blurFade: ed.defaultBlurFade, blurDarkness: ed.defaultBlurDarkness,
         tintStrength: ed.defaultTintStrength, topShade: ed.defaultTopShade,
+        topShadeHeight: ed.defaultTopShadeHeight,
       },
     ed.defaultPosterShape,
   ), [ed, previewPosterFilePath, previewCustomPosterUrl, selectedLogo?.file_path, selectedMapping, isLandscapeTuning])

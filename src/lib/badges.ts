@@ -11,15 +11,18 @@ export function cinematicVignetteSVG(pw: number, ph: number): string {
 }
 
 /**
- * Ombra lineare superiore (top scrim, opt-in `ts=0..100`, default 0 = spento).
- * Gradiente nero dal bordo alto al 25% del canvas, poi trasparente: incornicia
+ * Ombra lineare superiore (top scrim, `ts=0..100`, default di catena 50).
+ * Gradiente nero dal bordo alto all'altezza data (`tsh`, percentuale del
+ * canvas, default 25 = look di riferimento), poi trasparente: incornicia
  * il poster e fa risaltare badge/testi superiori (look di riferimento). A 0
  * non cambia un pixel (il chiamante salta il composite); a 100 il bordo alto
  * è velato al 75% come il riferimento. Sotto logo e badge (restano luminosi).
+ * `tsh=0` disattiva l'ombra qualunque sia `ts` (rettangolo ad altezza zero).
  */
-export function topShadeSVG(pw: number, ph: number, strength: number): string {
+export function topShadeSVG(pw: number, ph: number, strength: number, heightPct = 25): string {
   const s = Math.min(Math.max(Math.round(strength), 0), 100)
-  const sh = Math.max(1, Math.round(ph * 0.25))
+  const h = Number.isFinite(heightPct) ? Math.min(Math.max(heightPct, 0), 100) : 25
+  const sh = Math.max(0, Math.round(ph * h / 100))
   const a = ((0.75 * s) / 100).toFixed(3)
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${pw}" height="${ph}">
   <defs>

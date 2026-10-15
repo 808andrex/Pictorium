@@ -74,6 +74,7 @@ interface DefaultsPosterPreviewProps {
     defaultBlurDarkness: number
     defaultTintStrength: number
     defaultTopShade: number
+    defaultTopShadeHeight: number
     defaultGradientHeight: number
     defaultTopBadgeScale: number
     defaultTopBadgeOffsetX: number
@@ -235,6 +236,7 @@ export function buildDefaultsPreviewUrlFromEditor(
       defaultBlurDarkness: ed.defaultBlurDarkness,
       defaultTintStrength: ed.defaultTintStrength,
       defaultTopShade: ed.defaultTopShade,
+      defaultTopShadeHeight: ed.defaultTopShadeHeight,
       defaultGradientHeight: ed.defaultGradientHeight,
       defaultTopBadgeScale: ed.defaultTopBadgeScale,
       defaultTopBadgeOffsetX: ed.defaultTopBadgeOffsetX,

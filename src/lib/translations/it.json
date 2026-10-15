@@ -870,6 +870,7 @@
   "ui.minimal": "Minimale",
   "ui.tintStrength": "Intensità tinta",
   "ui.topShade": "Ombra superiore",
+  "ui.topShadeHeight": "Altezza ombra superiore",
   "ui.gradientPresetNatural": "Naturale",
   "ui.gradientPresetColor": "Colore",
   "ui.gradientPresetAdd": "Salva corrente come preset",

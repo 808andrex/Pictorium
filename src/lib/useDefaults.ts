@@ -55,6 +55,11 @@ export interface DefaultsState {
   defaultTintStrength: number
   /** Ombra lineare superiore di default 0-100 (default 50). */
   defaultTopShade: number
+  /**
+   * Altezza dell'ombra superiore di default in % del canvas 0-100
+   * (default 25 = look storico).
+   */
+  defaultTopShadeHeight: number
   defaultGradientHeight: number
   defaultTopBadgeScale: number
   defaultTopBadgeOffsetX: number
@@ -202,6 +207,12 @@ export interface DefaultsState {
    * all'apertura titolo.
    */
   topShade: number
+  /**
+   * Altezza dell'ombra superiore 0-100 (% canvas) in editing (per-titolo;
+   * assente = default globale `defaultTopShadeHeight`, canonico 25).
+   * 0 = ombra disattivata qualunque sia `topShade`.
+   */
+  topShadeHeight: number
   badgeStyle: BadgeStyle
   rankingBadgeStyle: RankingBadgeStyle
   /** Standalone extra-badge style in editing (null = legacy `rs` fallback; "follow-rank" = explicit own-rank). */
@@ -237,7 +248,8 @@ const DEFAULT_FLAT_DEFAULTS: Omit<DefaultsState, "landscape"> = {
   defaultBlurFade: 50,
   defaultBlurDarkness: 30,
   defaultTintStrength: 20,
-  defaultTopShade: 80,
+  defaultTopShade: 50,
+  defaultTopShadeHeight: 25,
   defaultGradientHeight: 30,
   defaultTopBadgeScale: 100,
   defaultTopBadgeOffsetX: 0,
@@ -335,7 +347,8 @@ const DEFAULT_FLAT_DEFAULTS: Omit<DefaultsState, "landscape"> = {
   blurDarkness: 30,
   blurEnabled: true,
   tintStrength: 20,
-  topShade: 80,
+  topShade: 50,
+  topShadeHeight: 25,
   badgeStyle: "shadow",
   rankingBadgeStyle: "default",
   extraBadgeStyle: null,
@@ -398,6 +411,7 @@ interface StoredDefaults {
   blurEnabled?: boolean
   tintStrength?: number
   topShade?: number
+  topShadeHeight?: number
   badgeStyle?: BadgeStyle
   rankingBadgeStyle?: RankingBadgeStyle
   extraBadgeStyle?: ExtraBadgeStyle | ExtraBadgeFollowRank | null
@@ -414,6 +428,7 @@ interface StoredDefaults {
   defaultBlurDarkness?: number
   defaultTintStrength?: number
   defaultTopShade?: number
+  defaultTopShadeHeight?: number
   defaultGradientHeight?: number
   defaultTopBadgeScale?: number
   defaultTopBadgeOffsetX?: number
@@ -680,7 +695,8 @@ function buildFromStored(d: StoredDefaults | null): DefaultsState {
     defaultBlurFade: d.defaultBlurFade ?? d.blurFade ?? 50,
     defaultBlurDarkness: d.defaultBlurDarkness ?? d.blurDarkness ?? 30,
     defaultTintStrength: d.defaultTintStrength ?? d.tintStrength ?? 20,
-    defaultTopShade: d.defaultTopShade ?? d.topShade ?? 80,
+    defaultTopShade: d.defaultTopShade ?? d.topShade ?? 50,
+    defaultTopShadeHeight: d.defaultTopShadeHeight ?? d.topShadeHeight ?? 25,
     defaultGradientHeight: d.defaultGradientHeight ?? d.gradientHeight ?? 30,
     defaultTopBadgeScale: d.defaultTopBadgeScale ?? d.topBadgeScale ?? 100,
     defaultTopBadgeOffsetX: d.defaultTopBadgeOffsetX ?? d.topBadgeOffsetX ?? 0,
@@ -807,7 +823,8 @@ function buildFromStored(d: StoredDefaults | null): DefaultsState {
     tintStrength: d.tintStrength ?? d.defaultTintStrength ?? 20,
     // Solo per-titolo nel localStorage (dal mapping): il default globale vive
     // in defaultTopShade — qui si segue lo stesso per coerenza coi correnti.
-    topShade: d.topShade ?? d.defaultTopShade ?? 80,
+    topShade: d.topShade ?? d.defaultTopShade ?? 50,
+    topShadeHeight: d.topShadeHeight ?? d.defaultTopShadeHeight ?? 25,
     badgeStyle: d.badgeStyle ?? d.defaultBadgeStyle ?? "shadow",
     rankingBadgeStyle: d.rankingBadgeStyle ?? d.defaultRankingBadgeStyle ?? "default",
     extraBadgeStyle: isExtraBadgeStyle(d.extraBadgeStyle) || isExtraFollowRank(d.extraBadgeStyle)
@@ -860,6 +877,7 @@ export function defaultsToPayload(d: DefaultsState): Record<string, unknown> {
     blurDarkness: d.defaultBlurDarkness,
     tintStrength: d.defaultTintStrength,
     topShade: d.defaultTopShade,
+    topShadeHeight: d.defaultTopShadeHeight,
     gradientHeight: d.defaultGradientHeight,
     topBadgeScale: d.defaultTopBadgeScale,
     topBadgeOffsetX: d.defaultTopBadgeOffsetX,

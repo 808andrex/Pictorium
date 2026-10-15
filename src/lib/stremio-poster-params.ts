@@ -55,7 +55,7 @@ export interface StremioPosterParamsInput {
    * Layout dei rating separati: emesso come `sepstyle` solo quando bottom
    * (default "column", cache stabile — gli URL esistenti non cambiano).
    * Enum a bassa cardinalità come bs/rs/bfont: resta esplicito anche in
-   * compact (mai dentro `dv`, che copre solo i 24 numerici).
+   * compact (mai dentro `dv`, che copre solo i 25 numerici).
    */
   readonly separateRatingsStyle?: SeparateRatingsStyle | null
   /** Ordine sash (emesso come `sash` solo quando non-default). */
@@ -84,6 +84,13 @@ export interface StremioPosterParamsInput {
    * mapping (stessa catena, stesso render).
    */
   readonly topShade?: number
+  /**
+   * Altezza dell'ombra superiore in % del canvas 0-100 (default 25 = look
+   * storico). Emessa solo quando diversa dal default (come `ts` sopra):
+   * gli URL esistenti non cambiano e la cache non si invalida in massa.
+   * Sotto compactTuning entra in `dv` (stessa catena, stesso render).
+   */
+  readonly topShadeHeight?: number
   readonly networkLogo?: boolean
   /**
    * Posizione del logo network ("auto" = specchio dinamico).
@@ -198,8 +205,8 @@ export interface StremioPosterParamsInput {
   readonly user?: string | null
   readonly region?: string | null
   /**
-   * URL compatti (v1.23.0): omette i 24 tuning numerici ad alta cardinalità
-   * (gradiente/blur/tinta + scale/offset badge + scala/offset logo). Il server li risolve da
+   * URL compatti (v1.23.0): omette i 25 tuning numerici ad alta cardinalità
+   * (gradiente/blur/tinta/ombra-alta + scale/offset badge + scala/offset logo). Il server li risolve da
    * mapping salvato > defaults (stessa catena, stesso render, chiave più
    * corta e convergente). Mai con `config` (il token perderebbe contro il
    * mapping). Toggle/enum/restano espliciti (bassa cardinalità + fallback
@@ -233,7 +240,8 @@ const DEFAULT_STREMIO_POSTER_PARAMS = {
   blurFade: 50,
   blurDarkness: 30,
   tintStrength: 20,
-  topShade: 80,
+  topShade: 50,
+  topShadeHeight: 25,
   blurEnabled: true,
   networkLogo: true,
   topBadgeScale: 100,
@@ -257,7 +265,7 @@ const DEFAULT_STREMIO_POSTER_PARAMS = {
 } as const
 
 /**
- * Firma del tuning omesso negli URL compatti (`compactTuning`): i 24 numerici
+ * Firma del tuning omesso negli URL compatti (`compactTuning`): i 25 numerici
  * ad alta cardinalità non viaggiano nell'URL ma guidano il render server-side
  * (mapping > defaults). Senza firma, un cambio default lascerebbe URL identici
  * e browser/edge/Stremio servirebbero i byte vecchi all'infinito. FNV-1a 32bit
@@ -276,6 +284,7 @@ function tuningSignature(input: StremioPosterParamsInput): string {
     input.blurFade ?? D.blurFade,
     input.blurDarkness ?? D.blurDarkness,
     input.topShade ?? D.topShade,
+    input.topShadeHeight ?? D.topShadeHeight,
     input.topBadgeScale ?? D.topBadgeScale,
     input.topBadgeOffsetX ?? D.topBadgeOffsetX,
     input.topBadgeOffsetY ?? D.topBadgeOffsetY,
@@ -459,10 +468,13 @@ export function buildStremioPosterSearchParams(input: StremioPosterParamsInput):
     params.set("tint", String(input.tintStrength ?? DEFAULT_STREMIO_POSTER_PARAMS.tintStrength))
     params.set("bf", String(input.blurFade ?? DEFAULT_STREMIO_POSTER_PARAMS.blurFade))
     params.set("bd", String(input.blurDarkness ?? DEFAULT_STREMIO_POSTER_PARAMS.blurDarkness))
-    // Ombra superiore solo quando diversa dal default: a 80 l'URL resta
-    // identico al passato (la risolve il server).
+    // Ombra superiore solo quando diversa dal default: a 50 l'URL resta
+    // identico al passato (la risolve il server). Stessa regola per
+    // l'altezza (25 = look storico): gli URL esistenti non cambiano.
     const ts = input.topShade ?? DEFAULT_STREMIO_POSTER_PARAMS.topShade
     if (ts !== DEFAULT_STREMIO_POSTER_PARAMS.topShade) params.set("ts", String(ts))
+    const tsh = input.topShadeHeight ?? DEFAULT_STREMIO_POSTER_PARAMS.topShadeHeight
+    if (tsh !== DEFAULT_STREMIO_POSTER_PARAMS.topShadeHeight) params.set("tsh", String(tsh))
   }
   // dv: firma del tuning quando è omesso (compact) — senza, un cambio default
   // lascerebbe URL identici e cache stantie ovunque (browser/edge/Stremio).

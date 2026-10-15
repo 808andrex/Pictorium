@@ -129,22 +129,22 @@ import type { RatingItem } from "@/lib/custom-rating/types"
 // identical inputs/bytes as poster-fresh-centered-title.test.ts landscape
 // pin); unranked and standard pins below are untouched (verified by the
 // suites pinning them).
-// Universal topShade default 50 -> 80 (user-approved global change, owned by
-// src/__tests__/default-top-shade-80.test.tsx; root-caused in
+// Universal topShade default 80 -> 50 (user-approved global change, owned by
+// src/__tests__/default-top-shade-50.test.tsx; root-caused in
 // C:\Users\lucaf\AppData\Local\Temp\opencode\final-render-failure-audit\):
-// every exact fixture below omits topShade, so the four exact pins move to
-// the demonstrated 80-default bytes (explicit topShade 80 renders
-// byte-identical to the omitted default; explicit 50 restores the old pins
-// byte-exactly through the current code, proving no other drift). The old
-// 50-default pins are kept as LEGACY_TOP_SHADE_50_* guards below: explicit
-// stored 50 values must keep rendering those exact bytes.
+// every exact fixture below omits topShade, so the four exact pins move back
+// to the demonstrated 50-default bytes (explicit topShade 50 renders
+// byte-identical to the omitted default; explicit 80 reproduces the 80-era
+// pins byte-exactly through the current code, proving no other drift). The
+// 80-era pins are kept as PRE_* guards below: explicit stored 80 values must
+// keep rendering those exact bytes.
 const PRE_RANKED_PORTRAIT = "85723d9ec81b5e4eb567cb0815379b3b4b01f3c9475d217c4d0608301f285d77"
 const PRE_RANKED_LANDSCAPE = "33f2998c55de5a3eb6d331939005a8df1f875baeb4955cb97b513da29f0e5a9a"
 const PRE_UNRANKED_PORTRAIT = "9167e67cf8174efea64dad431d7b2d1765e07031f3cbef5c2e8e6ccc441e5a11"
 const PRE_UNRANKED_LANDSCAPE = "2a9adbec71d8a3da7a00cc377ea611036829cc77a32c33de1bd442142d9b17e2"
 const PRE_STANDARD_PORTRAIT = "61f7a700437eb2915d23ca1a893819ee1b98603c624ad937cdffed4c7e07deee"
 const PRE_STANDARD_LANDSCAPE = "14de4e5e55dc08e13fca59ada9bdee02530be7719540dcb1dd62f35434d3614e"
-// Explicit topShade 50 legacy pins (pre-80-default bytes for the exact
+// Explicit topShade 80 pins (80-era bytes for the exact
 // fixtures above).
 const LEGACY_TOP_SHADE_50_RANKED_PORTRAIT = "3fe42bb095d84b11ad340e513bba9e2e4827c5656a334c133e814c53ca5fd67c"
 const LEGACY_TOP_SHADE_50_RANKED_LANDSCAPE = "c504aab7722ba206cd6a23711a71b8beb78358411e9bcc97f5a3754af535d48c"
@@ -310,8 +310,8 @@ async function brightInk(
   return n
 }
 
-describe("ranked Fresh pins (re-pinned by the task8b left-blur band — rationale above)", () => {
-  it("keeps ranked portrait + landscape renders unchanged", async () => {
+describe("ranked Fresh pins (50 default renders)", () => {
+  it("keeps ranked portrait + landscape renders on the 50 default", async () => {
     const logo = await whiteLogo()
     const rankedP = await generatePosterBuffer(
       baseInput({
@@ -326,7 +326,7 @@ describe("ranked Fresh pins (re-pinned by the task8b left-blur band — rational
       }),
     )
     expect(await dims(rankedP)).toEqual({ w: STD_W, h: STD_H })
-    expect(sha(rankedP)).toBe(PRE_RANKED_PORTRAIT)
+    expect(sha(rankedP)).toBe(LEGACY_TOP_SHADE_50_RANKED_PORTRAIT)
     const rankedL = await generatePosterBuffer(
       baseInput({
         posterBuf: await patternedBase(LAND_W, LAND_H),
@@ -341,12 +341,12 @@ describe("ranked Fresh pins (re-pinned by the task8b left-blur band — rational
       }),
     )
     expect(await dims(rankedL)).toEqual({ w: LAND_W, h: LAND_H })
-    expect(sha(rankedL)).toBe(PRE_RANKED_LANDSCAPE)
+    expect(sha(rankedL)).toBe(LEGACY_TOP_SHADE_50_RANKED_LANDSCAPE)
   }, 120000)
 })
 
-describe("standard output untouched", () => {
-  it("keeps standard portrait + landscape renders unchanged", async () => {
+describe("standard output on the 50 default", () => {
+  it("keeps standard portrait + landscape renders on the 50 default", async () => {
     const logo = await whiteLogo()
     const stdP = await generatePosterBuffer(
       baseInput({
@@ -356,7 +356,7 @@ describe("standard output untouched", () => {
         finalRank: 6,
       }),
     )
-    expect(sha(stdP)).toBe(PRE_STANDARD_PORTRAIT)
+    expect(sha(stdP)).toBe(LEGACY_TOP_SHADE_50_STANDARD_PORTRAIT)
     const stdL = await generatePosterBuffer(
       baseInput({
         posterBuf: await patternedBase(LAND_W, LAND_H),
@@ -366,12 +366,12 @@ describe("standard output untouched", () => {
         finalRank: 6,
       }),
     )
-    expect(sha(stdL)).toBe(PRE_STANDARD_LANDSCAPE)
+    expect(sha(stdL)).toBe(LEGACY_TOP_SHADE_50_STANDARD_LANDSCAPE)
   }, 120000)
 })
 
-describe("explicit topShade 50 legacy pins (stored 50 keeps the old bytes)", () => {
-  it("renders explicit 50 exactly like the old pins while omitted/explicit 80 share the new pins", async () => {
+describe("explicit topShade 80 pins (stored 80 keeps the 80-era bytes)", () => {
+  it("renders explicit 80 exactly like the 80-era pins while omitted/explicit 50 share the default pins", async () => {
     const logo = await whiteLogo()
     const cases: { name: string; input: Partial<GenerationInput>; dims: { w: number; h: number }; oldPin: string; newPin: string }[] = [
       {
@@ -438,9 +438,9 @@ describe("explicit topShade 50 legacy pins (stored 50 keeps the old bytes)", () 
       const ts80 = await generatePosterBuffer(baseInput({ ...c.input, topShade: 80 }))
       const ts50 = await generatePosterBuffer(baseInput({ ...c.input, topShade: 50 }))
       expect(await dims(def), c.name).toEqual(c.dims)
-      expect(sha(def), c.name).toBe(c.newPin)
-      expect(sha(ts80), c.name).toBe(sha(def))
-      expect(sha(ts50), c.name).toBe(c.oldPin)
+      expect(sha(def), c.name).toBe(c.oldPin)
+      expect(sha(ts50), c.name).toBe(sha(def))
+      expect(sha(ts80), c.name).toBe(c.newPin)
     }
   }, 180000)
 })

@@ -502,73 +502,134 @@ test.describe("poster API — functional", () => {
     expect(buffer.length).toBeGreaterThan(1000)
   })
 
-  test("top shade (ts) — default 80, off needs explicit ts=0", async ({ request }, testInfo) => {
-    // Default 80: omitted and explicit ts=80 render byte-identical; ts=0 (off) differs.
-    // Legacy ts=50 stays a valid mid shade, byte-different from both 80 and 0 (stored value preserved, not automigrated).
+  test("top shade (ts) — default 50, off needs explicit ts=0", async ({ request }, testInfo) => {
+    // Default 50: omitted and explicit ts=50 render byte-identical; ts=0 (off) differs.
+    // A stored ts=80 stays a valid stronger shade, byte-different from both 50 and 0 (stored value preserved, not automigrated).
     // Isolation (serial-run proven 235/236): an omitted ts resolves the shared
     // live /api/defaults topShade (poster-config chain query > mapping >
-    // config > esd > 80), so inheriting topShade=50 from the
-    // badge-format-defaults FACTORY_RESTORE would render "omitted" as 50 and
-    // fail the 80 identity below. Arrange the 80 precondition explicitly and
-    // restore the previously stored value afterwards — no production-code
-    // change, no factory flips, no assertion weakening.
+    // config > esd > 50), so inheriting a foreign topShade from the
+    // badge-format-defaults FACTORY_RESTORE would render "omitted" as that
+    // value and fail the 50 identity below. Arrange the 50 precondition
+    // explicitly and restore the previously stored value afterwards — no
+    // production-code change, no factory flips, no assertion weakening.
     const original = await readDefaultsJson(request, "ts-shade: read original defaults")
     const hadTopShade = "topShade" in original
     const originalTopShade = original.topShade
     try {
-      await writeDefaultsJson(request, "ts-shade: arrange topShade 80", { topShade: 80 })
+      await writeDefaultsJson(request, "ts-shade: arrange topShade 50", { topShade: 50 })
       const base = { genreName: "Action", voteAverage: "7.8", badges: "1", ranking: "0" }
     const defRes = await request.get(posterUrl(base))
     expect(defRes.ok()).toBeTruthy()
     const defBuffer = await defRes.body()
     expect(defBuffer.length).toBeGreaterThan(1000)
-    const eightyRes = await request.get(posterUrl({ ...base, ts: "80" }))
-    expect(eightyRes.ok()).toBeTruthy()
-    const eightyBuffer = await eightyRes.body()
-    expect(eightyBuffer.length).toBeGreaterThan(1000)
-    expect(Buffer.compare(defBuffer, eightyBuffer)).toBe(0)
+    const fiftyRes = await request.get(posterUrl({ ...base, ts: "50" }))
+    expect(fiftyRes.ok()).toBeTruthy()
+    const fiftyBuffer = await fiftyRes.body()
+    expect(fiftyBuffer.length).toBeGreaterThan(1000)
+    expect(Buffer.compare(defBuffer, fiftyBuffer)).toBe(0)
     const offRes = await request.get(posterUrl({ ...base, ts: "0" }))
     expect(offRes.ok()).toBeTruthy()
     const offBuffer = await offRes.body()
     expect(offBuffer.length).toBeGreaterThan(1000)
     expect(Buffer.compare(defBuffer, offBuffer)).not.toBe(0)
-    const fiftyRes = await request.get(posterUrl({ ...base, ts: "50" }))
-    expect(fiftyRes.ok()).toBeTruthy()
-    const fiftyBuffer = await fiftyRes.body()
-    expect(fiftyBuffer.length).toBeGreaterThan(1000)
-    expect(Buffer.compare(fiftyBuffer, eightyBuffer)).not.toBe(0)
-    expect(Buffer.compare(fiftyBuffer, offBuffer)).not.toBe(0)
-    const fiftyRepeatRes = await request.get(posterUrl({ ...base, ts: "50" }))
-    expect(fiftyRepeatRes.ok()).toBeTruthy()
-    expect(Buffer.compare(fiftyBuffer, await fiftyRepeatRes.body())).toBe(0)
+    const eightyRes = await request.get(posterUrl({ ...base, ts: "80" }))
+    expect(eightyRes.ok()).toBeTruthy()
+    const eightyBuffer = await eightyRes.body()
+    expect(eightyBuffer.length).toBeGreaterThan(1000)
+    expect(Buffer.compare(eightyBuffer, fiftyBuffer)).not.toBe(0)
+    expect(Buffer.compare(eightyBuffer, offBuffer)).not.toBe(0)
+    const eightyRepeatRes = await request.get(posterUrl({ ...base, ts: "80" }))
+    expect(eightyRepeatRes.ok()).toBeTruthy()
+    expect(Buffer.compare(eightyBuffer, await eightyRepeatRes.body())).toBe(0)
     // Live-default semantics (isolation proof, same byte comparison, no
-    // tolerance): with 50 stored, omitted tracks the stored value — this is
+    // tolerance): with 80 stored, omitted tracks the stored value — this is
     // the serial-run state the arrange above neutralizes.
-    await writeDefaultsJson(request, "ts-shade: arrange topShade 50 (isolation proof)", { topShade: 50 })
+    await writeDefaultsJson(request, "ts-shade: arrange topShade 80 (isolation proof)", { topShade: 80 })
     const storedRes = await request.get(posterUrl(base))
     expect(storedRes.ok()).toBeTruthy()
     const storedBuffer = await storedRes.body()
     expect(storedBuffer.length).toBeGreaterThan(1000)
-    expect(Buffer.compare(storedBuffer, fiftyBuffer)).toBe(0)
-    expect(Buffer.compare(storedBuffer, eightyBuffer)).not.toBe(0)
+    expect(Buffer.compare(storedBuffer, eightyBuffer)).toBe(0)
+    expect(Buffer.compare(storedBuffer, fiftyBuffer)).not.toBe(0)
     const attachPng = async (info: TestInfo, name: string, body: Buffer, contentType: string) => {
       const file = info.outputPath(name)
       await writeFile(file, body)
       await info.attach(name, { path: file, contentType })
     }
-    await attachPng(testInfo, "ts-omitted-default80.png", defBuffer, defRes.headers()["content-type"] ?? "image/png")
-    await attachPng(testInfo, "ts-explicit80.png", eightyBuffer, eightyRes.headers()["content-type"] ?? "image/png")
-    await attachPng(testInfo, "ts-explicit50-legacy.png", fiftyBuffer, fiftyRes.headers()["content-type"] ?? "image/png")
+    await attachPng(testInfo, "ts-omitted-default50.png", defBuffer, defRes.headers()["content-type"] ?? "image/png")
+    await attachPng(testInfo, "ts-explicit50.png", fiftyBuffer, fiftyRes.headers()["content-type"] ?? "image/png")
+    await attachPng(testInfo, "ts-explicit80-stored.png", eightyBuffer, eightyRes.headers()["content-type"] ?? "image/png")
     await attachPng(testInfo, "ts-off-explicit0.png", offBuffer, offRes.headers()["content-type"] ?? "image/png")
     } finally {
       // Restore the pre-test stored value so later specs inherit exactly what
       // this test found. The PUT merge cannot delete keys: when topShade was
-      // absent, the 80 arrange is semantically identical to the hardcoded
+      // absent, the 50 arrange is semantically identical to the hardcoded
       // fallback, so it is safely left (re-asserted) in place.
-      await writeDefaultsJson(request, "ts-shade: restore original defaults", { topShade: (hadTopShade ? originalTopShade : 80) as number })
+      await writeDefaultsJson(request, "ts-shade: restore original defaults", { topShade: (hadTopShade ? originalTopShade : 50) as number })
     }
     const restored = await readDefaultsJson(request, "ts-shade: verify restore")
-    expect(restored.topShade).toBe(hadTopShade ? originalTopShade : 80)
+    expect(restored.topShade).toBe(hadTopShade ? originalTopShade : 50)
+  })
+
+  test("top shade height (tsh) — default 25, 0 disables like ts=0", async ({ request }, testInfo) => {
+    // Default 25: omitted and explicit tsh=25 render byte-identical; a custom
+    // height (e.g. 60) differs from both; tsh=0 paints nothing so it renders
+    // byte-identical to ts=0 (both skip the composite) — the documented
+    // "0 disables the upper shadow" contract for the height axis.
+    // Same isolation discipline as the ts test above: arrange the 50×25
+    // precondition explicitly (omitted inherits live /api/defaults) and
+    // restore afterwards.
+    const original = await readDefaultsJson(request, "tsh-height: read original defaults")
+    const hadTopShade = "topShade" in original
+    const originalTopShade = original.topShade
+    const hadTopShadeHeight = "topShadeHeight" in original
+    const originalTopShadeHeight = original.topShadeHeight
+    try {
+      await writeDefaultsJson(request, "tsh-height: arrange topShade 50 + height 25", { topShade: 50, topShadeHeight: 25 })
+      const base = { genreName: "Action", voteAverage: "7.8", badges: "1", ranking: "0" }
+      const defRes = await request.get(posterUrl(base))
+      expect(defRes.ok()).toBeTruthy()
+      const defBuffer = await defRes.body()
+      expect(defBuffer.length).toBeGreaterThan(1000)
+      const explicitRes = await request.get(posterUrl({ ...base, ts: "50", tsh: "25" }))
+      expect(explicitRes.ok()).toBeTruthy()
+      expect(Buffer.compare(defBuffer, await explicitRes.body())).toBe(0)
+      const tallRes = await request.get(posterUrl({ ...base, tsh: "60" }))
+      expect(tallRes.ok()).toBeTruthy()
+      const tallBuffer = await tallRes.body()
+      expect(tallBuffer.length).toBeGreaterThan(1000)
+      expect(Buffer.compare(defBuffer, tallBuffer)).not.toBe(0)
+      const offStrengthRes = await request.get(posterUrl({ ...base, ts: "0" }))
+      expect(offStrengthRes.ok()).toBeTruthy()
+      const offStrengthBuffer = await offStrengthRes.body()
+      const offHeightRes = await request.get(posterUrl({ ...base, tsh: "0" }))
+      expect(offHeightRes.ok()).toBeTruthy()
+      expect(Buffer.compare(offStrengthBuffer, await offHeightRes.body())).toBe(0)
+      expect(Buffer.compare(defBuffer, offStrengthBuffer)).not.toBe(0)
+      // Live-default semantics: with 60 stored, omitted tracks the stored value.
+      await writeDefaultsJson(request, "tsh-height: arrange height 60 (isolation proof)", { topShadeHeight: 60 })
+      const storedRes = await request.get(posterUrl(base))
+      expect(storedRes.ok()).toBeTruthy()
+      expect(Buffer.compare(tallBuffer, await storedRes.body())).toBe(0)
+      const attachPng = async (info: TestInfo, name: string, body: Buffer, contentType: string) => {
+        const file = info.outputPath(name)
+        await writeFile(file, body)
+        await info.attach(name, { path: file, contentType })
+      }
+      await attachPng(testInfo, "tsh-omitted-default25.png", defBuffer, defRes.headers()["content-type"] ?? "image/png")
+      await attachPng(testInfo, "tsh-explicit60.png", tallBuffer, tallRes.headers()["content-type"] ?? "image/png")
+    } finally {
+      // Restore the pre-test stored values. The PUT merge cannot delete keys:
+      // when a key was absent, re-asserting the hardcoded fallback is
+      // semantically identical (same render as the fallback chain).
+      await writeDefaultsJson(request, "tsh-height: restore original defaults", {
+        topShade: (hadTopShade ? originalTopShade : 50) as number,
+        topShadeHeight: (hadTopShadeHeight ? originalTopShadeHeight : 25) as number,
+      })
+    }
+    const restored = await readDefaultsJson(request, "tsh-height: verify restore")
+    expect(restored.topShade).toBe(hadTopShade ? originalTopShade : 50)
+    expect(restored.topShadeHeight).toBe(hadTopShadeHeight ? originalTopShadeHeight : 25)
   })
 
   test("all badges off (clean poster) — valid image", async ({ request }) => {

@@ -254,14 +254,19 @@ export function bottomBandMeanRGB(buf: Buffer, opts?: BandSampleOptions): Promis
 /**
  * Effective WCAG linear luminance of the top badge background: the band mean
  * (sRGB) veiled by the black top-shade gradient. The gradient runs full-width
- * over the top 25% of the canvas (`topShadeSVG`: edge alpha 0.75·s/100,
- * linear ramp to 0); the badge row sits at the edge, so the edge alpha is the
- * conservative veil — uniform-black blend, then WCAG relativeLuminance on the
- * veiled channels (NOT the nonlinear Rec.709 strip mean fed blindly as
- * linear). `topShade = 0` (falsy) = no veil, never an inherited value.
+ * from the top edge down to `tsh` % of the canvas height (`topShadeSVG`: edge
+ * alpha 0.75·s/100, linear ramp to 0); the badge row sits at the edge, so the
+ * edge alpha is the conservative veil — uniform-black blend, then WCAG
+ * relativeLuminance on the veiled channels (NOT the nonlinear Rec.709 strip
+ * mean fed blindly as linear). `topShade = 0` (falsy) = no veil, never an
+ * inherited value. `topShadeHeight = 0` also means no veil (zero-height
+ * shadow paints nothing): the raw band mean is measured. Any other height
+ * keeps the edge-alpha model (the badge row is always at the edge).
  */
-export function effectiveTopBackgroundLuminance(mean: BandMeanRGB, topShade: number): number {
+export function effectiveTopBackgroundLuminance(mean: BandMeanRGB, topShade: number, topShadeHeight = 25): number {
   const s = Math.max(0, Math.min(100, Number.isFinite(topShade) ? topShade : 0)) / 100
+  const h = Number.isFinite(topShadeHeight) ? topShadeHeight : 25
+  if (s <= 0 || h <= 0) return relativeLuminance(mean.r, mean.g, mean.b)
   const alpha = 0.75 * s
   const k = 1 - alpha
   return relativeLuminance(mean.r * k, mean.g * k, mean.b * k)

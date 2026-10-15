@@ -76,8 +76,13 @@ interface BadgeParams {
   blurEnabled: boolean
   /** Intensità tinta di scena 0-100 (default 20 quando omesso). */
   tintStrength?: number
-  /** Ombra lineare superiore 0-100 (default 0 = spenta). */
+  /** Ombra lineare superiore 0-100 (default 50 = look corrente). */
   topShade?: number
+  /**
+   * Altezza dell'ombra superiore in % del canvas 0-100 (default 25 = look
+   * storico). 0 = ombra disattivata qualunque sia `topShade`.
+   */
+  topShadeHeight?: number
   /** Scala % + offset px del badge superiore (solo stili centrati per gli offset). */
   topBadgeScale: number
   topBadgeOffsetX: number
@@ -284,6 +289,7 @@ export function buildUrlPattern(bp: BadgeParams & {
     blurEnabled: bp.blurEnabled,
     tintStrength: bp.tintStrength,
     topShade: bp.topShade,
+    topShadeHeight: bp.topShadeHeight,
     networkLogo: bp.networkLogo,
     networkLogoPosition: bp.networkLogoPosition,
     networkLogoFollowTitle: bp.networkLogoFollowTitle,
@@ -430,7 +436,8 @@ export function buildPreviewUrl(ps: PosterState, bp: BadgeParams, configToken?: 
   params.push(`bf=${bp.blurFade}`)
   params.push(`bd=${bp.blurDarkness}`)
   params.push(`tint=${bp.tintStrength ?? 20}`)
-  params.push(`ts=${bp.topShade ?? 80}`)
+  params.push(`ts=${bp.topShade ?? 50}`)
+  params.push(`tsh=${bp.topShadeHeight ?? 25}`)
   params.push(`bs=${bp.badgeStyle}`)
   params.push(`rs=${bp.rankingBadgeStyle}`)
   // Standalone extra style: opt-in only (absent = legacy `rs` fallback,
@@ -633,6 +640,7 @@ export interface DefaultsPreviewParams {
   defaultBlurDarkness?: number
   defaultTintStrength?: number
   defaultTopShade?: number
+  defaultTopShadeHeight?: number
   defaultGradientHeight?: number
   defaultTopBadgeScale?: number
   defaultTopBadgeOffsetX?: number
@@ -842,7 +850,8 @@ export function buildDefaultsPreviewUrl(bp: DefaultsPreviewParams): string {
   params.push(`bd=${pick(land.blurDarkness, bp.defaultBlurDarkness) ?? 30}`)
   params.push(`be=${pick(land.blurEnabled, bp.defaultBlurEnabled) !== false ? "1" : "0"}`)
   params.push(`tint=${pick(land.tintStrength, bp.defaultTintStrength) ?? 20}`)
-  params.push(`ts=${pick(land.topShade, bp.defaultTopShade) ?? 80}`)
+  params.push(`ts=${pick(land.topShade, bp.defaultTopShade) ?? 50}`)
+  params.push(`tsh=${pick(land.topShadeHeight, bp.defaultTopShadeHeight) ?? 25}`)
   params.push(`tscale=${pick(land.topBadgeScale, bp.defaultTopBadgeScale) ?? 100}`)
   params.push(`tox=${pick(land.topBadgeOffsetX, bp.defaultTopBadgeOffsetX) ?? 0}`)
   params.push(`toy=${pick(land.topBadgeOffsetY, bp.defaultTopBadgeOffsetY) ?? 0}`)

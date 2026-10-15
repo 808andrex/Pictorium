@@ -847,6 +847,7 @@
   "ui.minimal": "Minimal",
   "ui.tintStrength": "Renk şiddeti",
   "ui.topShade": "Üst gölge",
+  "ui.topShadeHeight": "Üst gölge yüksekliği",
   "ui.gradientPresetNatural": "Doğal",
   "ui.gradientPresetColor": "Renkli",
   "ui.gradientPresetAdd": "Geçerliyi hazır ayar olarak kaydet",

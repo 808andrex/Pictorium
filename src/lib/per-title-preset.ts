@@ -111,6 +111,7 @@ export type PerTitleVisualBareKey =
   | "blurDarkness"
   | "tintStrength"
   | "topShade"
+  | "topShadeHeight"
   | "topBadgeScale"
   | "topBadgeOffsetX"
   | "topBadgeOffsetY"
@@ -148,6 +149,7 @@ export interface PerTitleLandscapeBlurPatch {
   blurDarkness?: number
   tintStrength?: number
   topShade?: number
+  topShadeHeight?: number
 }
 
 export interface PerTitleVisualProjection {
@@ -168,6 +170,7 @@ const GRADIENT_BARE_KEYS = [
   "blurDarkness",
   "tintStrength",
   "topShade",
+  "topShadeHeight",
 ] as const
 
 /** Mapped flat keys with NO per-title target (global-only/delivery/data). */
@@ -196,6 +199,7 @@ const PORTRAIT_SPLIT_FLAT_KEYS: ReadonlySet<string> = new Set([
   "defaultBlurDarkness",
   "defaultTintStrength",
   "defaultTopShade",
+  "defaultTopShadeHeight",
   "defaultNetworkLogoFollowTitle",
   "defaultExtraBadgeScale",
   "defaultExtraBadgeOffsetX",

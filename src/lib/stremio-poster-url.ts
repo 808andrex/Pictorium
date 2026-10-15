@@ -200,9 +200,11 @@ export function buildStremioPosterUrl(input: BuildStremioPosterUrlInput): URL {
     blurEnabled: eff?.blurEnabled ?? sd.blurEnabled,
     tintStrength: eff?.tintStrength ?? sd.tintStrength,
     // Ombra superiore: profilo effettivo per-titolo (landscape incluso),
-    // poi default globale, poi 80 (default di formato invariato). Assente
-    // negli URL legacy = default del server.
-    topShade: eff?.topShade ?? sd.topShade ?? 80,
+    // poi default globale, poi 50 (default di formato invariato). Assente
+    // negli URL legacy = default del server. Stessa regola per l'altezza
+    // (25 = look storico).
+    topShade: eff?.topShade ?? sd.topShade ?? 50,
+    topShadeHeight: eff?.topShadeHeight ?? sd.topShadeHeight ?? 25,
     customBadge,
     badgePresetId: mapping?.badgePresetId,
     badgePresetRev: mapping?.badgePresetRev,

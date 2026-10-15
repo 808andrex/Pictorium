@@ -2236,7 +2236,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
     const {
       badgeStyle, rankingBadgeStyle, qualityBadgeStyle, badgeFont,
     extraBadgeStyle,
-      blurEnabled, blurHeight, blurIntensity, blurFade, blurDarkness, tintStrength, topShade,
+      blurEnabled, blurHeight, blurIntensity, blurFade, blurDarkness, tintStrength, topShade, topShadeHeight,
       badgesEnabled, rankingEnabled,
       badgeGenre, badgeYear, badgeRating, badgeQuality, ageBadge, ageCountry, ageBadgeStyle, minQuality, sashOrder,
       separateRatings, separateRatingsStyle,
@@ -2685,6 +2685,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
           blurDarkness,
           gradientHeight: effBlurHeight,
           topShade,
+          topShadeHeight,
           accentColor: accentOverride?.genreColor || null,
         },
         logos: {
@@ -2740,7 +2741,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
       ratings: customRatingConfig.enabled && !separateDisplay.suppressCustomRow ? [...new Map([...ratings, ...customRatings].map(item => [item.id, item])).values()] : undefined,
       posterBuf, logoFetch, backdropFetch: isLandscape ? null : backdropFetch,
       backdropScale, backdropOffsetX, backdropOffsetY,
-      blurEnabled, blurHeight: effBlurHeight, blurIntensity, blurFade: effBlurFade, blurDarkness, tintStrength, topShade,
+      blurEnabled, blurHeight: effBlurHeight, blurIntensity, blurFade: effBlurFade, blurDarkness, tintStrength, topShade, topShadeHeight,
       badgesEnabled, rankingEnabled, genreName, voteAverage, badgeStyle,
       rankingBadgeStyle, extraBadgeStyle, badgeFont, badgeGenre: effectiveBadgeGenre, badgeYear: effectiveBadgeYear, badgeRating: effectiveBadgeRating, badgeQuality,
       qualityBadgeStyle,

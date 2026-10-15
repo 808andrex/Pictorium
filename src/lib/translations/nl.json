@@ -847,6 +847,7 @@
   "ui.minimal": "Minimaal",
   "ui.tintStrength": "Tintsterkte",
   "ui.topShade": "Bovenschaduw",
+  "ui.topShadeHeight": "Hoogte schaduw boven",
   "ui.gradientPresetNatural": "Natuurlijk",
   "ui.gradientPresetColor": "Kleur",
   "ui.gradientPresetAdd": "Huidige opslaan als preset",

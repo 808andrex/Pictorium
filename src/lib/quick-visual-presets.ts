@@ -24,7 +24,7 @@ import type { VisualPresetValues } from "./visual-presets"
  * the exact same constants/formulas — never duplicated.
  *
  * Canonical transform reset: absolute Natural gradient both shapes +
- * topShade 80 + logo null/null/null (auto) + scale 100 (separate via
+ * topShade 50 × topShadeHeight 25 + logo null/null/null (auto) + scale 100 (separate via
  * getSeparateBadgeDefaultScale) + offset 0 except quality portrait -10/+15
  * and landscape 0/0. Reuses canonical constants, never UI 75 / relative
  * 100 / render-only rank -20 baseline.
@@ -37,7 +37,8 @@ export function quickTransformPatch(portrait: boolean): Partial<VisualPresetValu
     defaultBlurFade: NATURAL_GRADIENT_DEFAULTS.blurFade,
     defaultBlurDarkness: NATURAL_GRADIENT_DEFAULTS.blurDarkness,
     defaultTintStrength: NATURAL_GRADIENT_DEFAULTS.tintStrength,
-    defaultTopShade: 80,
+    defaultTopShade: 50,
+    defaultTopShadeHeight: 25,
     defaultLogoScale: null,
     defaultLogoOffsetX: null,
     defaultLogoOffsetY: null,

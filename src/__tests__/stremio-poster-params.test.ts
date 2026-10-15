@@ -75,9 +75,9 @@ describe("buildStremioPosterSearchParams", () => {
     expect(buildStremioPosterSearchParams({ tintStrength: 60 }).get("tint")).toBe("60")
   })
 
-  it("omits ts at default 80, emits it when different", () => {
+  it("omits ts at default 50, emits it when different", () => {
     expect(buildStremioPosterSearchParams({}).has("ts")).toBe(false)
-    expect(buildStremioPosterSearchParams({ topShade: 80 }).has("ts")).toBe(false)
+    expect(buildStremioPosterSearchParams({ topShade: 50 }).has("ts")).toBe(false)
     expect(buildStremioPosterSearchParams({ topShade: 0 }).get("ts")).toBe("0")
     expect(buildStremioPosterSearchParams({ topShade: 70 }).get("ts")).toBe("70")
   })

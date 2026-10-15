@@ -39,6 +39,8 @@ export interface LandscapeBlurState {
   blurDarkness: number
   tintStrength: number
   topShade: number
+  /** Altezza ombra superiore (% canvas) del profilo landscape. */
+  topShadeHeight: number
 }
 
 /** Default di formato per il profilo landscape (mirror server/stremio-poster-url: fade 70). */
@@ -49,7 +51,8 @@ export const LANDSCAPE_BLUR_DEFAULTS: LandscapeBlurState = {
   blurFade: 70,
   blurDarkness: 30,
   tintStrength: 20,
-  topShade: 80,
+  topShade: 50,
+  topShadeHeight: 25,
 }
 
 export interface PosterEditorCtx {
@@ -362,12 +365,21 @@ export interface PosterEditorCtx {
   /** Intensità tinta di scena 0-100 (default 20). */
   tintStrength: number
   setTintStrength: (v: number | ((prev: number) => number)) => void
-  /** Ombra lineare superiore 0-100 in editing (solo per-titolo, default 0). */
+  /** Ombra lineare superiore 0-100 in editing (solo per-titolo, default 50). */
   topShade: number
   setTopShade: (v: number | ((prev: number) => number)) => void
+  /**
+   * Altezza ombra superiore 0-100 (% canvas) in editing (solo per-titolo,
+   * default 25 = look storico). 0 = ombra disattivata.
+   */
+  topShadeHeight: number
+  setTopShadeHeight: (v: number | ((prev: number) => number)) => void
   /** Ombra superiore di default 0-100 (Impostazioni globali, default 50). */
   defaultTopShade: number
   setDefaultTopShade: (v: number | ((prev: number) => number)) => void
+  /** Altezza ombra superiore di default 0-100 (Impostazioni, default 25). */
+  defaultTopShadeHeight: number
+  setDefaultTopShadeHeight: (v: number | ((prev: number) => number)) => void
   blurFade: number
   setBlurFade: (v: number | ((prev: number) => number)) => void
   blurDarkness: number
@@ -540,7 +552,7 @@ export function PosterEditorProvider({
   const {
     globalBadges, rankingBadges, networkLogo, networkLogoPosition, networkLogoFollowTitle, preRelease, ribbonSide, ribbonEnabled, posterShape, logoAlign,
     badgeGenre, badgeYear, badgeRating, badgeQuality, customRatings, ratingSources, separateRatings, separateRatingsStyle, posterLayout, posterFreshScope,
-    gradientHeight, blurIntensity, blurFade, blurDarkness, blurEnabled, tintStrength, topShade,
+    gradientHeight, blurIntensity, blurFade, blurDarkness, blurEnabled, tintStrength, topShade, topShadeHeight,
     topBadgeScale, topBadgeOffsetX, topBadgeOffsetY,
     extraBadgeScale, extraBadgeOffsetX, extraBadgeOffsetY,
     genreBadgeScale, qualityBadgeScale, networkLogoScale,
@@ -553,7 +565,7 @@ export function PosterEditorProvider({
     badgeFont, defaultBadgeFont,
     defaultBadgeStyle, defaultRankingBadgeStyle, defaultQualityBadgeStyle, defaultVideoFormats,
     defaultExtraBadgeStyle,
-    defaultBlurEnabled, defaultBlurIntensity, defaultBlurFade, defaultBlurDarkness, defaultTintStrength, defaultTopShade,
+    defaultBlurEnabled, defaultBlurIntensity, defaultBlurFade, defaultBlurDarkness, defaultTintStrength, defaultTopShade, defaultTopShadeHeight,
     defaultGradientHeight, defaultGlobalBadges, defaultRankingBadges,
     defaultLogoScale, defaultLogoOffsetX, defaultLogoOffsetY,
     defaultTopBadgeScale, defaultTopBadgeOffsetX, defaultTopBadgeOffsetY,
@@ -837,6 +849,16 @@ export function PosterEditorProvider({
       const next = typeof v === "function" ? v(defaultTopShade) : v
       update({ defaultTopShade: next })
     }, [defaultTopShade, update])
+  const setTopShadeHeight = useCallback(
+    (v: number | ((prev: number) => number)) => {
+      const next = typeof v === "function" ? v(topShadeHeight) : v
+      update({ topShadeHeight: next })
+    }, [topShadeHeight, update])
+  const setDefaultTopShadeHeight = useCallback(
+    (v: number | ((prev: number) => number)) => {
+      const next = typeof v === "function" ? v(defaultTopShadeHeight) : v
+      update({ defaultTopShadeHeight: next })
+    }, [defaultTopShadeHeight, update])
   const setBlurFade = useCallback(
     (v: number | ((prev: number) => number)) => {
       const next = typeof v === "function" ? v(blurFade) : v
@@ -1512,6 +1534,7 @@ export function PosterEditorProvider({
       blurDarkness: defaultBlurDarkness,
       tintStrength: defaultTintStrength,
       topShade: defaultTopShade,
+      topShadeHeight: defaultTopShadeHeight,
       topBadgeScale: land?.topBadgeScale ?? defaultTopBadgeScale,
       topBadgeOffsetX: land?.topBadgeOffsetX ?? defaultTopBadgeOffsetX,
       topBadgeOffsetY: land?.topBadgeOffsetY ?? defaultTopBadgeOffsetY,
@@ -1567,8 +1590,9 @@ export function PosterEditorProvider({
       blurDarkness: landscapeDefaults?.blurDarkness ?? defaultBlurDarkness,
       tintStrength: landscapeDefaults?.tintStrength ?? defaultTintStrength,
       topShade: landscapeDefaults?.topShade ?? defaultTopShade,
+      topShadeHeight: landscapeDefaults?.topShadeHeight ?? defaultTopShadeHeight,
     })
-  }, [update, posterShape, landscapeDefaults, defaultGlobalBadges, defaultRankingBadges, defaultBadgeGenre, defaultBadgeYear, defaultBadgeRating, defaultBadgeQuality, defaultCustomRatings, defaultRatingSources, defaultSeparateRatings, defaultSeparateRatingsStyle, defaultPosterLayout, defaultPosterFreshScope, defaultBadgeStyle, defaultRankingBadgeStyle, defaultExtraBadgeStyle, defaultBadgeFont, defaultQualityBadgeStyle, defaultVideoFormats, defaultNetworkLogo, defaultNetworkLogoPosition, defaultNetworkLogoFollowTitle, defaultRibbonEnabled, defaultGradientHeight, defaultBlurEnabled, defaultBlurIntensity, defaultBlurFade, defaultBlurDarkness, defaultTintStrength, defaultTopShade, defaultTopBadgeScale, defaultTopBadgeOffsetX, defaultTopBadgeOffsetY, defaultExtraBadgeScale, defaultExtraBadgeOffsetX, defaultExtraBadgeOffsetY, defaultGenreBadgeScale, defaultGenreBadgeOffsetX, defaultGenreBadgeOffsetY, defaultQualityBadgeScale, defaultQualityBadgeOffsetX, defaultQualityBadgeOffsetY, defaultSeparateBadgeScale, defaultSeparateBadgeOffsetX, defaultSeparateBadgeOffsetY, defaultNetworkLogoScale, defaultNetworkLogoOffsetX, defaultNetworkLogoOffsetY, defaultLogoScale, defaultLogoOffsetX, defaultLogoOffsetY]) // eslint-disable-line react-hooks/exhaustive-deps -- setter refs are stable
+  }, [update, posterShape, landscapeDefaults, defaultGlobalBadges, defaultRankingBadges, defaultBadgeGenre, defaultBadgeYear, defaultBadgeRating, defaultBadgeQuality, defaultCustomRatings, defaultRatingSources, defaultSeparateRatings, defaultSeparateRatingsStyle, defaultPosterLayout, defaultPosterFreshScope, defaultBadgeStyle, defaultRankingBadgeStyle, defaultExtraBadgeStyle, defaultBadgeFont, defaultQualityBadgeStyle, defaultVideoFormats, defaultNetworkLogo, defaultNetworkLogoPosition, defaultNetworkLogoFollowTitle, defaultRibbonEnabled, defaultGradientHeight, defaultBlurEnabled, defaultBlurIntensity, defaultBlurFade, defaultBlurDarkness, defaultTintStrength, defaultTopShade, defaultTopShadeHeight, defaultTopBadgeScale, defaultTopBadgeOffsetX, defaultTopBadgeOffsetY, defaultExtraBadgeScale, defaultExtraBadgeOffsetX, defaultExtraBadgeOffsetY, defaultGenreBadgeScale, defaultGenreBadgeOffsetX, defaultGenreBadgeOffsetY, defaultQualityBadgeScale, defaultQualityBadgeOffsetX, defaultQualityBadgeOffsetY, defaultSeparateBadgeScale, defaultSeparateBadgeOffsetX, defaultSeparateBadgeOffsetY, defaultNetworkLogoScale, defaultNetworkLogoOffsetX, defaultNetworkLogoOffsetY, defaultLogoScale, defaultLogoOffsetX, defaultLogoOffsetY]) // eslint-disable-line react-hooks/exhaustive-deps -- setter refs are stable
 
   const editorCtx = useMemo<PosterEditorCtx>(
     () => ({
@@ -1795,8 +1819,12 @@ export function PosterEditorProvider({
       setTintStrength,
       topShade,
       setTopShade,
+      topShadeHeight,
+      setTopShadeHeight,
       defaultTopShade,
       setDefaultTopShade,
+      defaultTopShadeHeight,
+      setDefaultTopShadeHeight,
       blurFade,
       setBlurFade,
       blurDarkness,
@@ -2017,7 +2045,9 @@ export function PosterEditorProvider({
       blurIntensity, setBlurIntensity,
       tintStrength, setTintStrength,
       topShade, setTopShade,
+      topShadeHeight, setTopShadeHeight,
       defaultTopShade, setDefaultTopShade,
+      defaultTopShadeHeight, setDefaultTopShadeHeight,
       blurFade, setBlurFade,
       blurDarkness, setBlurDarkness,
 

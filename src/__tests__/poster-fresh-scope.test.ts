@@ -465,12 +465,12 @@ describe("dirty tracking covers the scope per shape", () => {
     return isMappingDirty(
       {
         artwork: { posterPath: "/p.jpg", backdropPath: null, posterShape: shape, logoPath: null },
-        gradient: { gradientHeight: 30, blurEnabled: true, blurIntensity: 20, blurFade: 50, blurDarkness: 30, tintStrength: 20, topShade: 50 },
+        gradient: { gradientHeight: 30, blurEnabled: true, blurIntensity: 20, blurFade: 50, blurDarkness: 30, tintStrength: 20, topShade: 50, topShadeHeight: 25 },
         posterLayout: "standard",
         posterFreshScope: currentScope,
       },
       saved,
-      { gradientHeight: 30, blurEnabled: true, blurIntensity: 20, blurFade: 50, blurDarkness: 30, tintStrength: 20, topShade: 50 },
+      { gradientHeight: 30, blurEnabled: true, blurIntensity: 20, blurFade: 50, blurDarkness: 30, tintStrength: 20, topShade: 50, topShadeHeight: 25 },
       "poster",
     )
   }
@@ -819,6 +819,7 @@ describe("save freezes the scope per shape", () => {
             blurDarkness: 30,
             tintStrength: 20,
             topShade: 50,
+            topShadeHeight: 25,
           },
           landscapeBlurDirty: false,
           defaultLogoScale: null,
@@ -827,6 +828,7 @@ describe("save freezes the scope per shape", () => {
           landscapeDefaults: null,
           tintStrength: 20,
           topShade: 50,
+          topShadeHeight: 25,
           gradientHeight: 30,
           setGradientHeight: () => {},
           setBlurFade: () => {},

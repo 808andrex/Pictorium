@@ -94,6 +94,7 @@ export function TransformControls() {
     blurDarkness: number
     tintStrength: number
     topShade: number
+    topShadeHeight: number
     blurEnabled: boolean
   }
   const gradVals: GradVals = isLandShape
@@ -104,6 +105,7 @@ export function TransformControls() {
         blurDarkness: land.blurDarkness,
         tintStrength: land.tintStrength,
         topShade: land.topShade,
+        topShadeHeight: land.topShadeHeight,
         blurEnabled: land.blurEnabled,
       }
     : {
@@ -113,6 +115,7 @@ export function TransformControls() {
         blurDarkness: ed.blurDarkness,
         tintStrength: ed.tintStrength,
         topShade: ed.topShade,
+        topShadeHeight: ed.topShadeHeight,
         blurEnabled: ed.blurEnabled,
       }
   const setGradVals = (v: Partial<GradVals>) => {
@@ -124,6 +127,7 @@ export function TransformControls() {
       if (v.blurDarkness !== undefined) patch.blurDarkness = v.blurDarkness
       if (v.tintStrength !== undefined) patch.tintStrength = v.tintStrength
       if (v.topShade !== undefined) patch.topShade = v.topShade
+      if (v.topShadeHeight !== undefined) patch.topShadeHeight = v.topShadeHeight
       if (v.blurEnabled !== undefined) patch.blurEnabled = v.blurEnabled
       if (Object.keys(patch).length > 0) ed.setLandscapeBlur(patch)
     } else {
@@ -134,6 +138,7 @@ export function TransformControls() {
       if (v.blurDarkness !== undefined) ed.setBlurDarkness(v.blurDarkness)
       if (v.tintStrength !== undefined) ed.setTintStrength(v.tintStrength)
       if (v.topShade !== undefined) ed.setTopShade(v.topShade)
+      if (v.topShadeHeight !== undefined) ed.setTopShadeHeight(v.topShadeHeight)
     }
   }
   const naturalVals = naturalGradientForPoster(previewPoster, ed.posterShape)
@@ -826,12 +831,29 @@ export function TransformControls() {
               boundsMin={0}
               boundsMax={100}
               onChange={(v) => setGradVals({ topShade: v })}
-              onDoubleClick={() => setGradVals({ topShade: 80 })}
+              onDoubleClick={() => setGradVals({ topShade: 50 })}
               editingValue={editingValue}
               editText={editText}
               setEditingValue={setEditingValue}
               setEditText={setEditText}
               editingKey="topShade"
+              suffix="%"
+            />
+            <SliderRow
+              icon={<Ruler className="w-3.5 h-3.5" />}
+              label={t("ui.topShadeHeight")}
+              value={gradVals.topShadeHeight}
+              min={0}
+              max={100}
+              boundsMin={0}
+              boundsMax={100}
+              onChange={(v) => setGradVals({ topShadeHeight: v })}
+              onDoubleClick={() => setGradVals({ topShadeHeight: 25 })}
+              editingValue={editingValue}
+              editText={editText}
+              setEditingValue={setEditingValue}
+              setEditText={setEditText}
+              editingKey="topShadeHeight"
               suffix="%"
             />
           </div>

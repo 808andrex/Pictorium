@@ -847,6 +847,7 @@
   "ui.minimal": "Minimální",
   "ui.tintStrength": "Síla odstínu",
   "ui.topShade": "Horní stín",
+  "ui.topShadeHeight": "Výška horního stínu",
   "ui.gradientPresetNatural": "Natural",
   "ui.gradientPresetColor": "Color",
   "ui.gradientPresetAdd": "Save current as preset",

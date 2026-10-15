@@ -44,7 +44,7 @@ const ALLOWLIST: ReadonlySet<string> = new Set<string>([
   "networkLogo", "networkLogoPosition", "networkLogoFollowTitle",
   "preRelease", "ribbonEnabled",
   "gradientHeight", "blurEnabled", "blurIntensity", "blurFade",
-  "blurDarkness", "tintStrength", "topShade",
+  "blurDarkness", "tintStrength", "topShade", "topShadeHeight",
   "topBadgeScale", "topBadgeOffsetX", "topBadgeOffsetY",
   "extraBadgeScale", "extraBadgeOffsetX", "extraBadgeOffsetY",
   "genreBadgeScale", "genreBadgeOffsetX", "genreBadgeOffsetY",
@@ -104,7 +104,7 @@ describe("projectPerTitleVisualPreset allowlist (acceptance 1)", () => {
     }
     // No opposite (portrait) gradient in the bare patch: gradient travels
     // in the local landscape profile state only.
-    for (const key of ["gradientHeight", "blurEnabled", "blurIntensity", "blurFade", "blurDarkness", "tintStrength", "topShade"]) {
+    for (const key of ["gradientHeight", "blurEnabled", "blurIntensity", "blurFade", "blurDarkness", "tintStrength", "topShade", "topShadeHeight"]) {
       expect(bareKeys({ bare })).not.toContain(key)
     }
     expect(Object.keys(landscapeBlur).length).toBeGreaterThan(0)

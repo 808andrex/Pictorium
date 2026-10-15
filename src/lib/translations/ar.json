@@ -847,6 +847,7 @@
   "ui.minimal": "بسيط",
   "ui.tintStrength": "شدة الصبغة",
   "ui.topShade": "الظل العلوي",
+  "ui.topShadeHeight": "ارتفاع الظل العلوي",
   "ui.gradientPresetNatural": "طبيعي",
   "ui.gradientPresetColor": "ملون",
   "ui.gradientPresetAdd": "حفظ الحالي كإعداد مسبق",

@@ -756,7 +756,7 @@ describe("saveDefaults extra tuning", () => {
 })
 
 describe("isMappingDirty extra tuning + N3 follow flag", () => {  const shape = "poster" as const
-  const gradient = { gradientHeight: 30, blurEnabled: true, blurIntensity: 20, blurFade: 50, blurDarkness: 30, tintStrength: 20, topShade: 50 }
+  const gradient = { gradientHeight: 30, blurEnabled: true, blurIntensity: 20, blurFade: 50, blurDarkness: 30, tintStrength: 20, topShade: 50, topShadeHeight: 25 }
   const base = {
     artwork: { posterShape: shape, posterPath: "/p.jpg", logoPath: null, backdropPath: null },
     gradient,

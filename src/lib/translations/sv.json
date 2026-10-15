@@ -847,6 +847,7 @@
   "ui.minimal": "Minimal",
   "ui.tintStrength": "Tonstyrka",
   "ui.topShade": "Toppskugga",
+  "ui.topShadeHeight": "Övre skuggans höjd",
   "ui.gradientPresetNatural": "Naturlig",
   "ui.gradientPresetColor": "Färg",
   "ui.gradientPresetAdd": "Spara nuvarande som preset",

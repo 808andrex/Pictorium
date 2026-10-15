@@ -325,11 +325,19 @@ export interface PosterRenderConfig {
   /** Intensità tinta di scena 0-100 (default 20). */
   tintStrength: number
   /**
-   * Ombra lineare superiore 0-100 (default 80). Catena completa come la tinta:
+   * Ombra lineare superiore 0-100 (default 50). Catena completa come la tinta:
    * query `ts` > mapping per-titolo > config token > server defaults
-   * (`PICTORIUM_TOP_SHADE`) > 80. Solo flat (vale per entrambi i canvas).
+   * (`PICTORIUM_TOP_SHADE`) > 50. Solo flat (vale per entrambi i canvas).
    */
   topShade: number
+  /**
+   * Altezza dell'ombra superiore in % del canvas 0-100 (default 25 = look
+   * storico). Catena completa come la forza: query `tsh` > mapping
+   * per-titolo > config token > server defaults
+   * (`PICTORIUM_TOP_SHADE_HEIGHT`) > 25. Solo flat (vale per entrambi i
+   * canvas). 0 = ombra disattivata qualunque sia `topShade`.
+   */
+  topShadeHeight: number
   badgesEnabled: boolean
   rankingEnabled: boolean
   /** Quali componenti del badge genere/rating mostrare (default tutti ON). */
@@ -689,17 +697,31 @@ export function resolvePosterRenderConfig(input: PosterRenderConfigInput): Poste
                 : 20)))
 
   // Ombra superiore 0-100 — catena completa (query > mapping.landscape >
-  // mapping flat > config > defaults(.landscape) > 80). Stessi clamp anti-DoS.
+  // mapping flat > config > defaults(.landscape) > 50). Stessi clamp anti-DoS.
   const rawTs = q.get("ts") ? Number(q.get("ts")) : NaN
   const topShade = q.get("ts") !== null
-    ? (Number.isFinite(rawTs) ? clamp(Math.round(rawTs), 0, 100) : 80)
+    ? (Number.isFinite(rawTs) ? clamp(Math.round(rawTs), 0, 100) : 50)
     : (m?.topShade != null && Number.isFinite(m.topShade)
         ? clamp(Math.round(m.topShade), 0, 100)
         : (configOverride?.topShade != null && Number.isFinite(configOverride.topShade)
             ? clamp(Math.round(configOverride.topShade), 0, 100)
             : (esd.topShade != null && Number.isFinite(esd.topShade)
                 ? clamp(Math.round(esd.topShade), 0, 100)
-                : 80)))
+                : 50)))
+  // Altezza ombra superiore 0-100 (% canvas) — catena completa (query >
+  // mapping.landscape > mapping flat > config > defaults(.landscape) > 25).
+  // Stessi clamp anti-DoS. 0 = ombra disattivata (il renderer salta il
+  // composite come con forza 0).
+  const rawTsh = q.get("tsh") ? Number(q.get("tsh")) : NaN
+  const topShadeHeight = q.get("tsh") !== null
+    ? (Number.isFinite(rawTsh) ? clamp(Math.round(rawTsh), 0, 100) : 25)
+    : (m?.topShadeHeight != null && Number.isFinite(m.topShadeHeight)
+        ? clamp(Math.round(m.topShadeHeight), 0, 100)
+        : (configOverride?.topShadeHeight != null && Number.isFinite(configOverride.topShadeHeight)
+            ? clamp(Math.round(configOverride.topShadeHeight), 0, 100)
+            : (esd.topShadeHeight != null && Number.isFinite(esd.topShadeHeight)
+                ? clamp(Math.round(esd.topShadeHeight), 0, 100)
+                : 25)))
 
   const qBadges = q.get("badges")
   const qRanking = q.get("ranking")
@@ -1081,6 +1103,7 @@ export function resolvePosterRenderConfig(input: PosterRenderConfigInput): Poste
     blurDarkness,
     tintStrength,
     topShade,
+    topShadeHeight,
     badgesEnabled,
     rankingEnabled,
     badgeGenre,

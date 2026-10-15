@@ -94,7 +94,7 @@ Want to self-host instead? See [Quick Deploy](#-quick-deploy): [Vercel](#-vercel
 <div align="center" style="margin-top: 8px;">
   <img src="https://raw.githubusercontent.com/Eful97/Pictorium/master/public/Screen/landscape.jpg" alt="Landscape 16:9 Poster Demo — Lanterns (HBO)" width="64%" style="border-radius: 6px;" />
   <br />
-  <em>16:9 landscape poster with baked-in logo, rank ribbon and genre badge</em>
+  <em>16:9 landscape poster with baked-in logo, top-10 outline number, genre/rating and network badge</em>
 </div>
 
 <div align="center" style="margin-top: 8px;">
@@ -326,7 +326,8 @@ Trakt OAuth notes (multi-user): one Trakt app registration per instance (client 
 | `PICTORIUM_RIBBON_ENABLED` | `1` | Netflix-style corner ribbon (`1` = corner ribbon, `0` = centered rank badge). |
 | `PICTORIUM_BLUR_ENABLED` | `1` | Enable or disable cinematic background blur. |
 | `PICTORIUM_TINT_STRENGTH` | `20` | Scene tint strength for background blur (0–100). |
-| `PICTORIUM_TOP_SHADE` | `80` | Top linear shade over the upper 25% of the poster (0–100, 0 = off). |
+| `PICTORIUM_TOP_SHADE` | `50` | Top linear shade strength (0–100, 0 = off; covers the upper 25% by default, adjustable via `PICTORIUM_TOP_SHADE_HEIGHT`). |
+| `PICTORIUM_TOP_SHADE_HEIGHT` | `25` | Top linear shade height as % of the poster canvas (0–100, 0 = off). |
 | `PICTORIUM_BADGE_QUALITY` | `1` | Show or hide video streaming resolution badges (4K/FHD). |
 | `PICTORIUM_AGE_BADGE` | `0` | Show or hide the regional age-certification text badge below the quality stack (original country label, no conversion). |
 | `PICTORIUM_AGE_COUNTRY` | `IT` | Certification country for the age badge (ISO-2, e.g. `US`, `FR`; `GLOBAL` is rejected). Independent from UI language and streaming region. |

@@ -10,6 +10,8 @@ export interface GradientTuning {
   blurDarkness: number
   tintStrength: number
   topShade: number
+  /** Altezza dell'ombra superiore in % del canvas (default 25 = look storico). */
+  topShadeHeight: number
 }
 
 /**
@@ -55,6 +57,7 @@ export function isGradientDirtyForShape(
     // Come gli altri campi: profilo effettivo del formato (il mapping
     // landscape congela topShade come gli altri slider), poi i default.
     topShade: eff?.topShade ?? defaults.topShade,
+    topShadeHeight: eff?.topShadeHeight ?? defaults.topShadeHeight,
   }
   return (
     current.gradientHeight !== saved.gradientHeight ||
@@ -63,7 +66,8 @@ export function isGradientDirtyForShape(
     current.blurFade !== saved.blurFade ||
     current.blurDarkness !== saved.blurDarkness ||
     current.tintStrength !== saved.tintStrength ||
-    current.topShade !== saved.topShade
+    current.topShade !== saved.topShade ||
+    current.topShadeHeight !== saved.topShadeHeight
   )
 }
 

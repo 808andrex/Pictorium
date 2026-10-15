@@ -758,15 +758,16 @@ describe("fresh render", () => {
   }, 90000)
 
   it("models the numeral (rim/shading), not a flat fill", async () => {
-    // Strict legacy guard: runs under EXPLICIT topShade 50 on BOTH fixtures,
+    // Strict explicit-50 guard: runs under EXPLICIT topShade 50 on BOTH fixtures,
     // so the semantic numeral-model invariant is independent of the global
-    // veil. Under the stronger default-80 veil the same box measures
+    // veil (and now also matches the omitted default). Under the stronger
+    // explicit-80 veil the same box measures
     // varRank=1511.31 / varNoRank=647.04 (ratio 2.34 — the background variance
     // rises with the veil, NOT a numeral regression: varRank stays >150 and
     // the background-subtracted residual below stays >>150), hence the ratio
     // assertion below is pinned to the explicit-50 veil it was written for.
-    // The default-80 veil has its own causal guard in the next test — this
-    // threshold is never lowered to fit the new veil.
+    // The omitted default has its own causal guard in the next test — this
+    // threshold is never lowered to fit a new veil.
     const gray = await flatBase(STD_W, STD_H, "#808080")
     const geo = freshGeometry(STD_W, STD_H, 6)
     const box = geo.numeral!
@@ -787,19 +788,19 @@ describe("fresh render", () => {
     expect(varRank).toBeGreaterThan(varNoRank * 3)
   }, 90000)
 
-  it("keeps the numeral modeled under the default 80 veil (equality + background-subtracted signal)", async () => {
-    // Default-80 companion of the strict explicit-50 guard above: NO lowered
+  it("keeps the numeral modeled under the default 50 veil (equality + background-subtracted signal)", async () => {
+    // Default-50 companion of the strict explicit-50 guard above: NO lowered
     // threshold. Causal chain instead —
-    // (a) the omitted default IS explicit 80 (byte-identical on both
+    // (a) the omitted default IS explicit 50 (byte-identical on both
     // compositions, so the veil is the sole delta);
     // (b) the absolute modeled-signal floor (same fixture-derived 150 as the
-    // legacy guard) still holds under the stronger veil;
+    // legacy guard) still holds under the default veil;
     // (c) the numeral is structured ink, not a flat fill hiding in the veil:
     // subtract the matched same-background crop (the no-rank render carries
-    // the identical flat base + identical 80 veil, only the numeral missing)
+    // the identical flat base + identical 50 veil, only the numeral missing)
     // and the residual — the numeral ink alone — clears the same 150 floor
-    // (measured 2453.22 under default 80 vs 1987.37 under explicit 50: the
-    // numeral signal is intact, the ratio drop is background variance).
+    // (measured 1987.37 under default 50 vs 2453.22 under explicit 80: the
+    // numeral signal is intact, the ratio shift is background variance).
     const gray = await flatBase(STD_W, STD_H, "#808080")
     const geo = freshGeometry(STD_W, STD_H, 6)
     const box = geo.numeral!
@@ -810,11 +811,11 @@ describe("fresh render", () => {
     const rankedBase = { posterBuf: gray, posterLayout: "fresh" as const, rankingEnabled: true, finalRank: 6, badgesEnabled: false }
     const unrankedBase = { posterBuf: gray, posterLayout: "fresh" as const, rankingEnabled: false, finalRank: null, badgesEnabled: false }
     const withRank = await generatePosterBuffer(baseInput(rankedBase))
-    const withRank80 = await generatePosterBuffer(baseInput({ ...rankedBase, topShade: 80 }))
+    const withRank50 = await generatePosterBuffer(baseInput({ ...rankedBase, topShade: 50 }))
     const noRank = await generatePosterBuffer(baseInput(unrankedBase))
-    const noRank80 = await generatePosterBuffer(baseInput({ ...unrankedBase, topShade: 80 }))
-    expect(withRank80.equals(withRank)).toBe(true)
-    expect(noRank80.equals(noRank)).toBe(true)
+    const noRank50 = await generatePosterBuffer(baseInput({ ...unrankedBase, topShade: 50 }))
+    expect(withRank50.equals(withRank)).toBe(true)
+    expect(noRank50.equals(noRank)).toBe(true)
     expect(await boxVariance(withRank, left, top, w, h)).toBeGreaterThan(150)
     const cropRank = await sharp(withRank).extract({ left, top, width: w, height: h }).ensureAlpha().raw().toBuffer()
     const cropNoRank = await sharp(noRank).extract({ left, top, width: w, height: h }).ensureAlpha().raw().toBuffer()

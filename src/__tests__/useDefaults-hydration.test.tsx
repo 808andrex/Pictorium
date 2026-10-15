@@ -40,6 +40,7 @@ const USER_SAVED = {
   blurDarkness: 40,
   tintStrength: 20,
   topShade: 50,
+  topShadeHeight: 25,
   gradientHeight: 45,
   topBadgeScale: 100,
   topBadgeOffsetX: 0,

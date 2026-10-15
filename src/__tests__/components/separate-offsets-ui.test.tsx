@@ -312,7 +312,7 @@ describe("idratazione stored + dirty + preset", () => {
 
   it("dirty rileva gli offset separati", () => {
     const baseArtwork = { posterPath: "/p.jpg" as string | null, backdropPath: null, posterShape: "poster" as const, logoPath: null }
-    const baseGradient = { gradientHeight: 30, blurEnabled: true, blurIntensity: 20, blurFade: 50, blurDarkness: 30, tintStrength: 20, topShade: 50 }
+    const baseGradient = { gradientHeight: 30, blurEnabled: true, blurIntensity: 20, blurFade: 50, blurDarkness: 30, tintStrength: 20, topShade: 50, topShadeHeight: 25 }
     const state = {
       artwork: baseArtwork, gradient: baseGradient,
       separateBadgeScale: 130, separateBadgeOffsetX: 0, separateBadgeOffsetY: 0,

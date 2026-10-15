@@ -37,6 +37,11 @@ export interface LandscapeServerDefaults {
   blurDarkness?: number
   tintStrength?: number
   topShade?: number
+  /**
+   * Altezza dell'ombra superiore in % del canvas 0-100 (default 25 = look
+   * storico). Profilo `landscape` sopra per la forma orizzontale.
+   */
+  topShadeHeight?: number
   /** Scala % logo film (null = auto-fit per aspect, come senza default). */
   logoScale?: number | null
   /** Offset px logo film (null = 0). */
@@ -159,8 +164,14 @@ export interface ServerDefaults {
   blurDarkness?: number
   /** Intensità tinta di scena 0-100 (default 20). */
   tintStrength?: number
-  /** Ombra lineare superiore 0-100 (default 80). */
+  /** Ombra lineare superiore 0-100 (default 50). */
   topShade?: number
+  /**
+   * Altezza dell'ombra superiore in % del canvas 0-100 (default 25 = look
+   * storico). Flat portrait, profilo `landscape` sopra per la forma
+   * orizzontale.
+   */
+  topShadeHeight?: number
   gradientHeight?: number
   globalBadges?: boolean
   rankingBadges?: boolean
@@ -398,6 +409,7 @@ function defaultsFromEnv(): ServerDefaults {
   const blurD = envNum("BLUR_DARKNESS")
   const tintS = envNum("TINT_STRENGTH")
   const topSh = envNum("TOP_SHADE")
+  const topShH = envNum("TOP_SHADE_HEIGHT")
   const gradH = envNum("GRADIENT_HEIGHT")
   const topBadgeScale = envNum("TOP_BADGE_SCALE")
   const topBadgeOX = envNum("TOP_BADGE_OFFSET_X")
@@ -433,6 +445,7 @@ function defaultsFromEnv(): ServerDefaults {
   if (blurD !== undefined) d.blurDarkness = blurD
   if (tintS !== undefined) d.tintStrength = tintS
   if (topSh !== undefined) d.topShade = topSh
+  if (topShH !== undefined) d.topShadeHeight = topShH
   if (gradH !== undefined) d.gradientHeight = gradH
   if (topBadgeScale !== undefined) d.topBadgeScale = topBadgeScale
   if (topBadgeOX !== undefined) d.topBadgeOffsetX = topBadgeOX

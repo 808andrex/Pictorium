@@ -13,7 +13,7 @@ const logoScale = scale.nullable()
 const landscapeSchema = z.object({
   logoScale: logoScale.optional(), logoOffsetX: offset.nullable().optional(), logoOffsetY: offset.nullable().optional(),
   gradientHeight: percent.optional(), blurEnabled: z.boolean().optional(), blurIntensity: percent.optional(),
-  blurFade: percent.optional(), blurDarkness: percent.optional(), tintStrength: percent.optional(), topShade: percent.optional(),
+  blurFade: percent.optional(), blurDarkness: percent.optional(), tintStrength: percent.optional(), topShade: percent.optional(), topShadeHeight: percent.optional(),
   topBadgeScale: scale.optional(), topBadgeOffsetX: offset.optional(), topBadgeOffsetY: offset.optional(),
   extraBadgeScale: scale.nullable().optional(),
   extraBadgeOffsetX: offset.nullable().optional(),
@@ -79,7 +79,7 @@ export const visualPresetValuesSchema = z.object({
   defaultVideoFormats: z.array(z.enum(["dv", "hdr", "hdr10plus", "atmos", "imax"])).max(5),
   defaultLogoScale: logoScale, defaultLogoOffsetX: offset.nullable(), defaultLogoOffsetY: offset.nullable(),
   defaultBlurEnabled: z.boolean(), defaultBlurIntensity: percent, defaultBlurFade: percent, defaultBlurDarkness: percent,
-  defaultTintStrength: percent, defaultTopShade: percent, defaultGradientHeight: percent,
+  defaultTintStrength: percent, defaultTopShade: percent, defaultTopShadeHeight: percent.default(25), defaultGradientHeight: percent,
   defaultTopBadgeScale: scale, defaultTopBadgeOffsetX: offset, defaultTopBadgeOffsetY: offset,
   // Tuning EXTRA superiore: opzionale+nullable (preset legacy senza campo
   // restano validi; null/assente = fallback legacy classifica).
@@ -333,6 +333,7 @@ export const PRESET_FLAT_TO_LANDSCAPE: Record<string, keyof LandscapeServerDefau
   defaultBlurDarkness: "blurDarkness",
   defaultTintStrength: "tintStrength",
   defaultTopShade: "topShade",
+  defaultTopShadeHeight: "topShadeHeight",
   defaultGradientHeight: "gradientHeight",
   defaultTopBadgeScale: "topBadgeScale",
   defaultTopBadgeOffsetX: "topBadgeOffsetX",

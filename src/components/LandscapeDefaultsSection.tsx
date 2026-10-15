@@ -245,7 +245,7 @@ export function LandscapeDefaultsSection({ editVal, editTxt, setEditVal, setEdit
   const gradSlider = (
     label: string,
     icon: React.ReactNode,
-    key: Extract<LandKey, "gradientHeight" | "blurIntensity" | "blurFade" | "blurDarkness" | "tintStrength" | "topShade">,
+    key: Extract<LandKey, "gradientHeight" | "blurIntensity" | "blurFade" | "blurDarkness" | "tintStrength" | "topShade" | "topShadeHeight">,
     flat: number,
     min: number,
     max: number,
@@ -941,6 +941,7 @@ export function LandscapeDefaultsSection({ editVal, editTxt, setEditVal, setEdit
               {gradSlider(t("ui.darkness"), <Circle className="w-3.5 h-3.5" />, "blurDarkness", ed.defaultBlurDarkness, 0, 100, "%", "lsbd")}
               {gradSlider(t("ui.tintStrength"), <Cloud className="w-3.5 h-3.5" />, "tintStrength", ed.defaultTintStrength, 0, 100, "%", "lsts")}
               {gradSlider(t("ui.topShade"), <Circle className="w-3.5 h-3.5" />, "topShade", ed.defaultTopShade, 0, 100, "%", "lstp")}
+              {gradSlider(t("ui.topShadeHeight"), <Ruler className="w-3.5 h-3.5" />, "topShadeHeight", ed.defaultTopShadeHeight, 0, 100, "%", "lsth")}
             </div>
           </>
         ) : (

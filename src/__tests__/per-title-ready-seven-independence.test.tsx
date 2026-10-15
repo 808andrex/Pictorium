@@ -53,7 +53,7 @@ const MAPPING_SUPPORTED: ReadonlySet<string> = new Set<string>([
   "networkLogo", "networkLogoPosition", "networkLogoFollowTitle",
   "preRelease", "ribbonEnabled",
   "gradientHeight", "blurEnabled", "blurIntensity", "blurFade",
-  "blurDarkness", "tintStrength", "topShade",
+  "blurDarkness", "tintStrength", "topShade", "topShadeHeight",
   "topBadgeScale", "topBadgeOffsetX", "topBadgeOffsetY",
   "extraBadgeScale", "extraBadgeOffsetX", "extraBadgeOffsetY",
   "genreBadgeScale", "genreBadgeOffsetX", "genreBadgeOffsetY",
@@ -64,7 +64,7 @@ const MAPPING_SUPPORTED: ReadonlySet<string> = new Set<string>([
 
 const GRADIENT_KEYS = [
   "gradientHeight", "blurEnabled", "blurIntensity", "blurFade",
-  "blurDarkness", "tintStrength", "topShade",
+  "blurDarkness", "tintStrength", "topShade", "topShadeHeight",
 ]
 
 function personalExplicit(): VisualPresetValues {

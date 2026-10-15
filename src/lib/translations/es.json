@@ -847,6 +847,7 @@
   "ui.minimal": "Minimal",
   "ui.tintStrength": "Intensidad del tinte",
   "ui.topShade": "Sombra superior",
+  "ui.topShadeHeight": "Altura de sombra superior",
   "ui.gradientPresetNatural": "Natural",
   "ui.gradientPresetColor": "Color",
   "ui.gradientPresetAdd": "Save current as preset",

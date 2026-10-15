@@ -272,6 +272,7 @@ describe("mapping dirty tracks the effective per-shape layout", () => {
       blurDarkness: 30,
       tintStrength: 20,
       topShade: 50,
+      topShadeHeight: 25,
     },
   } as const
 
@@ -651,6 +652,7 @@ describe("save freezes the layout per shape", () => {
             blurDarkness: 30,
             tintStrength: 20,
             topShade: 50,
+            topShadeHeight: 25,
           },
           landscapeBlurDirty: false,
           defaultLogoScale: null,
@@ -659,6 +661,7 @@ describe("save freezes the layout per shape", () => {
           landscapeDefaults: null,
           tintStrength: 20,
           topShade: 50,
+          topShadeHeight: 25,
           gradientHeight: 30,
           setGradientHeight: () => {},
           setBlurFade: () => {},

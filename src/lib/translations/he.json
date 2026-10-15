@@ -847,6 +847,7 @@
   "ui.minimal": "מינימלי",
   "ui.tintStrength": "עוצמת הגוון",
   "ui.topShade": "הצללה עליונה",
+  "ui.topShadeHeight": "גובה ההצללה העליונה",
   "ui.gradientPresetNatural": "טבעי",
   "ui.gradientPresetColor": "צבעוני",
   "ui.gradientPresetAdd": "שמירת הנוכחי כתבנית",
