@@ -1,12 +1,27 @@
 /**
- * Fallback morbido del fetch logo (caso Avengers: Endgame — originale PNG
- * 7795px da ~10.5MB rifiutato dal cap anti-OOM di fetchImg).
+ * Bounded-size TMDB logo fetch (P2 narrow optimization).
  *
- * fetchLogoImg prova `original`, e solo sugli errori di dimensione ripiega
- * su `w780` e poi `w500`. 404/timeout/abort rilanciano subito senza retry.
+ * `fetchLogoImg` downloads raster logos at the documented `w500` tier FIRST
+ * (single request on success) instead of `original`-first: the ordinary
+ * poster path never pays the multi-MB original PNG (e.g. Avengers: Endgame
+ * ~10.5MB/7795px, rejected by the fetchImg anti-OOM cap only AFTER the
+ * download headers arrived). `w780` is not a documented TMDB logo size and
+ * is no longer attempted by this routine.
+ *
+ * Policy:
+ * - relative raster path (`.png`/`.jpg`/`.webp`, ...) → `w500`, one fetch,
+ *   no fallback. Cap/non-200/abort propagate with no extra network.
+ * - relative `.svg` path → `original`, one fetch (vector size semantics:
+ *   `w500` would rasterize server-side at TMDB).
+ * - absolute http(s) URL → exact URL, one fetch (existing SSRF allowlist in
+ *   `imgSrc` still applies).
+ * Size cap, cancellation/deadline, timedFetch/body telemetry and the byte
+ * LRU (coalescing + reuse) are unchanged: they live in `fetchImg`.
  */
 import { describe, it, expect, vi, afterEach } from "vitest"
-import { fetchLogoImg, isImageTooLargeError } from "@/lib/poster-render-helpers"
+import { fetchImg, fetchLogoImg, isImageTooLargeError } from "@/lib/poster-render-helpers"
+import { __resetOutboundStatsForTest, outboundStats } from "@/lib/outbound-stats"
+import { __resetImageBytesForTest } from "@/lib/image-bytes-cache"
 
 const IMG = "https://image.tmdb.org/t/p"
 
@@ -21,8 +36,7 @@ function okResponse(bytes: number): Response {
 function tooLargeResponse(): Response {
   return {
     ok: true,
-    // Come il CDN TMDB per l'originale Endgame: content-length > 10MB,
-    // fetchImg rifiuta prima ancora di scaricare.
+    // Content-length beyond the 10MB fetchImg cap: rejected before download.
     headers: { get: (h: string) => (h.toLowerCase() === "content-length" ? "10977050" : null) },
     arrayBuffer: async () => new Uint8Array(8).buffer as ArrayBuffer,
   } as unknown as Response
@@ -30,6 +44,8 @@ function tooLargeResponse(): Response {
 
 afterEach(() => {
   vi.restoreAllMocks()
+  __resetOutboundStatsForTest()
+  __resetImageBytesForTest()
 })
 
 describe("isImageTooLargeError", () => {
@@ -42,35 +58,36 @@ describe("isImageTooLargeError", () => {
 })
 
 describe("fetchLogoImg", () => {
-  it("uses original when it fits the cap (single fetch)", async () => {
+  it("fetches a raster logo at w500 first (single fetch, no original attempt)", async () => {
     const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(okResponse(1024))
     const buf = await fetchLogoImg("/logo-fit.png")
     expect(buf.length).toBe(1024)
     expect(spy).toHaveBeenCalledTimes(1)
-    expect(spy.mock.calls[0][0]).toBe(`${IMG}/original/logo-fit.png`)
+    expect(spy.mock.calls[0][0]).toBe(`${IMG}/w500/logo-fit.png`)
   })
 
-  it("falls back to w780 when original exceeds the cap (Endgame case)", async () => {
-    const spy = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
-      if (String(url).includes("/original/")) return tooLargeResponse()
-      return okResponse(2048)
-    })
-    const buf = await fetchLogoImg("/logo-giant.png")
+  it("never attempts original or w780 for raster logos", async () => {
+    const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(okResponse(512))
+    await fetchLogoImg("/logo-never-original.png")
+    const urls = spy.mock.calls.map((c) => String(c[0]))
+    expect(urls).toHaveLength(1)
+    expect(urls.some((u) => u.includes("/original/"))).toBe(false)
+    expect(urls.some((u) => u.includes("/w780/"))).toBe(false)
+  })
+
+  it("fetches an SVG logo at original (vector size semantics)", async () => {
+    const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(okResponse(2048))
+    const buf = await fetchLogoImg("/logo-vector.svg")
     expect(buf.length).toBe(2048)
-    expect(spy).toHaveBeenCalledTimes(2)
-    expect(spy.mock.calls[0][0]).toBe(`${IMG}/original/logo-giant.png`)
-    expect(spy.mock.calls[1][0]).toBe(`${IMG}/w780/logo-giant.png`)
+    expect(spy).toHaveBeenCalledTimes(1)
+    expect(spy.mock.calls[0][0]).toBe(`${IMG}/original/logo-vector.svg`)
   })
 
-  it("falls back to w500 when original and w780 both exceed the cap", async () => {
-    const spy = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
-      if (String(url).includes("/w500/")) return okResponse(512)
-      return tooLargeResponse()
-    })
-    const buf = await fetchLogoImg("/logo-huge.png")
-    expect(buf.length).toBe(512)
-    expect(spy).toHaveBeenCalledTimes(3)
-    expect(spy.mock.calls[2][0]).toBe(`${IMG}/w500/logo-huge.png`)
+  it("propagates the size cap on w500 with no extra network", async () => {
+    const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(tooLargeResponse())
+    await expect(fetchLogoImg("/logo-giant.png")).rejects.toThrow("image too large")
+    expect(spy).toHaveBeenCalledTimes(1)
+    expect(spy.mock.calls[0][0]).toBe(`${IMG}/w500/logo-giant.png`)
   })
 
   it("does not retry on 404 (fails fast)", async () => {
@@ -84,6 +101,13 @@ describe("fetchLogoImg", () => {
     expect(spy).toHaveBeenCalledTimes(1)
   })
 
+  it("propagates abort with no extra network", async () => {
+    const spy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new DOMException("aborted", "AbortError"))
+    await expect(fetchLogoImg("/logo-aborted.png")).rejects.toThrow()
+    expect(spy).toHaveBeenCalledTimes(1)
+    expect(spy.mock.calls[0][0]).toBe(`${IMG}/w500/logo-aborted.png`)
+  })
+
   it("fetches external http URLs once without size fallback", async () => {
     const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(okResponse(300))
     const url = `${IMG}/original/logo-ext.png`
@@ -91,5 +115,49 @@ describe("fetchLogoImg", () => {
     expect(buf.length).toBe(300)
     expect(spy).toHaveBeenCalledTimes(1)
     expect(spy.mock.calls[0][0]).toBe(url)
+  })
+
+  it("coalesces and reuses repeated w500 downloads with one body read", async () => {
+    __resetOutboundStatsForTest()
+    __resetImageBytesForTest()
+    const bytes = new Uint8Array(768).fill(9)
+    const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(bytes, { status: 200 }))
+    const first = await fetchLogoImg("/logo-reuse.png")
+    const second = await fetchLogoImg("/logo-reuse.png")
+    expect(first.equals(second)).toBe(true)
+    expect(first.length).toBe(768)
+    // Byte-LRU reuse: a single real download, hence a single body read.
+    expect(spy).toHaveBeenCalledTimes(1)
+    expect(spy.mock.calls[0][0]).toBe(`${IMG}/w500/logo-reuse.png`)
+    const s = outboundStats()["image.tmdb.org"]!
+    expect(s.requests).toBe(1)
+    expect(s.bodyReads).toBe(1)
+    expect(s.bodyBytes).toBe(768)
+    expect(s.bodyErrors).toBe(0)
+  })
+})
+
+describe("fetchImg body telemetry (P3)", () => {
+  it("reuses cached bytes with identical output and one body read", async () => {
+    __resetOutboundStatsForTest()
+    __resetImageBytesForTest()
+    const bytes = new Uint8Array(1024).fill(7)
+    const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(bytes, { status: 200 }))
+    try {
+      const first = await fetchImg(`${IMG}/w500/body-tel-reuse.png`)
+      const second = await fetchImg(`${IMG}/w500/body-tel-reuse.png`)
+      expect(first.equals(second)).toBe(true)
+      expect(first.length).toBe(1024)
+      // Byte-LRU reuse: a single real download, hence a single body read.
+      expect(spy).toHaveBeenCalledTimes(1)
+      const s = outboundStats()["image.tmdb.org"]!
+      expect(s.requests).toBe(1)
+      expect(s.bodyReads).toBe(1)
+      expect(s.bodyBytes).toBe(1024)
+      expect(s.bodyErrors).toBe(0)
+    } finally {
+      __resetOutboundStatsForTest()
+      __resetImageBytesForTest()
+    }
   })
 })

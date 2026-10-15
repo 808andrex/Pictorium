@@ -6,7 +6,7 @@ import { GENRE_FALLBACK } from "@/lib/badges"
 import { RENDER_VERSION } from "./render-version"
 import { ARTWORKS_BASE } from "@/lib/tvdb"
 import { cachedImageBytes } from "@/lib/image-bytes-cache"
-import { timedFetch } from "@/lib/outbound-stats"
+import { timedFetch, readResponseBody } from "@/lib/outbound-stats"
 // Batch B: STD_W/STD_H ora provengono da image-utils.ts (single source of truth)
 import { STD_W, STD_H, LAND_W, LAND_H, computeRegionStats } from "@/lib/image-utils"
 
@@ -65,7 +65,7 @@ export async function fetchImg(url: string, signal?: AbortSignal): Promise<Buffe
     if (!res.ok) throw new Error(`fetch failed: ${res.status}`)
     const cl = res.headers.get("content-length")
     if (cl && Number(cl) > MAX_IMG_SIZE) throw new Error("image too large")
-    const buf = Buffer.from(await res.arrayBuffer())
+    const buf = Buffer.from(await readResponseBody(res))
     if (buf.length > MAX_IMG_SIZE) throw new Error("image too large")
     return buf
   })
@@ -81,25 +81,24 @@ export function isImageTooLargeError(e: unknown): boolean {
 }
 
 /**
- * Fetch di un logo TMDB con fallback morbido sulla taglia: `original` per la
- * nitidezza, ma gli originali giganti (>10MB, es. PNG 7795px) vengono
- * rifiutati dal cap anti-OOM di fetchImg — in quel caso (e solo in quel
- * caso: 404/timeout/abort rilanciano subito) riprova `w780` e poi `w500`.
- * Su un poster da 380px un logo a 780px è già oltre la nitidezza necessaria.
+ * Bounded-size fetch of a TMDB logo: raster logos download at the documented
+ * `w500` tier FIRST (single request on success) instead of `original`-first,
+ * so the ordinary poster path never pays a multi-MB original PNG (e.g. the
+ * ~10.5MB/7795px Endgame logo, once rejected by the fetchImg anti-OOM cap
+ * only after the headers arrived). `w780` is not a documented TMDB logo size
+ * and is never attempted here. SVG stays `original` (vector size semantics:
+ * a sized tier would rasterize server-side at TMDB). Absolute URLs download
+ * once as-is (SSRF allowlist in imgSrc still applies). Cap, transport and
+ * timeout/404/abort errors propagate with no extra network — no fallback
+ * retries. Telemetry, deadline and byte-cache coalescing live in fetchImg.
  */
 export async function fetchLogoImg(path: string, signal?: AbortSignal): Promise<Buffer> {
-  // URL esterni (http): imgSrc non inserisce la taglia, riprovare lo stesso
-  // URL sarebbe inutile — un solo tentativo come prima.
+  // External URLs (http): imgSrc carries no size tier, retrying the same URL
+  // would be pointless — a single attempt as before.
   if (path.startsWith("http")) return fetchImg(imgSrc(path), signal)
-  try {
-    return await fetchImg(imgSrc(path, "original"), signal)
-  } catch (e) {
-    if (!isImageTooLargeError(e)) throw e
-  }
-  try {
-    return await fetchImg(imgSrc(path, "w780"), signal)
-  } catch (e) {
-    if (!isImageTooLargeError(e)) throw e
+  // Vector logos keep full resolution: sizing happens locally at composite.
+  if (path.toLowerCase().split(/[?#]/, 1)[0].endsWith(".svg")) {
+    return fetchImg(imgSrc(path, "original"), signal)
   }
   return fetchImg(imgSrc(path, "w500"), signal)
 }
@@ -113,8 +112,9 @@ export function imgSrc(path: string, size = "w500"): string {
     }
     return path
   }
-  // I loghi usano "original" (nitidezza, PNG piccoli); poster/backdrop restano
-  // "w500" per non appesantire memoria e tempi di risposta.
+  // Raster logos download at `w500` via fetchLogoImg (bounded size; only SVG
+  // vectors use `original`); poster/backdrop restano `w500` per non
+  // appesantire memoria e tempi di risposta.
   return `${IMG_BASE}/${size}${path}`
 }
 

@@ -111,7 +111,7 @@ import { lookupAVSpecs, isVideoFormat, type VideoFormat } from "@/lib/av-specs"
 import { computeVote } from "@/lib/rating-weights"
 import { combineAbortSignals } from "@/lib/abort-signal"
 import { cachedImageBytes } from "@/lib/image-bytes-cache"
-import { timedFetch } from "@/lib/outbound-stats"
+import { timedFetch, readResponseBody } from "@/lib/outbound-stats"
 import { createHash } from "node:crypto"
 import { fetchCustomRatings, resolveCustomRatingConfig, type RatingItem } from "@/lib/custom-rating"
 import { resolveAgeCertification, sanitizeAgeLabel } from "@/lib/certification"
@@ -1472,7 +1472,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
                 return cachedImageBytes(url, async () => {
                   const res = await timedFetch(url, { signal: combineAbortSignals(renderAbort.signal, 5000) })
                   if (!res.ok) throw new Error(`HTTP ${res.status}`)
-                  return Buffer.from(await res.arrayBuffer())
+                  return Buffer.from(await readResponseBody(res))
                 })
               },
               fetchCandidateImage: async (path: string) => {
@@ -1483,7 +1483,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
                 return cachedImageBytes(url, async () => {
                   const res = await timedFetch(url, { signal: combineAbortSignals(renderAbort.signal, 5000) })
                   if (!res.ok) throw new Error(`HTTP ${res.status}`)
-                  return Buffer.from(await res.arrayBuffer())
+                  return Buffer.from(await readResponseBody(res))
                 })
               },
               hasBadges: true,
@@ -1624,7 +1624,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
                   return cachedImageBytes(url, async () => {
                     const res = await timedFetch(url, { signal: combineAbortSignals(renderAbort.signal, 5000) })
                     if (!res.ok) throw new Error(`HTTP ${res.status}`)
-                    return Buffer.from(await res.arrayBuffer())
+                    return Buffer.from(await readResponseBody(res))
                   })
                 },
                 fetchCandidateImage: async (path: string) => {
@@ -1637,7 +1637,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<RouteP
                   return cachedImageBytes(url, async () => {
                     const res = await timedFetch(url, { signal: combineAbortSignals(renderAbort.signal, 5000) })
                     if (!res.ok) throw new Error(`HTTP ${res.status}`)
-                    return Buffer.from(await res.arrayBuffer())
+                    return Buffer.from(await readResponseBody(res))
                   })
                 },
                 hasBadges: true,
