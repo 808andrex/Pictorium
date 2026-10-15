@@ -2325,7 +2325,7 @@ export async function generatePosterBuffer(input: GenerationInput): Promise<Buff
       // Ombra/minimale in landscape: testo nudo, +10px verso l'alto per
       // staccarlo dal bordo (con e senza separati).
       const styleLiftY = anchorRight && (badgeStyle === "shadow" || badgeStyle === "minimal") ? 10 : 0
-      const genreTopFor = (h: number) => Math.min(CH - h, CH - h - Math.max(0, Math.round(targetCenter - h / 2)) + genreBadgeOffsetY - styleCornerShiftY - styleLiftY)
+      const genreTopFor = (h: number) => Math.round(Math.min(CH - h, CH - h - Math.max(0, Math.round(targetCenter - h / 2)) + genreBadgeOffsetY - styleCornerShiftY - styleLiftY))
       // Separati attivi: il segmento ★ sparisce e la pill si restringe —
       // ancorata a destra, la massa visiva andrebbe a destra. Si compensa di
       // metà larghezza rimossa così il centro resta dov'era con ★ (solo
