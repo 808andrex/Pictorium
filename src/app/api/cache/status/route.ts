@@ -7,6 +7,7 @@ import { getTMDBStats } from "@/lib/tmdb"
 import { rateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit"
 import { isBreakerOpen as isAwardsBreakerOpen } from "@/lib/awards"
 import { isMdblistBreakerOpen } from "@/lib/ratings"
+import { getMdbQuotaSummary } from "@/lib/mdblist-quota"
 import { isJustwatchBreakerOpen } from "@/lib/justwatch"
 import { isTvdbBreakerOpen } from "@/lib/tvdb"
 import { outboundStats } from "@/lib/outbound-stats"
@@ -55,6 +56,10 @@ export async function GET(req: NextRequest) {
       justwatch: isJustwatchBreakerOpen(),
       tvdb: isTvdbBreakerOpen(),
     },
+    // MDBList per-key daily-quota parked state (sanitized counts + reset
+    // timing only, per-process scope): same fail-closed admin auth as the
+    // rest of this operator surface, never on public /api/status.
+    mdblistQuota: getMdbQuotaSummary(),
   }, {
     headers: {
       "Cache-Control": "no-store",

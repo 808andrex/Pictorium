@@ -132,11 +132,14 @@ function tmdbImages(id: number) {
 async function router(input: unknown, init?: { signal?: AbortSignal }): Promise<Response> {
   const url = String(input)
   const signal = init?.signal
-  if (url.includes("mdblist.com/api")) {
+  if (url.includes("api.mdblist.com")) {
+    // Liste keyed fuori dal fault-scope (come col vecchio host: il guard
+    // storico `mdblist.com/api` non le matchava mai): fuori chart, veloci.
+    if (!url.includes("/imdb/")) return Response.json([])
     calls.mdblist++
     const r = applyFault(faults.mdblist, signal)
     if (r) return r as Response
-    return Response.json({ ratings: [{ source: "imdb", value: 8.0 }] })
+    return Response.json({ ratings: [{ source: "imdb", value: 80, score: 80 }] })
   }
   if (url.includes("mdblist")) {
     return Response.json([]) // liste anime: fuori chart → rank null
@@ -191,8 +194,11 @@ async function router(input: unknown, init?: { signal?: AbortSignal }): Promise<
 
 async function getPoster(id: number) {
   const t0 = Date.now()
+  // mdblist_key esplicita: la nuova media API richiede autenticazione, senza
+  // chiave il path MDBList è skippato (niente upstream futile) e gli scenari
+  // chaos MDBList non avrebbero traffico da osservare.
   const res = await posterGET(
-    new NextRequest(`http://localhost:3000/api/poster/movie/${id}?api_key=test`),
+    new NextRequest(`http://localhost:3000/api/poster/movie/${id}?api_key=test&mdblist_key=test-mdb`),
     { params: Promise.resolve({ type: "movie", id: String(id) }) },
   )
   await res.arrayBuffer().catch(() => {})

@@ -244,8 +244,8 @@ export const CARD_META_STAR_FILL = "#FFB800"
  *
  * Evidence (no assumptions about "all /10"):
  * - MDBList separate values arrive ALREADY normalized to /10 at fetch
- *   (`ratings.ts` fetchMdbListSources: `> 10 → /10`, letterboxd ≤ 5 `* 2`,
- *   rogerebert ≤ 4 `* 2.5`) and the ordinary average (`computeVote`) means
+ *   (`ratings.ts` fetchMdbListSources: new-API `score` 0-100 always `/10`,
+ *   letterboxd ≤ 5 `* 2`, rogerebert ≤ 4 `* 2.5`) and the ordinary average (`computeVote`) means
  *   those same /10 values — so absent/`decimal` format is used as-is.
  * - Custom provider percent values are 0-100 (`custom-rating.test.ts`: 87 +
  *   "percent" → `"87%"`, "formats without changing the scale"; docs example)

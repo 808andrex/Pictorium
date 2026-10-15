@@ -33,7 +33,7 @@
 
 import crypto from "node:crypto"
 
-import { cacheGet, cacheSet } from "./cache"
+import { cacheGet, cacheRemainingMs, cacheSet } from "./cache"
 import { concurrentMap } from "./episode-ordering"
 import { createLogger } from "./logger"
 import {
@@ -161,6 +161,20 @@ function rankingCacheKey(input: FetchCustomRankingInput): string {
 // promise (same pattern as the TMDB fetch layer). Entries are deleted on
 // settle, so a failed shared call never poisons later ones.
 const inflight = new Map<string, Promise<CustomRankingResult>>()
+
+/**
+ * Remaining lifetime (ms) of a derived custom Top-20 from its ABSOLUTE
+ * provenance (generation timestamp + 30min TTL), or null when absent/expired.
+ * Read-only: never fetches, never renews (Task D poster freshness cap).
+ * Only `ok` results with items are ever cached, so a null here also covers
+ * error/empty states (no cap — the poster already renders fail-closed).
+ */
+export function customRankingRemainingMs(
+  input: FetchCustomRankingInput,
+  nowMs: number = Date.now(),
+): number | null {
+  return cacheRemainingMs(rankingCacheKey(input), nowMs)
+}
 
 /** Test hook: drops in-flight entries (mirrors `__resetTvdbTokenCache`). */
 export function __resetCustomRankingInflight(): void {

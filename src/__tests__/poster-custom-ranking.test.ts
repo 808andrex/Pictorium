@@ -110,8 +110,8 @@ async function router(input: unknown): Promise<Response> {
     return Response.json(jwEdges([707, 709]))
   }
   if (url.includes("/lists/u/rank-")) return Response.json(listPayload)
-  if (url.includes("mdblist.com/api")) {
-    return Response.json({ ratings: [{ source: "imdb", value: 8.0 }] })
+  if (url.includes("api.mdblist.com")) {
+    return Response.json({ ratings: [{ source: "imdb", value: 80, score: 80 }] })
   }
   if (url.includes("mdblist")) return Response.json([])
   if (url.includes("sparql") || url.includes("wikidata")) {

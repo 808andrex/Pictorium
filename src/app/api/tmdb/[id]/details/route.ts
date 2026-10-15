@@ -1,7 +1,7 @@
 import crypto from "node:crypto"
 import { NextRequest } from "next/server"
 import { getDetails, getExternalIds, resolveRouteApiKey } from "@/lib/tmdb"
-import { fetchAggregatedRating, resolveRatingSources } from "@/lib/ratings"
+import { fetchAggregatedRating, isMdbTmdbIdentityUsable, resolveRatingSources } from "@/lib/ratings"
 import { computeVote } from "@/lib/rating-weights"
 import { rateLimit, rateLimitKey, rateLimitResponse } from "@/lib/rate-limit"
 import { cacheGet, cacheSet } from "@/lib/cache"
@@ -61,7 +61,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     ])
     const imdbId = extIds.imdb_id
     let aggregatedData: Awaited<ReturnType<typeof fetchAggregatedRating>> = null
-    const rating = imdbId
+    // Task C: senza IMDb ma con TMDB id + tipo esplicito (qui mediaType è
+    // sempre movie|tv) si richiedono comunque le fonti via /tmdb/{movie|show}/.
+    const canRequestRatings = !!imdbId || isMdbTmdbIdentityUsable(tmdbId, mediaType)
+    const rating = canRequestRatings
       ? (await (async () => {
           // Fix L19: timer della race cancellato se vince il fetch del rating.
           // Il signal dedicato abortisce l'upstream residuo in finally (niente

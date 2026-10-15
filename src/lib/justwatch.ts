@@ -340,6 +340,39 @@ function recordCircuitFailure(status?: number): void {
   else justwatchBreaker.recordFailure()
 }
 
+function jwRankingsCacheKey(
+  objectType: "MOVIE" | "SHOW",
+  country: string,
+  first: number,
+  packages: readonly string[] | string[] | undefined,
+  language: string,
+): string {
+  const pkgKey = packages && packages.length > 0 ? packages.join(",") : "all"
+  // La lingua entra nella key: i titoli JW seguono la lingua query.
+  return `${objectType}:${country}:${first}:${pkgKey}:${language}`
+}
+
+/**
+ * Remaining lifetime (ms) of a rankings source entry from its ABSOLUTE
+ * provenance (generation timestamp + 6h TTL), or null when absent/expired.
+ * Read-only: never fetches, never renews (Task D poster freshness cap).
+ * Negative-cache entries (backdated timestamp, 60s policy) naturally report
+ * their short remainder through the same arithmetic.
+ */
+export function jwRankingsRemainingMs(
+  objectType: "MOVIE" | "SHOW",
+  country = "IT",
+  first = 20,
+  packages?: readonly string[] | string[],
+  language = "it-IT",
+  nowMs: number = Date.now(),
+): number | null {
+  const cached = rankingsCache.get(jwRankingsCacheKey(objectType, country, first, packages, language))
+  if (!cached) return null
+  const remaining = CACHE_TTL - (nowMs - cached.timestamp)
+  return remaining > 0 ? remaining : null
+}
+
 function usablePayload(data: unknown): boolean {
   return (
     data !== null &&
@@ -358,9 +391,7 @@ export async function getJWRankings(
   // senza, il fetch sopravvive al watchdog come zombie.
   signal?: AbortSignal,
 ): Promise<JWRankEntry[]> {
-  const pkgKey = packages && packages.length > 0 ? packages.join(",") : "all"
-  // La lingua entra nella key: i titoli JW seguono la lingua query.
-  const cacheKey = `${objectType}:${country}:${first}:${pkgKey}:${language}`
+  const cacheKey = jwRankingsCacheKey(objectType, country, first, packages, language)
   const cached = rankingsCache.get(cacheKey)
   if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
     return cached.data
@@ -508,6 +539,61 @@ export interface JWTitleOptions {
   overfetch?: boolean
 }
 
+function jwTitlesCacheKey(args: {
+  objectType: "MOVIE" | "SHOW"
+  country: string
+  first: number
+  offset: number
+  sortBy: string
+  packages: readonly string[] | string[] | undefined
+  genres: readonly string[] | string[] | undefined
+  monetizationTypes: readonly string[] | string[] | undefined
+  language: string
+  overfetch: boolean
+}): string {
+  const pkgKey = args.packages && args.packages.length > 0 ? args.packages.join(",") : "all"
+  const genreKey = args.genres && args.genres.length > 0 ? args.genres.join(",") : "all"
+  const monetizationKey = args.monetizationTypes && args.monetizationTypes.length > 0 ? args.monetizationTypes.join(",") : "all"
+  const ofKey = args.overfetch ? "of1" : "of0"
+  return `titles:${args.objectType}:${args.country}:${args.first}:${args.offset}:${args.sortBy}:${pkgKey}:${genreKey}:${monetizationKey}:${args.language}:${ofKey}`
+}
+
+/**
+ * Remaining lifetime (ms) of a popular/trending titles source entry from
+ * its ABSOLUTE provenance, or null when absent/expired. Read-only: never
+ * fetches, never renews (Task D poster freshness cap). Callers must pass
+ * the EXACT fetch coordinates (see fetchTop20Ranking: first 20, offset 0,
+ * digital monetization types, overfetch false) — a mismatch safely yields
+ * null (no cap) instead of a wrong deadline.
+ */
+export function jwTitlesRemainingMs(
+  args: Parameters<typeof jwTitlesCacheKey>[0],
+  nowMs: number = Date.now(),
+): number | null {
+  const cached = rankingsCache.get(jwTitlesCacheKey(args))
+  if (!cached) return null
+  const remaining = CACHE_TTL - (nowMs - cached.timestamp)
+  return remaining > 0 ? remaining : null
+}
+
+/**
+ * Remaining lifetime (ms) of a title-availability (offers) source entry
+ * from its ABSOLUTE provenance, or null when absent/expired. Read-only:
+ * never fetches, never renews (Task D poster freshness cap for the
+ * pre-release path, which bakes `hasJWOffers` into the poster).
+ */
+export function jwAvailabilityRemainingMs(
+  objectType: "MOVIE" | "SHOW",
+  country: string,
+  tmdbId: number,
+  nowMs: number = Date.now(),
+): number | null {
+  const cached = availabilityCache.get(`avail:${objectType}:${country}:${tmdbId}`)
+  if (!cached) return null
+  const remaining = CACHE_TTL - (nowMs - cached.timestamp)
+  return remaining > 0 ? remaining : null
+}
+
 export async function getJWTitles(opts: JWTitleOptions): Promise<JWRankEntry[]> {
   const {
     objectType,
@@ -523,11 +609,9 @@ export async function getJWTitles(opts: JWTitleOptions): Promise<JWRankEntry[]> 
     overfetch = true,
   } = opts
 
-  const pkgKey = packages && packages.length > 0 ? packages.join(",") : "all"
-  const genreKey = genres && genres.length > 0 ? genres.join(",") : "all"
-  const monetizationKey = monetizationTypes && monetizationTypes.length > 0 ? monetizationTypes.join(",") : "all"
-  const ofKey = overfetch ? "of1" : "of0"
-  const cacheKey = `titles:${objectType}:${country}:${first}:${offset}:${sortBy}:${pkgKey}:${genreKey}:${monetizationKey}:${language}:${ofKey}`
+  const cacheKey = jwTitlesCacheKey({
+    objectType, country, first, offset, sortBy, packages, genres, monetizationTypes, language, overfetch,
+  })
 
   const cached = rankingsCache.get(cacheKey)
   if (cached && Date.now() - cached.timestamp < CACHE_TTL) {

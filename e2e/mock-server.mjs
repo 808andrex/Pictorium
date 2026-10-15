@@ -470,8 +470,81 @@ const server = http.createServer(async (req, res) => {
       })
     }
 
-    // MDBList aggregated ratings (lib/ratings.ts → ${MDBLIST_API_URL}/?i=tt...):
-    // voti deterministici per la colonna rating separati (sep=1).
+    // MDBList aggregated ratings — NEW media API (lib/ratings.ts →
+    // `${MDBLIST_API_URL}/imdb/{movie|show|any}/{imdbId}/?apikey=`): voti
+    // deterministici per la colonna rating separati (sep=1). I votes stanno
+    // sopra il default min-votes (10) così l'harness resta verde.
+    if (method === "GET" && pathname.startsWith("/mdblist/api/imdb/")) {
+      const segs = pathname.split("/").filter(Boolean)
+      const imdbId = segs[4] || ""
+      // tt0000001: MDBList senza imdb (per il test fallback Cinemeta).
+      if (imdbId === "tt0000001") {
+        return json(res, 200, {
+          type: "movie",
+          title: "Mock",
+          year: 2020,
+          score: 79,
+          ratings: [{ source: "tmdb", value: 7.9, score: 79, votes: 1200 }],
+        })
+      }
+      return json(res, 200, {
+        type: "movie",
+        title: "Mock",
+        year: 2020,
+        score: 80,
+        ratings: [
+          { source: "imdb", value: 8.7, score: 87, votes: 5000 },
+          { source: "tmdb", value: 7.9, score: 79, votes: 3000 },
+          { source: "tomatoes", value: 88, score: 88, votes: 900 },
+          { source: "popcorntime", value: 9.2, score: 92, votes: 1500 },
+          { source: "metacritic", value: 75, score: 75, votes: 800 },
+        ],
+      })
+    }
+
+    // MDBList aggregated ratings — NEW typed TMDB API (task C →
+    // `${MDBLIST_API_URL}/tmdb/{movie|show}/{id}/?apikey=`): copre i titoli
+    // senza IMDb senza richiederlo. Corpi identici ai gemelli /imdb (verifica
+    // anonima 2026-10-15: tt0111161 ≡ tmdb movie 278, tt0944947 ≡ tmdb show
+    // 1399). Solo gli id noti rispondono 200; tipo sbagliato o id ignoto →
+    // 404 come il reale (mai retry automatico sull'altro tipo).
+    if (method === "GET" && pathname.startsWith("/mdblist/api/tmdb/")) {
+      const segs = pathname.split("/").filter(Boolean)
+      const seg = segs[3] || ""
+      const id = segs[4] || ""
+      if (seg === "movie" && id === "278") {
+        return json(res, 200, {
+          type: "movie",
+          title: "Mock",
+          year: 2020,
+          score: 80,
+          ratings: [
+            { source: "imdb", value: 8.7, score: 87, votes: 5000 },
+            { source: "tmdb", value: 7.9, score: 79, votes: 3000 },
+            { source: "tomatoes", value: 88, score: 88, votes: 900 },
+            { source: "popcorntime", value: 9.2, score: 92, votes: 1500 },
+            { source: "metacritic", value: 75, score: 75, votes: 800 },
+          ],
+        })
+      }
+      if (seg === "show" && id === "1399") {
+        return json(res, 200, {
+          type: "show",
+          title: "Mock Show",
+          year: 2008,
+          score: 87,
+          ratings: [
+            { source: "imdb", value: 9.5, score: 95, votes: 2100000 },
+            { source: "popcorn", value: 85, score: 85, votes: null },
+            { source: "tmdb", value: 8.9, score: 89, votes: 15000 },
+          ],
+        })
+      }
+      return json(res, 404, { error: "Item not found" })
+    }
+
+    // Legacy MDBList aggregated ratings (`${MDBLIST_API_URL}/?i=tt...`):
+    // non più chiamato dall'app (task B), tenuto per compatibilità harness.
     // Nota: l'app chiama `${MDBLIST_API_URL}/?i=...` (slash prima del ?),
     // quindi il pathname arriva con trailing slash.
     if (method === "GET" && (pathname === "/mdblist/api" || pathname === "/mdblist/api/")) {

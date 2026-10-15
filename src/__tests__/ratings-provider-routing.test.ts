@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import {
   fetchAggregatedRating,
   RATINGS_SUCCESS_TTL_MS,
+  MDB_RAW_TTL_MS,
   __resetMdblistBreaker,
   __resetRatingsNullForTest,
 } from "@/lib/ratings"
@@ -96,7 +97,7 @@ describe("ratings provider routing (selezione per fonte)", () => {
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
         seen.push(String(input))
-        return okRatings({ ratings: [{ source: "tmdb", value: 8.2 }] })
+        return okRatings({ ratings: [{ source: "tmdb", value: 82, score: 82 }] })
       }),
     )
 
@@ -138,7 +139,7 @@ describe("ratings provider routing (selezione per fonte)", () => {
         const url = String(input)
         seen.push(url)
         if (url.includes("/meta/")) return okRatings({ meta: {} })
-        return okRatings({ ratings: [{ source: "imdb", value: 7.7 }] })
+        return okRatings({ ratings: [{ source: "imdb", value: 77, score: 77 }] })
       }),
     )
 
@@ -179,7 +180,7 @@ describe("ratings provider routing (selezione per fonte)", () => {
       vi.fn(async (input: RequestInfo | URL) => {
         const url = String(input)
         seen.push(url)
-        return okRatings({ ratings: [{ source: "metacritic", value: 85 }] })
+        return okRatings({ ratings: [{ source: "metacritic", value: 85, score: 85 }] })
       }),
     )
 
@@ -269,12 +270,14 @@ describe("ratings provider routing (selezione per fonte)", () => {
     expect(result?.sources).toEqual({ simkl: 7.1 })
   })
 
-  it("cache isolata per selezione: stesso key a ordine diverso, key diverse per policy diverse (v2)", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => okRatings({ ratings: [{ source: "imdb", value: 8.0 }] })))
+  it("cache isolata per selezione: stesso key a ordine diverso, key diverse per policy diverse (v3)", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => okRatings({ ratings: [{ source: "imdb", value: 80, score: 80 }] })))
     const keys: string[] = []
     const originalSet = cacheModule.cacheSet
     const spy = vi.spyOn(cacheModule, "cacheSet").mockImplementation((k: string, v: unknown, tags?: string[], ttlMs?: number) => {
-      keys.push(k)
+      // Solo la cache aggregata per-selezione: la cache grezza MDBList
+      // (mdb:raw:…, condivisa tra selezioni) scrive anch'essa via cacheSet.
+      if (k.startsWith("mdb:ratings:")) keys.push(k)
       originalSet(k, v, tags, ttlMs)
     })
     try {
@@ -286,16 +289,27 @@ describe("ratings provider routing (selezione per fonte)", () => {
       await fetchAggregatedRating("tt_route_key", "k")
 
       expect(keys).toHaveLength(3)
-      expect(keys[0]).toMatch(/^mdb:ratings:v2:tt_route_key:/)
+      expect(keys[0]).toMatch(/^mdb:ratings:v3:tt_route_key:/)
       expect(keys[0]).toContain(":sel:imdb,tmdb")
       expect(keys).not.toContain(keys[0] + ":dup")
       expect(keys[1]).toContain(":sel:metacritic")
       expect(keys[2]).toContain(":sel:all")
       expect(keys[0]).not.toContain("keyAAA")
-      // Il TTL reale passato a cacheSet è 6h su ogni scrittura success,
-      // non solo la costante esportata (prova contro l'avvelenamento).
-      expect(spy).toHaveBeenCalledTimes(3)
-      for (const call of spy.mock.calls) expect(call[3]).toBe(RATINGS_SUCCESS_TTL_MS)
+      // Il TTL reale passato a cacheSet è 6h su ogni scrittura aggregata
+      // success, non solo la costante esportata (prova contro
+      // l'avvelenamento). La grezza (mdb:raw:…) vive più a lungo: 24h di
+      // default quando il body non porta data+tipo affidabili (task 2), mai
+      // in chiaro la chiave (solo hash nel nome).
+      // Conta solo le scritture aggregate: la grezza (mdb:raw:…) condivide
+      // il canale ma ha TTL proprio ed è fuori dal conteggio per-selezione.
+      expect(spy.mock.calls.filter(([k]) => String(k).startsWith("mdb:ratings:"))).toHaveLength(3)
+      for (const call of spy.mock.calls.filter(([k]) => String(k).startsWith("mdb:ratings:"))) {
+        expect(call[3]).toBe(RATINGS_SUCCESS_TTL_MS)
+      }
+      for (const call of spy.mock.calls.filter(([k]) => String(k).startsWith("mdb:raw:"))) {
+        expect(call[3]).toBe(MDB_RAW_TTL_MS)
+      }
+      expect(MDB_RAW_TTL_MS).toBe(24 * 60 * 60 * 1000)
       expect(RATINGS_SUCCESS_TTL_MS).toBe(6 * 60 * 60 * 1000)
     } finally {
       spy.mockRestore()
@@ -305,7 +319,7 @@ describe("ratings provider routing (selezione per fonte)", () => {
   it("legacy senza selezione: comportamento all-source invariato (media aritmetica)", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => okRatings({ ratings: [{ source: "imdb", value: 8.0 }, { source: "tmdb", value: 6.0 }] })),
+      vi.fn(async () => okRatings({ ratings: [{ source: "imdb", value: 80, score: 80 }, { source: "tmdb", value: 60, score: 60 }] })),
     )
     const result = await fetchAggregatedRating("tt_route_legacy", "k")
     expect(result?.sources.imdb).toBe(8.0)
@@ -320,7 +334,7 @@ describe("ratings provider routing (selezione per fonte)", () => {
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
         seen.push(String(input))
-        return okRatings({ ratings: [{ source: "tmdb", value: 8.2 }] })
+        return okRatings({ ratings: [{ source: "tmdb", value: 82, score: 82 }] })
       }),
     )
     const withNative = await fetchAggregatedRating("tt_route_trans_tmdb", "k", undefined, {
@@ -354,7 +368,7 @@ describe("ratings provider routing (selezione per fonte)", () => {
         const url = String(input)
         seen.push(url)
         if (url.includes("/meta/")) return okRatings({ meta: { imdbRating: "9.3" } })
-        return okRatings({ ratings: [{ source: "tmdb", value: 8.2 }] })
+        return okRatings({ ratings: [{ source: "tmdb", value: 82, score: 82 }] })
       }),
     )
     const withNative = await fetchAggregatedRating("tt_route_trans_fam", "k", undefined, {
@@ -374,7 +388,7 @@ describe("ratings provider routing (selezione per fonte)", () => {
   })
 
   it("transizione con->senza nativo (outage/main): base cachata, overlay solo con nativo", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => okRatings({ ratings: [{ source: "metacritic", value: 80 }, { source: "tmdb", value: 8.2 }] })))
+    vi.stubGlobal("fetch", vi.fn(async () => okRatings({ ratings: [{ source: "metacritic", value: 80, score: 80 }, { source: "tmdb", value: 82, score: 82 }] })))
     const withNative = await fetchAggregatedRating("tt_route_trans_main", "k", undefined, {
       requestedSources: ["metacritic", "tmdb"],
       ratingWaitMs: 1500,
@@ -491,7 +505,7 @@ describe("ratings budget/timeout/cancellazione", () => {
             // Il fallback consuma 100 dei 120ms residui: prova che il resto
             // del budget è genuinamente utilizzabile, non solo nominale.
             await abortableDelay(100, init?.signal ?? null)
-            return okRatings({ ratings: [{ source: "imdb", value: 7.7 }] })
+            return okRatings({ ratings: [{ source: "imdb", value: 77, score: 77 }] })
           }
           throw new Error(`unexpected upstream ${url}`)
         }),
@@ -665,7 +679,7 @@ describe("ratings budget/timeout/cancellazione", () => {
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input)
-        if (url.includes("mdblist.com")) return okRatings({ ratings: [{ source: "metacritic", value: 80 }] })
+        if (url.includes("mdblist.com")) return okRatings({ ratings: [{ source: "metacritic", value: 80, score: 80 }] })
         captured.push(init?.signal ?? null)
         return hangingFetch(init?.signal ?? null)
       }),
@@ -691,7 +705,7 @@ describe("ratings budget/timeout/cancellazione", () => {
         "fetch",
         vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
           const url = String(input)
-          if (url.includes("mdblist.com")) return okRatings({ ratings: [{ source: "tmdb", value: 7.0 }] })
+          if (url.includes("mdblist.com")) return okRatings({ ratings: [{ source: "tmdb", value: 70, score: 70 }] })
           if (url.includes("/meta/")) return okRatings({ meta: { imdbRating: "8.1" } })
           return hangingFetch(init?.signal ?? null)
         }),
@@ -727,7 +741,7 @@ describe("ratings budget/timeout/cancellazione", () => {
     const fetchMock = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
       seenAborted.push(init?.signal?.aborted ?? false)
       if (init?.signal?.aborted) throw new DOMException("Aborted", "AbortError")
-      return okRatings({ ratings: [{ source: "metacritic", value: 80 }] })
+      return okRatings({ ratings: [{ source: "metacritic", value: 80, score: 80 }] })
     })
     vi.stubGlobal("fetch", fetchMock)
     const ctrl = new AbortController()
@@ -740,7 +754,10 @@ describe("ratings budget/timeout/cancellazione", () => {
     })
     expect(result).toBeNull()
     expect(Date.now() - start).toBeLessThan(500)
-    // L'upstream ha visto un signal già abortito (nessun lavoro reale).
-    expect(seenAborted).toEqual([true])
+    // Lo strato grezzo non avvia mai upstream con subscriber già abortito
+    // (nessun lavoro reale e niente cache avvelenata); se un fetch parte lo
+    // fa solo sul signal owned, mai su quello del chiamante.
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(seenAborted).toEqual([])
   })
 })

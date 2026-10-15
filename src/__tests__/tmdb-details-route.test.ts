@@ -64,7 +64,15 @@ describe("GET /api/tmdb/[id]/details (voto medio TMDB+IMDb)", () => {
       expect((await res.json()).anime_ids).toEqual({ kitsu: [142], mal: [164] })
     }
     expect(getDetails).toHaveBeenCalledTimes(1)
-    expect(fetchAggregatedRating).not.toHaveBeenCalled()
+    // Task C: senza IMDb la route richiede comunque le fonti via TMDB id
+    // (imdb null + tmdbId/mediaType in opts); il mock risponde null.
+    expect(fetchAggregatedRating).toHaveBeenCalledTimes(1)
+    expect(fetchAggregatedRating).toHaveBeenCalledWith(
+      null,
+      undefined,
+      expect.any(AbortSignal),
+      expect.objectContaining({ tmdbId: 128, mediaType: "movie", requestedSources: ["imdb", "tmdb"] }),
+    )
   })
 
   it("keeps film and series associations separate", async () => {

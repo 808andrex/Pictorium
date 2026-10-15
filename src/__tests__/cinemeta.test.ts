@@ -97,7 +97,7 @@ describe("cinemeta (voto IMDb gratis senza chiave)", () => {
     globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
       if (url.includes("mdblist.com")) {
-        return jsonResponse({ ratings: [{ source: "tmdb", value: 8.0 }] })
+        return jsonResponse({ ratings: [{ source: "tmdb", value: 80, score: 80 }] })
       }
       if (url.includes("/meta/movie/")) {
         return jsonResponse({ meta: { imdbRating: "8.4" } })
@@ -105,7 +105,7 @@ describe("cinemeta (voto IMDb gratis senza chiave)", () => {
       return new Response("Not found", { status: 404 })
     })
 
-    const aggregated = await fetchAggregatedRating("tt_ci1", undefined, undefined, {
+    const aggregated = await fetchAggregatedRating("tt_ci1", "k", undefined, {
       wantImdb: true,
     })
     expect(aggregated?.sources.imdb).toBe(8.4)
@@ -118,7 +118,7 @@ describe("cinemeta (voto IMDb gratis senza chiave)", () => {
       const url = String(input)
       seen.push(url)
       if (url.includes("mdblist.com")) {
-        return jsonResponse({ ratings: [{ source: "imdb", value: 8.5 }] })
+        return jsonResponse({ ratings: [{ source: "imdb", value: 85, score: 85 }] })
       }
       return jsonResponse({ meta: { imdbRating: "9.9" } })
     })
@@ -146,7 +146,7 @@ describe("cinemeta (voto IMDb gratis senza chiave)", () => {
     globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
       seen.push(url)
-      if (url.includes("mdblist.com")) return jsonResponse({ ratings: [{ source: "tmdb", value: 8.0 }] })
+      if (url.includes("mdblist.com")) return jsonResponse({ ratings: [{ source: "tmdb", value: 80, score: 80 }] })
       return jsonResponse({ meta: { imdbRating: "9.9" } })
     })
 

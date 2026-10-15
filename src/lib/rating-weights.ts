@@ -18,10 +18,16 @@
  * import runtime da `ratings.ts` trascinerebbe `node:crypto`/cache/KV nel
  * bundle browser. `ratings.ts` li ri-esporta (route e hardening invariati).
  *
- * NOTA sui voti-per-fonte: il payload MDBList NON riporta conteggi voti per
- * fonte (verificato live: ogni rating ha solo source/value/score) — quindi
- * niente filtro RATING_MIN_VOTES. Una fonte senza score contribuisce zero
- * (renormalizzazione), mai trascinamento verso il basso.
+ * NOTA sui voti-per-fonte: la nuova media API riporta conteggi voti per
+ * fonte (`votes`, intero o null) — il filtro `PICTORIUM_RATING_MIN_VOTES`
+ * (default 10, 0 = disabilitato, definito in `ratings.ts`) scarta solo le
+ * fonti con conteggio noto intero non-negativo sotto soglia; conteggi
+ * null/mancanti/malformati (negativi, frazioni, NaN, Infinity, non numerici)
+ * restano (mai conteggi inventati), RogerEbert è esente. Sulle normalizzazioni
+ * vale il contratto score 0-100 (sempre /10); a score null/mancante la fonte
+ * è indisponibile tranne il fallback nativo 0-4 documentato di RogerEbert
+ * (mai euristiche toTen generiche). Una fonte senza score normalizzabile
+ * contribuisce zero (renormalizzazione), mai trascinamento verso il basso.
  */
 
 import type { AggregatedRatings } from "./ratings"

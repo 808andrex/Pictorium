@@ -1,9 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { fetchAggregatedRating, __resetMdblistBreaker } from "@/lib/ratings"
+import {
+  fetchAggregatedRating,
+  isMdblistBreakerOpen,
+  __resetMdblistBreaker,
+  __resetMdbRawForTest,
+  __resetRatingsNullForTest,
+} from "@/lib/ratings"
+import { __resetMdbQuotaForTests } from "@/lib/mdblist-quota"
 import { cacheClear } from "@/lib/cache"
 
 function okFetch() {
-  return Promise.resolve({ ok: true, json: async () => ({ ratings: [{ source: "imdb", value: 8.4 }] }) })
+  return Promise.resolve({ ok: true, json: async () => ({ ratings: [{ source: "imdb", value: 84, score: 84 }] }) })
 }
 
 function statusFetch(status: number, retryAfter?: string) {
@@ -24,6 +31,9 @@ describe("fetchAggregatedRating breaker (fail-open, 3 fails → 30s)", () => {
   beforeEach(() => {
     vi.useFakeTimers()
     __resetMdblistBreaker()
+    __resetMdbRawForTest()
+    __resetRatingsNullForTest()
+    __resetMdbQuotaForTests()
     cacheClear()
   })
 
@@ -31,6 +41,9 @@ describe("fetchAggregatedRating breaker (fail-open, 3 fails → 30s)", () => {
     vi.unstubAllGlobals()
     vi.useRealTimers()
     __resetMdblistBreaker()
+    __resetMdbRawForTest()
+    __resetRatingsNullForTest()
+    __resetMdbQuotaForTests()
     cacheClear()
   })
 
@@ -106,28 +119,60 @@ describe("fetchAggregatedRating breaker (fail-open, 3 fails → 30s)", () => {
   })
 
   it("our own cancellation (caller abort) is not recorded as a failure", async () => {
+    // Shared-hydration timing: the raw path hydrates L1/KV/disk inside an
+    // owned operation BEFORE the upstream fetch starts, so aborting
+    // immediately after the call cancels the wait while zero upstream has
+    // run (0 fetch calls) instead of cancelling real in-flight work. Gate
+    // each abort on the observable upstream start: the mock notifies on
+    // entry, the test awaits that gate, THEN aborts. Three
+    // cancellations reach the failure threshold (3) — if any counted as a
+    // failure the breaker would open and the healthy proof below would
+    // short-circuit with zero new network.
+    let notifyStarted: (() => void) | null = null
     const hanging = vi.fn(
-      (_url: unknown, opts?: { signal?: AbortSignal }) =>
-        new Promise<never>((_, rej) => {
+      (_url: unknown, opts?: { signal?: AbortSignal }): Promise<unknown> => {
+        notifyStarted?.()
+        return new Promise<never>((_, rej) => {
           const s = opts?.signal
           const err = () => rej(new DOMException("aborted", "AbortError"))
           if (s?.aborted) err()
           else s?.addEventListener("abort", err, { once: true })
-        }),
+        })
+      },
     )
     vi.stubGlobal("fetch", hanging)
 
-    const ctrl = new AbortController()
-    const p = fetchAggregatedRating("ttB5", "k", ctrl.signal)
-    ctrl.abort()
-    await expect(p).resolves.toBeNull()
+    async function cancelAfterUpstreamStart(id: string): Promise<void> {
+      const ctrl = new AbortController()
+      const started = new Promise<void>((resolve) => {
+        notifyStarted = resolve
+      })
+      const p = fetchAggregatedRating(id, "k", ctrl.signal)
+      await started
+      notifyStarted = null
+      ctrl.abort()
+      await expect(p).resolves.toBeNull()
+    }
 
-    // Nessun fallimento registrato: un id fresco tocca la rete.
-    const ctrl2 = new AbortController()
-    const p2 = fetchAggregatedRating("ttB5b", "k", ctrl2.signal)
-    ctrl2.abort()
-    await expect(p2).resolves.toBeNull()
-    expect(hanging).toHaveBeenCalledTimes(2)
+    await cancelAfterUpstreamStart("ttBCancel1")
+    await cancelAfterUpstreamStart("ttBCancel2")
+    await cancelAfterUpstreamStart("ttBCancel3")
+    expect(hanging).toHaveBeenCalledTimes(3)
+    expect(isMdblistBreakerOpen()).toBe(false)
+
+    // Breaker still closed after 3 cancellations: a fresh healthy provider
+    // response flows (no short-circuit) and closes out any doubt.
+    hanging.mockImplementation(() =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        headers: new Headers(),
+        json: async () => ({ ratings: [{ source: "imdb", value: 84, score: 84 }] }),
+      }),
+    )
+    expect((await fetchAggregatedRating("ttBChealthy", "k"))?.average).toBe(8.4)
+    expect(hanging).toHaveBeenCalledTimes(4)
+    expect(isMdblistBreakerOpen()).toBe(false)
   })
 
   it("internal deadline aborts a hanging upstream (~1500ms, was 8000ms)", async () => {

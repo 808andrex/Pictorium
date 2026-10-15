@@ -4,7 +4,7 @@ import { cacheClear } from "@/lib/cache"
 import * as cacheModule from "@/lib/cache"
 
 function okFetch(_url: string | URL | Request) {
-  return { ok: true, json: async () => ({ ratings: [{ source: "imdb", value: 8.4 }] }) }
+  return { ok: true, json: async () => ({ ratings: [{ source: "imdb", value: 84, score: 84 }] }) }
 }
 
 describe("fetchAggregatedRating (D4 — mdblist key nel cache key, D5 — niente chiave d'istanza)", () => {
@@ -14,15 +14,16 @@ describe("fetchAggregatedRating (D4 — mdblist key nel cache key, D5 — niente
     vi.clearAllMocks()
   })
 
-  it("senza key esplicita nessun fallback d'istanza: richiesta senza apikey (D5)", async () => {
+  it("senza key esplicita e senza override mock: nessuna chiamata MDBList (new API auth-required, D5-contract-change)", async () => {
     const fetchMock = vi.fn(okFetch)
     vi.stubGlobal("fetch", fetchMock)
 
     const result = await fetchAggregatedRating("tt123")
 
-    expect(result?.average).toBe(8.4)
-    const url = String(fetchMock.mock.calls[0][0])
-    expect(url).not.toContain("apikey=")
+    // No key + real base = futile upstream avoided: null, zero network.
+    // IMDb via Cinemeta / native TMDB stay available through their own paths.
+    expect(result).toBeNull()
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it("cache key con hash della chiave mdblist, mai plaintext, e distinto per key (D4)", async () => {
@@ -30,7 +31,9 @@ describe("fetchAggregatedRating (D4 — mdblist key nel cache key, D5 — niente
     const keys: string[] = []
     const originalSet = cacheModule.cacheSet
     const spy = vi.spyOn(cacheModule, "cacheSet").mockImplementation((k: string, v: unknown, tags?: string[]) => {
-      keys.push(k)
+      // Solo la cache aggregata: la cache grezza MDBList (mdb:raw:…) scrive
+      // anch'essa via cacheSet ma è fuori dall'intento di questo test (D4).
+      if (k.startsWith("mdb:ratings:")) keys.push(k)
       originalSet(k, v, tags)
     })
 
@@ -38,7 +41,7 @@ describe("fetchAggregatedRating (D4 — mdblist key nel cache key, D5 — niente
     await fetchAggregatedRating("tt1", "keyBBB")
 
     expect(keys).toHaveLength(2)
-    expect(keys[0]).toMatch(/^mdb:ratings:v2:tt1:/)
+    expect(keys[0]).toMatch(/^mdb:ratings:v3:tt1:/)
     expect(keys[0]).not.toBe(keys[1])
     expect(keys[0]).not.toContain("keyAAA")
     expect(keys[1]).not.toContain("keyBBB")
@@ -71,7 +74,7 @@ describe("fetchAggregatedRating (D4 — mdblist key nel cache key, D5 — niente
     })
     vi.stubGlobal("fetch", vi.fn(multiSourceFetch))
 
-    const result = await fetchAggregatedRating("tt999")
+    const result = await fetchAggregatedRating("tt999", "k")
     expect(result).not.toBeNull()
     expect(result?.sources.imdb).toBe(8.4)
     expect(result?.sources.tmdb).toBe(8.0)
@@ -123,7 +126,7 @@ describe("fetchAggregatedRating (D4 — mdblist key nel cache key, D5 — niente
     // intenzionale: il nativo non è mai coperto dall'aggregatore).
     vi.stubGlobal("fetch", vi.fn(async () => ({
       ok: true,
-      json: async () => ({ ratings: [{ source: "tmdb", value: 8.2 }] }),
+      json: async () => ({ ratings: [{ source: "tmdb", value: 82, score: 82 }] }),
     })))
     const over = await fetchAggregatedRating("tt_fb2", "k", undefined, { tmdbFallbackVote: 7.0 })
     expect(over?.sources.tmdb).toBe(7.0)

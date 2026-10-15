@@ -65,10 +65,7 @@ const KV_L2_PREFIX = "pictorium:cache:"
 const KV_L2_MAX_BYTES = 64 * 1024
 
 function secondsUntilScheduledRefresh(): number {
-  const now = new Date()
-  const next = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), REFRESH_HOUR, 0, 0, 0)
-  const target = next > now.getTime() ? next : next + 86400000
-  return Math.max(60, Math.round((target - now.getTime()) / 1000))
+  return secondsUntilScheduledRefreshFrom(Date.now())
 }
 
 /** Serializza per L2 solo se JSON piccolo senza Buffer; null = resta locale. */
@@ -342,6 +339,43 @@ export function cacheGetStale<T>(key: string): { data: T | null; stale: boolean 
   store.delete(key)
   store.set(key, entry)
   return { data: entry.data, stale: false }
+}
+
+/**
+ * Remaining lifetime (ms) of a cache entry from its ABSOLUTE provenance
+ * (generation timestamp + TTL), or null when absent/expired/unschedulable.
+ *
+ * Task D (poster freshness cap): volatile source facts (rankings, release
+ * availability) must bound the poster TTL by their own remaining lifetime.
+ * This reads the existing timestamp/TTL mechanics — never `now + TTL` on a
+ * cache hit (no sliding renewal: reads never rewrite the timestamp) and no
+ * second freshness map. Entries without an explicit TTL (scheduled-refresh
+ * policy like the poster tag) return null: their policy is not a knowable
+ * per-entry deadline for this purpose.
+ */
+export function cacheRemainingMs(key: string, nowMs: number = Date.now()): number | null {
+  const entry = store.get(key) as CacheEntry<unknown> | undefined
+  if (!entry) return null
+  if (entry.ttl === undefined) return null
+  const remaining = entry.ttl - (nowMs - entry.timestamp)
+  return remaining > 0 ? remaining : null
+}
+
+/**
+ * Milliseconds until the next scheduled tag refresh (poster/catalog daily
+ * cut). Exported for the poster freshness cap so mapped posters (which
+ * otherwise ride the scheduled policy) can take min(scheduled, fact-cap)
+ * without duplicating the hour/env logic.
+ */
+export function msUntilPosterScheduledRefresh(nowMs: number = Date.now()): number {
+  return secondsUntilScheduledRefreshFrom(nowMs) * 1000
+}
+
+function secondsUntilScheduledRefreshFrom(nowMs: number): number {
+  const now = new Date(nowMs)
+  const next = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), REFRESH_HOUR, 0, 0, 0)
+  const target = next > nowMs ? next : next + 86400000
+  return Math.max(60, Math.round((target - nowMs) / 1000))
 }
 
 /**

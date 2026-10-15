@@ -56,6 +56,11 @@ vi.mock("@/lib/svg-badge", async () => {
 vi.mock("@/lib/justwatch", () => ({
   getJWRankings: vi.fn(async () => []),
   getJWTitleQuality: vi.fn(async () => null),
+  // Task D freshness readers: fail-closed null in route tests (legacy TTL path).
+  jwRankingsRemainingMs: vi.fn(() => null),
+  jwTitlesRemainingMs: vi.fn(() => null),
+  jwAvailabilityRemainingMs: vi.fn(() => null),
+  JW_DIGITAL_MONETIZATION_TYPES: ["FLATRATE", "FREE", "BUY", "RENT", "ADS"],
 }))
 vi.mock("@/lib/stream-quality", () => ({
   resolveStreamQuality: vi.fn(async () => null),
@@ -71,6 +76,8 @@ vi.mock("@/lib/awards", () => ({
 }))
 vi.mock("@/lib/mdblist", () => ({
   fetchMDBList: vi.fn(async () => []),
+  // Task D freshness reader: fail-closed null in route tests (legacy TTL path).
+  mdblistRemainingMs: vi.fn(() => null),
 }))
 vi.mock("@/lib/ratings", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/ratings")>()

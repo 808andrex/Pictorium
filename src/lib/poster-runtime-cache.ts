@@ -1,5 +1,5 @@
 import type { NextRequest } from "next/server"
-import { cacheGet, cacheGetStale, cacheSet } from "@/lib/cache"
+import { cacheGet, cacheGetStale, cacheRemainingMs, cacheSet } from "@/lib/cache"
 import { createLogger } from "@/lib/logger"
 import { envWithFallback } from "@/lib/env-compat"
 import {
@@ -30,6 +30,15 @@ export interface PosterCachePayload {
   readonly buffer: Buffer
   readonly etag: string
   readonly ttlSec?: number
+  /**
+   * Absolute expiry (ms epoch = generation + storage TTL). Internal: lets
+   * HTTP advertise REMAINING (floor) instead of the original full TTL, and
+   * lets variants/waiters inherit the canonical fact deadline without
+   * extending it. Undefined = scheduled-policy entry (mapped, uncapped).
+   */
+  readonly expiresAt?: number
+  /** Task D: capped by a volatile-fact deadline — never immutable, never SWR past it. */
+  readonly factCapped?: boolean
   /**
    * Effective-accent sidecar (display sync, `?accentmeta=1`): the fills the
    * render actually painted, captured via `GenerationInput.onAccentMeta`.
@@ -347,7 +356,7 @@ function accentMetaHeaders(meta: EffectiveAccentMeta | null | undefined): Record
   return encoded ? { [ACCENT_META_HEADER]: encoded } : {}
 }
 
-export function posterHeaders(etag: string, immutable: boolean, isPreview: boolean = false, dynamic: boolean = false, format: PosterImageFormat = "jpeg", dynamicTtlSec?: number, live: boolean = false, accentMeta?: EffectiveAccentMeta | null): PosterHeaders {
+export function posterHeaders(etag: string, immutable: boolean, isPreview: boolean = false, dynamic: boolean = false, format: PosterImageFormat = "jpeg", dynamicTtlSec?: number, live: boolean = false, accentMeta?: EffectiveAccentMeta | null, factCapped?: boolean): PosterHeaders {
   const contentType = FORMAT_MIME_TYPES[format] || "image/jpeg"
   if (isPreview) {
     return {
@@ -380,11 +389,38 @@ export function posterHeaders(etag: string, immutable: boolean, isPreview: boole
   // perché il flag dynamic è falso (audit, problema 4).
   const dynSec = dynamicTtlSec ?? DYNAMIC_POSTER_TTL_SEC
   const explicitTtl = dynamicTtlSec !== undefined
+  // Task D cycle2: fact-capped entries must NEVER carry SWR/stale-if-error on
+  // any CDN/Surrogate header — the CDN could otherwise serve the poster past
+  // the fact deadline despite the internal no-SWR guard. Capped policy is
+  // exact-remaining + must-revalidate; expired (0) is no-cache/max-age=0.
+  // Uncapped keeps the historical SWR policy byte-identical.
+  if (factCapped) {
+    const cappedSec = Math.max(0, Math.floor(dynSec))
+    const cappedCacheControl =
+      cappedSec <= 0
+        ? "public, no-cache, max-age=0, must-revalidate"
+        : `public, max-age=${cappedSec}, s-maxage=${cappedSec}, must-revalidate`
+    const cappedCdn =
+      cappedSec <= 0 ? "public, max-age=0, must-revalidate" : `public, max-age=${cappedSec}, s-maxage=${cappedSec}, must-revalidate`
+    const cappedSurrogate = cappedSec <= 0 ? "max-age=0, must-revalidate" : `max-age=${cappedSec}, must-revalidate`
+    return {
+      ...CORS_HEADERS,
+      "Content-Type": contentType,
+      "Cache-Control": cappedCacheControl,
+      "CDN-Cache-Control": cappedCdn,
+      "Surrogate-Control": cappedSurrogate,
+      "ETag": etag,
+      ...accentMetaHeaders(accentMeta),
+    }
+  }
   const dynamicCacheControl = `public, max-age=${dynSec}, s-maxage=${dynSec}, stale-while-revalidate=86400`
   const dynamicSurrogate = `max-age=${dynSec}, stale-while-revalidate=86400`
-  const cacheControl = immutable ? POSTER_IMMUTABLE_CACHE_CONTROL : (dynamic || explicitTtl) ? dynamicCacheControl : POSTER_CACHE_CONTROL
-  const cdnCacheControl = immutable ? POSTER_IMMUTABLE_CACHE_CONTROL : (dynamic || explicitTtl) ? dynamicCacheControl : POSTER_CDN_CACHE_CONTROL
-  const surrogate = immutable ? "max-age=31536000" : (dynamic || explicitTtl) ? dynamicSurrogate : "max-age=86400, stale-while-revalidate=604800"
+  // Task D: a fact-capped entry must NEVER advertise the 1y immutable policy —
+  // the fact deadline owns the lifetime, even when the request looked static.
+  const effectiveImmutable = immutable && !factCapped
+  const cacheControl = effectiveImmutable ? POSTER_IMMUTABLE_CACHE_CONTROL : (dynamic || explicitTtl) ? dynamicCacheControl : POSTER_CACHE_CONTROL
+  const cdnCacheControl = effectiveImmutable ? POSTER_IMMUTABLE_CACHE_CONTROL : (dynamic || explicitTtl) ? dynamicCacheControl : POSTER_CDN_CACHE_CONTROL
+  const surrogate = effectiveImmutable ? "max-age=31536000" : (dynamic || explicitTtl) ? dynamicSurrogate : "max-age=86400, stale-while-revalidate=604800"
   return {
     ...CORS_HEADERS,
     "Content-Type": contentType,
@@ -396,7 +432,7 @@ export function posterHeaders(etag: string, immutable: boolean, isPreview: boole
   }
 }
 
-export function posterNotModifiedHeaders(etag: string, immutable: boolean, dynamic: boolean = false, dynamicTtlSec?: number, live: boolean = false, accentMeta?: EffectiveAccentMeta | null): PosterHeaders {
+export function posterNotModifiedHeaders(etag: string, immutable: boolean, dynamic: boolean = false, dynamicTtlSec?: number, live: boolean = false, accentMeta?: EffectiveAccentMeta | null, factCapped?: boolean): PosterHeaders {
   // Percorso live: stessa politica del 200 — il client deve rivalidare sempre.
   if (live) {
     return {
@@ -409,13 +445,34 @@ export function posterNotModifiedHeaders(etag: string, immutable: boolean, dynam
     }
   }
   // Come posterHeaders: un TTL esplicito restringe sempre (audit problema 4).
+  // Task D: fact-capped never immutable (see posterHeaders).
+  // Task D cycle2: capped 304 mirrors the capped 200 — no SWR anywhere.
+  if (factCapped) {
+    const cappedSec = Math.max(0, Math.floor(dynamicTtlSec ?? DYNAMIC_POSTER_TTL_SEC))
+    const cappedCacheControl =
+      cappedSec <= 0
+        ? "public, no-cache, max-age=0, must-revalidate"
+        : `public, max-age=${cappedSec}, s-maxage=${cappedSec}, must-revalidate`
+    const cappedCdn =
+      cappedSec <= 0 ? "public, max-age=0, must-revalidate" : `public, max-age=${cappedSec}, s-maxage=${cappedSec}, must-revalidate`
+    const cappedSurrogate = cappedSec <= 0 ? "max-age=0, must-revalidate" : `max-age=${cappedSec}, must-revalidate`
+    return {
+      ...CORS_HEADERS,
+      "Cache-Control": cappedCacheControl,
+      "CDN-Cache-Control": cappedCdn,
+      "Surrogate-Control": cappedSurrogate,
+      "ETag": etag,
+      ...accentMetaHeaders(accentMeta),
+    }
+  }
   const dynSec = dynamicTtlSec ?? DYNAMIC_POSTER_TTL_SEC
   const explicitTtl = dynamicTtlSec !== undefined
   const dynamicCacheControl = `public, max-age=${dynSec}, s-maxage=${dynSec}, stale-while-revalidate=86400`
   const dynamicSurrogate = `max-age=${dynSec}, stale-while-revalidate=86400`
-  const cacheControl = immutable ? POSTER_IMMUTABLE_CACHE_CONTROL : (dynamic || explicitTtl) ? dynamicCacheControl : POSTER_CACHE_CONTROL
-  const cdnCacheControl = immutable ? POSTER_IMMUTABLE_CACHE_CONTROL : (dynamic || explicitTtl) ? dynamicCacheControl : POSTER_CDN_CACHE_CONTROL
-  const surrogate = immutable ? "max-age=31536000" : (dynamic || explicitTtl) ? dynamicSurrogate : "max-age=86400, stale-while-revalidate=604800"
+  const effectiveImmutable = immutable && !factCapped
+  const cacheControl = effectiveImmutable ? POSTER_IMMUTABLE_CACHE_CONTROL : (dynamic || explicitTtl) ? dynamicCacheControl : POSTER_CACHE_CONTROL
+  const cdnCacheControl = effectiveImmutable ? POSTER_IMMUTABLE_CACHE_CONTROL : (dynamic || explicitTtl) ? dynamicCacheControl : POSTER_CDN_CACHE_CONTROL
+  const surrogate = effectiveImmutable ? "max-age=31536000" : (dynamic || explicitTtl) ? dynamicSurrogate : "max-age=86400, stale-while-revalidate=604800"
   return {
     ...CORS_HEADERS,
     "Cache-Control": cacheControl,
@@ -448,12 +505,15 @@ export function serverTimingValue(entries: readonly ServerTimingEntry[]): string
     .join(", ")
 }
 
-export function posterResponse(payload: PosterCachePayload, immutable: boolean, isPreview: boolean = false, dynamic: boolean = false, format: PosterImageFormat = "jpeg", dynamicTtlSec?: number, serverTiming?: string, live: boolean = false): Response {
+export function posterResponse(payload: PosterCachePayload, immutable: boolean, isPreview: boolean = false, dynamic: boolean = false, format: PosterImageFormat = "jpeg", dynamicTtlSec?: number, serverTiming?: string, live: boolean = false, factCapped?: boolean): Response {
   // The accent display-sync header rides the SAME bytes the editor XHR loads:
   // every HIT/SWR/stale/coalesced 200 carries the meta of the payload it
   // serves (legacy payloads without meta stay header-absent → honest
   // unknown). ETag/Content-Type/Cache-Control behavior is unchanged.
-  const headers = posterHeaders(payload.etag, immutable, isPreview, dynamic, format, dynamicTtlSec, live, payload.accentMeta)
+  // Task D: factCapped flows to posterHeaders so a capped entry never emits
+  // the 1y immutable policy (payload flag wins when the explicit arg is omitted).
+  const capped = factCapped ?? payload.factCapped ?? false
+  const headers = posterHeaders(payload.etag, immutable, isPreview, dynamic, format, dynamicTtlSec, live, payload.accentMeta, capped)
   return new Response(new Uint8Array(payload.buffer), {
     headers: serverTiming ? { ...headers, "Server-Timing": serverTiming } : headers,
   })
@@ -463,29 +523,97 @@ export interface PosterHeadersRecord {
   readonly etag: string
   readonly ttlSec?: number
   readonly immutable?: boolean
+  /** Absolute expiry (ms epoch) for HTTP remaining; undefined = scheduled-policy (mapped, uncapped). */
+  readonly expiresAt?: number
   /** Accent sidecar slot (same TTL/tags as the bytes entry, never KV-alone). */
   readonly accentMeta?: EffectiveAccentMeta | null
+  /** Task D: entry capped by a volatile-fact deadline — never SWR-served past it. */
+  readonly factCapped?: boolean
 }
 
-export function readCachedPoster(cacheKey: string): { readonly payload: PosterCachePayload | null; readonly stale: boolean; readonly ttlSec?: number; readonly immutable?: boolean } {
+/**
+ * Task D — HTTP must advertise REMAINING, never the original full TTL.
+ * Floor (never round up: a 5.9s remaining must not become max-age=6 past the
+ * fact), and never a max(1,…) floor past the deadline (remaining <= 0 → 0,
+ * the caller treats it as stale/revalidate, not as a fresh 1s renewal).
+ * Null/undefined remaining = unknown (legacy/scheduled entry) → fallback.
+ */
+export function httpRemainingSec(
+  remainingMs: number | null | undefined,
+  fallbackSec: number | undefined,
+  nowMs?: number,
+  expiresAt?: number,
+): number | undefined {
+  if (expiresAt !== undefined && nowMs !== undefined) {
+    const rem = expiresAt - nowMs
+    if (rem <= 0) return 0
+    return Math.floor(rem / 1000)
+  }
+  if (remainingMs === null || remainingMs === undefined) return fallbackSec
+  if (remainingMs <= 0) return 0
+  return Math.floor(remainingMs / 1000)
+}
+
+/** Remaining seconds for an in-memory payload (waiter/fresh render). */
+export function payloadHttpRemainingSec(
+  payload: Pick<PosterCachePayload, "ttlSec" | "expiresAt">,
+  fallbackSec?: number,
+  nowMs: number = Date.now(),
+): number | undefined {
+  if (payload.expiresAt !== undefined) {
+    const rem = payload.expiresAt - nowMs
+    if (rem <= 0) return 0
+    return Math.floor(rem / 1000)
+  }
+  return fallbackSec ?? payload.ttlSec
+}
+
+export function readCachedPoster(cacheKey: string, nowMs: number = Date.now()): { readonly payload: PosterCachePayload | null; readonly stale: boolean; readonly ttlSec?: number; readonly immutable?: boolean; readonly factCapped?: boolean; readonly expiresAt?: number; readonly remainingMs: number | null } {
   const cached = cacheGetStale<Buffer>(cacheKey)
   const cachedHeaders = cacheGetStale<PosterHeadersRecord>(`${cacheKey}:headers`)
-  if (!cached.data || !cachedHeaders.data) return { payload: null, stale: false }
+  if (!cached.data || !cachedHeaders.data) return { payload: null, stale: false, remainingMs: null }
   // The sidecar is valid only with its bytes entry (required above): headers
   // alone — e.g. a KV-served record after a restart — never prove a render.
   // Legacy entries carry no meta (undefined → honest unknown downstream).
   const sidecar = sanitizeEffectiveAccentMeta(cachedHeaders.data.accentMeta ?? null)
+  const rec = cachedHeaders.data
+  const remainingMs = rec.factCapped
+    ? rec.expiresAt !== undefined
+      ? rec.expiresAt - nowMs
+      : rec.ttlSec !== undefined
+        ? cacheRemainingMs(cacheKey, nowMs)
+        : null
+    : null
   return {
     payload: {
       buffer: cached.data,
-      etag: cachedHeaders.data.etag,
-      ttlSec: cachedHeaders.data.ttlSec,
+      etag: rec.etag,
+      ttlSec: rec.ttlSec,
+      ...(rec.expiresAt !== undefined ? { expiresAt: rec.expiresAt } : {}),
+      ...(rec.factCapped ? { factCapped: true as const } : {}),
       ...(sidecar ? { accentMeta: sidecar } : {}),
     },
     stale: cached.stale || cachedHeaders.stale,
-    ttlSec: cachedHeaders.data.ttlSec,
-    immutable: cachedHeaders.data.immutable,
+    ttlSec: rec.ttlSec,
+    immutable: rec.immutable,
+    factCapped: rec.factCapped,
+    ...(rec.expiresAt !== undefined ? { expiresAt: rec.expiresAt } : {}),
+    remainingMs,
   }
+}
+
+/**
+ * Task D: una entry fact-capped scaduta NON viene servita stale/SWR — oltre
+ * la scadenza del fatto volatile i byte potrebbero descrivere un mondo
+ * cambiato (nuovo rank, badge temporale flippato), quindi si rivalida invece
+ * di servire + refresh in background. Le entry di policy (non capped)
+ * conservano lo SWR storico.
+ */
+export function canServePosterStaleHit(read: {
+  readonly stale: boolean
+  readonly factCapped?: boolean
+}): boolean {
+  return read.stale && !read.factCapped
 }
 
 // Poster non-mappati (composti al volo con dati dinamici): TTL esplicito
@@ -503,6 +631,13 @@ export interface WriteCachedPosterOpts {
   readonly ttlMs?: number
   /** Flag immutable effettivo della risposta: persistito per le HIT (M3). */
   readonly immutable?: boolean
+  /**
+   * Task D: la entry è limitata dalla scadenza reale di un fatto volatile
+   * (ranking/release), non dal flat TTL di policy. Persistito nel record:
+   * oltre la scadenza la entry NON viene servita stale/SWR (sarebbe oltre
+   * il deadline del fatto) ma rivalidata. Interno, mai esposto in HTTP.
+   */
+  readonly factCapped?: boolean
 }
 
 export function writeCachedPoster(cacheKey: string, payload: PosterCachePayload, mappingTag?: string, opts?: WriteCachedPosterOpts): void {
@@ -518,6 +653,18 @@ export function writeCachedPoster(cacheKey: string, payload: PosterCachePayload,
   // ttlSec/immutable nel record header: le HIT riusano gli stessi valori dello
   // storage (M3) invece di sovrastimare max-age/immutable con i default di
   // richiesta su entry effimere. Record vecchi senza campi → fallback invariato.
+  // Task D: absolute expiresAt sidecar — HTTP advertises REMAINING (floor),
+  // never the original full TTL. Payload-carried expiresAt wins (same clock
+  // as the waiter path); otherwise now + storage TTL. Scheduled entries stay
+  // undefined (historical mapped policy, honest unknown).
+  const nowMs = Date.now()
+  const isCapped = Boolean(opts?.factCapped || payload.factCapped)
+  const expiresAt =
+    payload.expiresAt !== undefined
+      ? (isCapped ? payload.expiresAt : undefined)
+      : isCapped && ttl !== undefined
+        ? nowMs + ttl
+        : undefined
   const ttlSec = explicitTtlMs !== undefined
     ? Math.max(1, Math.round(explicitTtlMs / 1000))
     : (mappingTag ? undefined : dynamicPosterTtlSec(cacheKey))
@@ -525,6 +672,8 @@ export function writeCachedPoster(cacheKey: string, payload: PosterCachePayload,
     etag: payload.etag,
     ttlSec,
     immutable: opts?.immutable,
+    ...(expiresAt !== undefined ? { expiresAt } : {}),
+    ...(opts?.factCapped || payload.factCapped ? { factCapped: true as const } : {}),
     // Accent sidecar: same two-key write, same TTL/tags — no parallel policy.
     // Sanitized + cloned (callers keep no mutable alias into the store).
     ...(payload.accentMeta ? { accentMeta: sanitizeEffectiveAccentMeta(payload.accentMeta) ?? undefined } : {}),

@@ -144,7 +144,7 @@ describe("anime-ratings (AniZip + AniList + Kitsu)", () => {
     globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
       if (url.includes("mdblist.com")) {
-        return jsonResponse({ score: 80, ratings: [{ source: "imdb", value: 8.5 }] })
+        return jsonResponse({ score: 80, ratings: [{ source: "imdb", value: 85, score: 85 }] })
       }
       if (url.includes("/mappings")) return jsonResponse({ mappings: { anilist_id: 21, kitsu_id: 12 } })
       if (url.includes("anilist") || url.includes("/graphql")) {
@@ -171,7 +171,7 @@ describe("anime-ratings (AniZip + AniList + Kitsu)", () => {
     globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
       seen.push(url)
-      if (url.includes("mdblist.com")) return jsonResponse({ ratings: [{ source: "imdb", value: 8.5 }] })
+      if (url.includes("mdblist.com")) return jsonResponse({ ratings: [{ source: "imdb", value: 85, score: 85 }] })
       return new Response("Not found", { status: 404 })
     })
 

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi, afterEach } from "vitest"
-import { render, screen } from "@testing-library/react"
+import { render, screen, within } from "@testing-library/react"
 import StatusPage from "@/app/status/page"
 import { clearAdminToken, setAdminToken } from "@/lib/admin-token"
 
@@ -124,5 +124,94 @@ describe("StatusPage cache auth", () => {
 
     expect(await screen.findByText("ui.statusCacheUnavailable")).toBeInTheDocument()
     expect(screen.queryByText("ui.adminTokenTitle")).not.toBeInTheDocument()
+  })
+})
+
+describe("StatusPage MDBList quota card", () => {
+  // Minimal cache body: only the quota slice, so counts/reset/scope
+  // assertions stay unambiguous (no other numeric telemetry rendered).
+  function stubCacheBody(cacheBody: unknown, status: number, calls: { url: string }[]) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: unknown) => {
+        calls.push({ url: String(url) })
+        if (String(url).includes("/api/cache/status")) {
+          return {
+            ok: status >= 200 && status < 300,
+            status,
+            json: async () => cacheBody,
+          }
+        }
+        return { ok: true, status: 200, json: async () => healthPayload }
+      }),
+    )
+  }
+
+  it("renders parked count, reset and process scope on 200 with no extra requests", async () => {
+    const calls: { url: string }[] = []
+    stubCacheBody(
+      {
+        totalEntries: 0,
+        taggedEntries: [],
+        untaggedEntries: 0,
+        mdblistQuota: { parkedKeys: 2, nextResetAt: "2026-10-15T13:00:00.000Z", scope: "process" },
+      },
+      200,
+      calls,
+    )
+    render(<StatusPage />)
+
+    expect(await screen.findByText("ui.statusMdblistQuotaTitle")).toBeInTheDocument()
+    expect(screen.getByText("ui.statusMdblistParkedKeys")).toBeInTheDocument()
+    // Count scoped to the quota card (the Cache card also renders numbers).
+    const someCard = screen.getByText("ui.statusMdblistQuotaTitle").closest("div.surface-card") as HTMLElement
+    expect(within(someCard).getByText("2")).toBeInTheDocument()
+    expect(screen.getByText("ui.statusMdblistNextReset")).toBeInTheDocument()
+    // Reset instant known: the none-label must NOT appear, and the rendered
+    // value must carry date+time (reset can land up to 48h out — time-only
+    // cannot distinguish today/tomorrow). getLang() is mocked to "it".
+    expect(screen.queryByText("ui.statusMdblistNoReset")).not.toBeInTheDocument()
+    expect(
+      within(someCard).getByText(new Date("2026-10-15T13:00:00.000Z").toLocaleString("it")),
+    ).toBeInTheDocument()
+    // Explicit local/process scope, never a global remaining total.
+    expect(screen.getByText("ui.statusMdblistScopeNote")).toBeInTheDocument()
+    // No additional network traffic: the card reuses the existing
+    // /api/cache/status poll (single call, no MDBList probing).
+    expect(calls.filter((c) => c.url.includes("/api/cache/status"))).toHaveLength(1)
+    expect(calls.every((c) => c.url.includes("/api/health") || c.url.includes("/api/cache/status") || c.url.includes("/api/auth/pin"))).toBe(true)
+  })
+
+  it("renders zero state with the none label and scope note", async () => {
+    const calls: { url: string }[] = []
+    stubCacheBody(
+      {
+        totalEntries: 0,
+        taggedEntries: [],
+        untaggedEntries: 0,
+        mdblistQuota: { parkedKeys: 0, nextResetAt: null, scope: "process" },
+      },
+      200,
+      calls,
+    )
+    render(<StatusPage />)
+
+    expect(await screen.findByText("ui.statusMdblistQuotaTitle")).toBeInTheDocument()
+    // Zero count scoped to the quota card (the Cache card also shows 0s).
+    const zeroCard = screen.getByText("ui.statusMdblistQuotaTitle").closest("div.surface-card") as HTMLElement
+    expect(within(zeroCard).getByText("0")).toBeInTheDocument()
+    expect(screen.getByText("ui.statusMdblistNoReset")).toBeInTheDocument()
+    expect(screen.getByText("ui.statusMdblistScopeNote")).toBeInTheDocument()
+  })
+
+  it("hides the quota card while locked (401)", async () => {
+    const calls: { url: string }[] = []
+    stubCacheBody({}, 401, calls)
+    render(<StatusPage />)
+
+    expect(await screen.findByText("ui.statusTelemetryLocked")).toBeInTheDocument()
+    expect(screen.queryByText("ui.statusMdblistQuotaTitle")).not.toBeInTheDocument()
+    expect(screen.queryByText("ui.statusMdblistParkedKeys")).not.toBeInTheDocument()
+    expect(screen.queryByText("ui.statusMdblistScopeNote")).not.toBeInTheDocument()
   })
 })

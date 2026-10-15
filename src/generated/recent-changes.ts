@@ -11,4 +11,5 @@ export interface RecentChange {
 }
 
 export const RECENT_CHANGES: RecentChange[] = [
+  { type: "fix", text: "round composite coordinates to integers for libvips/sharp", sha: "cfafe0f", date: "2026-10-15" },
 ]

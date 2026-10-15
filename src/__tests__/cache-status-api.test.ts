@@ -60,6 +60,7 @@ describe("GET /api/cache/status", () => {
         uptimeSeconds: expect.any(Number),
       }),
       circuitBreakers: expect.any(Object),
+      mdblistQuota: { parkedKeys: 0, nextResetAt: null, scope: "process" },
       outbound: expect.any(Object),
       imageBytes: expect.objectContaining({
         enabled: expect.any(Boolean),
@@ -109,6 +110,7 @@ describe("GET /api/cache/status", () => {
       tmdb: expect.any(Object),
       system: expect.any(Object),
       circuitBreakers: expect.any(Object),
+      mdblistQuota: { parkedKeys: 0, nextResetAt: null, scope: "process" },
       outbound: expect.any(Object),
       imageBytes: expect.any(Object),
     })

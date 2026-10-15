@@ -60,9 +60,9 @@ describe("POST /api/validate-key", () => {
     expect(json.valid).toBe(false)
   })
 
-  it("validates valid MDBList key", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-      Response.json({ title: "The Shawshank Redemption", year: 1994 })
+  it("validates valid MDBList key (new typed endpoint)", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      Response.json({ type: "movie", title: "The Shawshank Redemption", year: 1994, score: 89, ratings: [] })
     )
 
     const req = new NextRequest("http://localhost:3000/api/validate-key", {
@@ -74,9 +74,12 @@ describe("POST /api/validate-key", () => {
     expect(res.status).toBe(200)
     const json = await res.json()
     expect(json.valid).toBe(true)
+    const called = String(fetchSpy.mock.calls[0]?.[0])
+    expect(called).toContain("https://api.mdblist.com/imdb/movie/tt0111161/")
+    expect(called).toContain("apikey=valid-mdblist-key")
   })
 
-  it("validates invalid MDBList key", async () => {
+  it("validates invalid MDBList key (legacy error shape)", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
       Response.json({ response: false, error: "Invalid API key" })
     )
@@ -90,6 +93,22 @@ describe("POST /api/validate-key", () => {
     expect(res.status).toBe(200)
     const json = await res.json()
     expect(json.valid).toBe(false)
+  })
+
+  it("MDBList 404/401/429 all read as invalid (never throw, never 502)", async () => {
+    for (const status of [404, 401, 429]) {
+      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: status === 404 ? "Item not found" : "Unauthorized" }), { status })
+      )
+      const req = new NextRequest("http://localhost:3000/api/validate-key", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: "mdblist", key: "bad-mdblist-key" }),
+      })
+      const res = await POST(req)
+      expect(res.status).toBe(200)
+      expect((await res.json()).valid).toBe(false)
+    }
   })
 
   it("validates valid TVDB key", async () => {

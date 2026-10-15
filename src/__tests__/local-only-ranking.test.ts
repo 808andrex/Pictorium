@@ -107,8 +107,8 @@ async function router(input: unknown, init?: { body?: unknown }): Promise<Respon
     return Response.json({ data: { popularTitles: { edges: [] } } })
   }
   if (url.includes("/lists/u/local-movies")) return Response.json(LIST)
-  if (url.includes("mdblist.com/api")) {
-    return Response.json({ ratings: [{ source: "imdb", value: 8.0 }] })
+  if (url.includes("api.mdblist.com")) {
+    return Response.json({ ratings: [{ source: "imdb", value: 80, score: 80 }] })
   }
   if (url.includes("mdblist")) return Response.json([])
   if (url.includes("sparql") || url.includes("wikidata")) {

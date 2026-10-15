@@ -58,8 +58,13 @@ export async function POST(req: NextRequest): Promise<Response> {
   }
 
   if (provider === "mdblist") {
+    // Intentionally live and exempt from daily-quota parking
+    // (lib/mdblist-quota.ts): key validation is an explicit user action, not
+    // a background spend path, so it always probes upstream. New media API
+    // (task B): typed IMDb endpoint; success carries no `error`, unknown
+    // titles and bad keys answer 404/401 (both invalid here).
     try {
-      const res = await fetch(`https://mdblist.com/api/?apikey=${encodeURIComponent(cleanKey)}&i=tt0111161`, {
+      const res = await fetch(`https://api.mdblist.com/imdb/movie/tt0111161/?apikey=${encodeURIComponent(cleanKey)}`, {
         signal: AbortSignal.timeout(6000),
       })
       if (res.ok) {

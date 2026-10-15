@@ -63,8 +63,8 @@ function tmdbDetails(id: number, withBackdrop: boolean) {
 
 async function router(input: unknown): Promise<Response> {
   const url = String(input)
-  if (url.includes("mdblist.com/api")) {
-    return Response.json({ ratings: [{ source: "imdb", value: 8.0 }] })
+  if (url.includes("api.mdblist.com")) {
+    return Response.json({ ratings: [{ source: "imdb", value: 80, score: 80 }] })
   }
   if (url.includes("mdblist")) return Response.json([])
   if (url.includes("justwatch") || url.includes("graphql")) {

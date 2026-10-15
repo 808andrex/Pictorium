@@ -160,7 +160,7 @@ function tmdbDetails(id: number) {
 
 async function fetchRouter(input: unknown): Promise<Response> {
   const url = String(input)
-  if (url.includes("mdblist.com/api")) return Response.json({ ratings: [] })
+  if (url.includes("api.mdblist.com")) return Response.json({ ratings: [] })
   if (url.includes("mdblist")) return Response.json([])
   if (url.includes("justwatch") || url.includes("graphql")) {
     return Response.json({ data: { streamingCharts: { edges: [] } } })

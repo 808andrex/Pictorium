@@ -159,8 +159,8 @@ describe("Simkl client (src/lib/simkl.ts)", () => {
           JSON.stringify({
             score: 80,
             ratings: [
-              { source: "imdb", value: 8.5 },
-              { source: "tmdb", value: 8.0 },
+              { source: "imdb", score: 85 },
+              { source: "tmdb", score: 80 },
             ],
           }),
           { status: 200, headers: { "Content-Type": "application/json" } }

@@ -1,8 +1,9 @@
 import crypto from "node:crypto"
-import { cacheGet, cacheSet } from "./cache"
+import { cacheGet, cacheRemainingMs, cacheSet } from "./cache"
 import { envWithFallback } from "./env-compat"
 import { combineAbortSignals } from "./abort-signal"
 import { timedFetch } from "./outbound-stats"
+import { isMdbKeyParked, noteMdbQuotaExhausted429, noteMdbQuotaSuccess } from "./mdblist-quota"
 
 export interface MDBListEntry {
   imdb: string
@@ -33,6 +34,22 @@ const CACHE_TTL_MS = 12 * 60 * 60 * 1000
 // Aligned with fetchCustomMDBList (default limit 500).
 export const MDBLIST_BLOCK_SIZE = 500
 
+/**
+ * Remaining lifetime (ms) of an MDBList source list from its ABSOLUTE
+ * provenance (generation timestamp + 12h TTL, 60s on empties), or null when
+ * absent/expired. Read-only: never fetches, never renews (Task D poster
+ * freshness cap for the anime-rank path). The key scheme mirrors
+ * fetchMDBList exactly — a mismatch safely yields null (no cap).
+ */
+export function mdblistRemainingMs(
+  listKey: string,
+  apiKey?: string,
+  nowMs: number = Date.now(),
+): number | null {
+  const keyHash = apiKey ? crypto.createHash("sha1").update(apiKey).digest("hex").slice(0, 8) : "none"
+  return cacheRemainingMs(`mdblist:list:${listKey}:${keyHash}`, nowMs)
+}
+
 export async function fetchMDBList(
   listKey: string,
   apiKey?: string,
@@ -61,10 +78,29 @@ export async function fetchMDBList(
     if (explicitUrl) {
       res = await timedFetch(`${explicitUrl}/lists/snoak/${slug}`, { signal: combineAbortSignals(signal, 8000) }).catch(() => null)
     } else if (key) {
-      res = await timedFetch(`https://api.mdblist.com/lists/snoak/${slug}/items?apikey=${encodeURIComponent(key)}&limit=${MDBLIST_BLOCK_SIZE}`, {
-        headers: { "User-Agent": "Mozilla/5.0 Pictorium" },
-        signal: combineAbortSignals(signal, 8000),
-      }).catch(() => null)
+      // Daily-quota parking sits BEHIND the list cache above: cache hits are
+      // still served, only the fresh keyed fetch is skipped in favor of the
+      // same existing public fallback below (zero quota spend until reset).
+      // Mock-server runs (MDBLIST_API_URL set) stay isolated: no quota state
+      // is read or recorded there.
+      if (!isMdbKeyParked(key)) {
+        res = await timedFetch(`https://api.mdblist.com/lists/snoak/${slug}/items?apikey=${encodeURIComponent(key)}&limit=${MDBLIST_BLOCK_SIZE}`, {
+          headers: { "User-Agent": "Mozilla/5.0 Pictorium" },
+          signal: combineAbortSignals(signal, 8000),
+        }).catch(() => null)
+        if (res) {
+          const headers = { get: (n: string) => { try { return res!.headers.get(n) } catch { return null } } }
+          if (!res.ok && res.status === 429 && noteMdbQuotaExhausted429(headers, key)) {
+            // Exhausted key: drop the keyed response so the public fallback
+            // below runs; the key stays parked until its reset.
+            res = null
+          } else if (res.ok) {
+            // Last-token success still returns its data; future keyed calls
+            // park until reset.
+            noteMdbQuotaSuccess(headers, key)
+          }
+        }
+      }
     }
 
     if (!res || !res.ok) {
@@ -178,19 +214,32 @@ export async function fetchCustomMDBList(urlOrSlug: string, apiKey?: string, lim
       const slug = target.slug || target.id || "custom"
       res = await timedFetch(`${explicitUrl}/lists/custom/${slug}`, { signal: combineAbortSignals(signal, 10000) }).catch(() => null)
     } else if (key) {
+      // Same daily-quota parking as fetchMDBList above: a parked key skips
+      // the keyed fetch and uses the public fallback below (zero quota
+      // spend). Mock-server runs (MDBLIST_API_URL set) stay isolated.
       let keyUrl = ""
-      if (target.id) {
-        keyUrl = `https://api.mdblist.com/lists/${target.id}/items?apikey=${encodeURIComponent(key)}&limit=${limit}`
-      } else if (target.user && target.slug) {
-        keyUrl = `https://api.mdblist.com/lists/${encodeURIComponent(target.user)}/${encodeURIComponent(target.slug)}/items?apikey=${encodeURIComponent(key)}&limit=${limit}`
-      } else if (target.slug) {
-        keyUrl = `https://api.mdblist.com/lists/${encodeURIComponent(target.slug)}/items?apikey=${encodeURIComponent(key)}&limit=${limit}`
+      if (!isMdbKeyParked(key)) {
+        if (target.id) {
+          keyUrl = `https://api.mdblist.com/lists/${target.id}/items?apikey=${encodeURIComponent(key)}&limit=${limit}`
+        } else if (target.user && target.slug) {
+          keyUrl = `https://api.mdblist.com/lists/${encodeURIComponent(target.user)}/${encodeURIComponent(target.slug)}/items?apikey=${encodeURIComponent(key)}&limit=${limit}`
+        } else if (target.slug) {
+          keyUrl = `https://api.mdblist.com/lists/${encodeURIComponent(target.slug)}/items?apikey=${encodeURIComponent(key)}&limit=${limit}`
+        }
       }
       if (keyUrl) {
         res = await timedFetch(keyUrl, {
           headers: { "User-Agent": "Mozilla/5.0 Pictorium" },
           signal: combineAbortSignals(signal, 10000),
         }).catch(() => null)
+        if (res) {
+          const headers = { get: (n: string) => { try { return res!.headers.get(n) } catch { return null } } }
+          if (!res.ok && res.status === 429 && noteMdbQuotaExhausted429(headers, key)) {
+            res = null
+          } else if (res.ok) {
+            noteMdbQuotaSuccess(headers, key)
+          }
+        }
       }
     }
 

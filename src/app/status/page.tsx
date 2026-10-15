@@ -72,6 +72,11 @@ interface CacheStatusData {
     cacheHitRate: string
     lastCallTime: string | null
   }
+  mdblistQuota?: {
+    parkedKeys: number
+    nextResetAt: string | null
+    scope: string
+  }
   system?: {
     sharp: {
       memory: {
@@ -421,6 +426,26 @@ export default function StatusPage() {
                     <StatusRow label={t("ui.statusTmdbLastCall")} ok extra={new Date(cacheStatus.tmdb.lastCallTime).toLocaleTimeString(getLang())} />
                   )}
                 </div>
+              </div>
+            )}
+
+            {/* MDBList daily-quota parked keys (per-process operator diagnostics) */}
+            {cacheStatus?.mdblistQuota && (
+              <div className="surface-card border-white/10 rounded-2xl p-5 shadow-xl">
+                <h2 className="text-base font-semibold mb-3">{t("ui.statusMdblistQuotaTitle")}</h2>
+                <div className="space-y-1">
+                  <StatusRow label={t("ui.statusMdblistParkedKeys")} ok extra={cacheStatus.mdblistQuota.parkedKeys} />
+                  <StatusRow
+                    label={t("ui.statusMdblistNextReset")}
+                    ok
+                    extra={
+                      cacheStatus.mdblistQuota.nextResetAt
+                        ? new Date(cacheStatus.mdblistQuota.nextResetAt).toLocaleString(getLang())
+                        : t("ui.statusMdblistNoReset")
+                    }
+                  />
+                </div>
+                <p className="text-[11px] text-zinc-500 mt-2">{t("ui.statusMdblistScopeNote")}</p>
               </div>
             )}
 
