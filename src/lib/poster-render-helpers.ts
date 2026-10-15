@@ -139,6 +139,8 @@ export async function fitCompositeToCanvas(
   const meta = await sharp(layer.input).metadata()
   if ((meta.width || 0) <= 0 || (meta.height || 0) <= 0) return null
   // Sharp's .composite() handles out-of-bounds clipping natively — no sub-extract needed
+  layer.top = Math.round(layer.top)
+  layer.left = Math.round(layer.left)
   return layer
 }
 
