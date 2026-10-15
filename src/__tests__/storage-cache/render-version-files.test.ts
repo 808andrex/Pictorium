@@ -8,7 +8,7 @@ import path from "node:path"
  * dalla route poster) ma dimenticato in RENDER_FILES non busterebbe `rv` e
  * servirebbe cache stale. Il test fallisce esplicitamente in quel caso.
  */
-const ROOT = path.resolve(__dirname, "../..")
+const ROOT = path.resolve(__dirname, "../../..")
 
 function readRenderFiles(): string[] {
   const script = fs.readFileSync(path.join(ROOT, "scripts/write-render-version.mjs"), "utf-8")

@@ -104,7 +104,7 @@ node scripts/build-anime-id-map.mjs \
   --input /tmp/anime-list-full.json --revision <40-hex-sha>
 
 # 4. Verify + commit the regenerated snapshot:
-npx vitest run src/__tests__/anime-id-map*.test.ts
+npx vitest run anime-id-map
 ```
 
 Rules: never hand-edit `src/generated/anime-id-map.json`; a failed/invalid

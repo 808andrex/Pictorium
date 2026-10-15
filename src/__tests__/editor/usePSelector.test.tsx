@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest"
 import { render } from "@testing-library/react"
 import { PictoriumProvider, usePSelector } from "@/lib/context"
-import { MOCK_CTX } from "./test-utils"
+import { MOCK_CTX } from "../test-utils"
 import type { PictoriumCtx } from "@/lib/context"
 import { PosterEditorProvider } from "@/lib/contexts/PosterEditorContext"
 

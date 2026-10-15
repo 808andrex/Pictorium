@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
 import { screen, fireEvent } from "@testing-library/react"
-import { renderWithCtx } from "./test-utils"
+import { renderWithCtx } from "../test-utils"
 import { PosterPreview } from "@/components/PosterPreview"
 
 // t() che ritorna la key stessa — test non dipendenti dalle traduzioni

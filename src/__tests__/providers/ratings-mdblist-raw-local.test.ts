@@ -572,10 +572,25 @@ describe("MDBList raw LOCAL bounded retention (correction cycle 1)", () => {
     const { persist } = await freshModules()
     // Policy di test: cap piccoli così il VERO setPersistedMdbRaw (mai una
     // prune esplicita con limiti ad hoc) deve convergere da solo.
+    persist.__resetMdbRawPersistForTests()
     persist.__setMdbRawPersistPolicyForTests({ maxFiles: 20, maxBytes: 4096 })
-    for (let i = 0; i < 120; i += 1) {
+    // Sincronizzazione deterministica (stessi hook del test di backpressure,
+    // mai sleep fissi né mock del fs): il primo write dopo l'import avvia la
+    // prune idle (lastPruneAt = 0) e ogni 32 write scatta la prune di cadenza.
+    // Sotto prune lenta la finestra coprirebbe >8 write successivi e il drop
+    // fail-open intenzionale fallirebbe gli expect(ok). Il warmup drena la
+    // idle prima dello stream misurato; il flush dopo ogni write chiude ogni
+    // finestra di cadenza prima che la successiva superi la reservation (8).
+    // Restano 120 write reali distinti con expect(ok) intatto e convergenza
+    // ai cap via flusso reale. Questa è retention a ritmo sostenibile, NON
+    // overload: centinaia di tentativi DURANTE un'unica prune tenuta aperta
+    // restano coperti dal test di backpressure (drop fail-open intenzionale).
+    expect(await persist.setPersistedMdbRaw("mdb:raw:v2:tt_cap_0:a1b2c3d4", { imdb: 7 }, DAY)).toBe(true)
+    await persist.__flushMdbRawPersistPrune()
+    for (let i = 1; i < 120; i += 1) {
       const ok = await persist.setPersistedMdbRaw(`mdb:raw:v2:tt_cap_${i}:a1b2c3d4`, { imdb: 7 }, DAY)
       expect(ok).toBe(true)
+      await persist.__flushMdbRawPersistPrune()
     }
     // La prune di cadenza gira ogni 32 scritture e lascia una coda
     // bounded: altre scritture (overwrite della stessa identità, quindi

@@ -304,7 +304,7 @@ describe("poster card skins (shared glass backgrounds)", () => {
   })
 
   it("stays a pure string builder: no sharp, blur roundtrip, fetch, or provider lookup", () => {
-    const raw = readFileSync(join(__dirname, "..", "lib", "card-layout-skins.ts"), "utf8")
+    const raw = readFileSync(join(__dirname, "../..", "lib", "card-layout-skins.ts"), "utf8")
     const src = raw
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .replace(/(^|\s)\/\/.*$/gm, "$1")

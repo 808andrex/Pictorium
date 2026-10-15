@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { __resetTop250ForTest, isImdbTop250, warmTop250 } from "@/lib/imdb-top250"
 import { cacheClear } from "@/lib/cache"
-import { chartIds250, nextDataHtml } from "./imdb-top250-fixtures"
+import { chartIds250, nextDataHtml } from "../imdb-top250-fixtures"
 
 beforeEach(() => {
   cacheClear()

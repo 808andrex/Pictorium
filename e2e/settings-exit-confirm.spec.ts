@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "@playwright/test"
 
 // Exit-confirm modal acceptance (unit-covered in
-// src/__tests__/components/settings-exit-confirm.test.tsx; this spec pins the
+// src/__tests__/editor/components/settings-exit-confirm.test.tsx; this spec pins the
 // real-browser behavior and is intentionally save-free: no PUT is issued on
 // any path below). RUN DEFERRED to the final pre-push batch (see AGENTS.md
 // Verification Strategy): do not run per-edit.

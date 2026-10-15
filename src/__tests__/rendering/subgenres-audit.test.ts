@@ -2,7 +2,7 @@
  * Comprehensive audit: subgenre false positives, edge cases, and keyword overlap.
  */
 import { describe, it, expect } from "vitest"
-import { getSubGenreLabel } from "../lib/subgenres"
+import { getSubGenreLabel } from "../../lib/subgenres"
 
 // ── identity tests (each rule fires on its own keyword set) ──────────
 describe("identity — each rule matches its core keyword", () => {

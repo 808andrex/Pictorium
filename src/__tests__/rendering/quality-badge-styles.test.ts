@@ -12,7 +12,7 @@ import { STD_W, STD_H } from "@/lib/poster-render-helpers"
 import type { WikidataResult } from "@/lib/awards"
 import type { ServerDefaults } from "@/lib/server-defaults"
 
-const ROOT = path.resolve(__dirname, "../..")
+const ROOT = path.resolve(__dirname, "../../..")
 
 describe("quality badge styles", () => {
   it("exposes the standard/mono/color/knockout union with standard default", () => {

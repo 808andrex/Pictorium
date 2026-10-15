@@ -5,7 +5,7 @@ import {
   parseImdbTop250Ids,
 } from "@/lib/imdb-top250"
 import { cacheClear } from "@/lib/cache"
-import { chartIds250, nextDataHtml } from "./imdb-top250-fixtures"
+import { chartIds250, nextDataHtml } from "../imdb-top250-fixtures"
 
 /** Pagina challenge AWS WAF osservata il 2026-10-03: nessun dato strutturato. */
 const WAF_BLOCK_HTML = `<!DOCTYPE html><html lang="en"><head><title></title></head><body>

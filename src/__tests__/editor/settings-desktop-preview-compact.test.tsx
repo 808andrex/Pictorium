@@ -2,7 +2,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from "vitest"
 import { screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { useState } from "react"
-import { renderWithCtx } from "./test-utils"
+import { renderWithCtx } from "../test-utils"
 import { DefaultsPosterPreview } from "@/components/settings/DefaultsPosterPreview"
 import type { DefaultsPreviewDemoMedia } from "@/lib/poster-url"
 

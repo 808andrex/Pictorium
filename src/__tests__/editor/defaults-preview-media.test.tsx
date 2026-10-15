@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest"
 import { screen, fireEvent, waitFor, render } from "@testing-library/react"
-import { renderWithCtx } from "./test-utils"
+import { renderWithCtx } from "../test-utils"
 import { SettingsPanel } from "@/components/SettingsPanel"
 import {
   isValidPreviewDemoMedia,

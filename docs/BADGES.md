@@ -45,5 +45,5 @@ The priority chain is defined in `src/lib/badge-priority.ts:computeBadge()`.
 
 ## Testing
 
-Badges are tested in `src/__tests__/badge-validation.test.ts`.
+Badges are tested in `src/__tests__/rendering/badge-validation.test.ts`.
 Add a test for every new badge in the chain.

@@ -465,17 +465,17 @@ describe("trakt-auth server boundary (no token spread to clients)", () => {
     const root = process.cwd()
     const traktAllowed = new Set([
       path.join("src", "lib", "trakt-auth.ts"),
-      path.join("src", "__tests__", "trakt-auth.test.ts"),
+      path.join("src", "__tests__", "providers", "trakt-auth.test.ts"),
       // Task 2 (OAuth connect/state/callback/status): legitimate server-only
       // importers of the deployment config + encrypted token store.
       path.join("src", "app", "api", "users", "[uuid]", "trakt", "authorize", "route.ts"),
       path.join("src", "app", "api", "users", "[uuid]", "trakt", "status", "route.ts"),
       path.join("src", "app", "api", "trakt", "callback", "route.ts"),
-      path.join("src", "__tests__", "trakt-oauth-flow.test.ts"),
+      path.join("src", "__tests__", "providers", "trakt-oauth-flow.test.ts"),
       // Task 3 (coordinated refresh/disconnect lifecycle): the explicit
       // disconnect route and the lifecycle test use the same store/accessor.
       path.join("src", "app", "api", "users", "[uuid]", "trakt", "disconnect", "route.ts"),
-      path.join("src", "__tests__", "trakt-lifecycle.test.ts"),
+      path.join("src", "__tests__", "providers", "trakt-lifecycle.test.ts"),
       // Task 4 (owning-user private catalogs): the server-only unified
       // catalog provider resolves the valid access token + fencing generation
       // internally from the caller-authorized UUID (never a request token).
@@ -489,13 +489,13 @@ describe("trakt-auth server boundary (no token spread to clients)", () => {
       // provider above (node:crypto + next/server imports).
       path.join("src", "lib", "catalog-handler.ts"),
       // Correction cycle 1 lease contract tests (real lease, scripted fence).
-      path.join("src", "__tests__", "trakt-catalog-lease.test.ts"),
+      path.join("src", "__tests__", "providers", "trakt-catalog-lease.test.ts"),
     ])
     const cryptoAllowed = new Set([
       path.join("src", "lib", "profile-crypto.ts"),
       path.join("src", "lib", "user-keys.ts"),
       path.join("src", "lib", "trakt-auth.ts"),
-      path.join("src", "__tests__", "trakt-auth.test.ts"),
+      path.join("src", "__tests__", "providers", "trakt-auth.test.ts"),
       // PKCE: the OAuth state store encrypts the per-initiation verifier at
       // rest with the same PROFILE_ENCRYPTION_KEY envelope (server-only:
       // node:crypto/fs imports already forbid client use).
@@ -503,7 +503,7 @@ describe("trakt-auth server boundary (no token spread to clients)", () => {
       // Task 2: the authorize route fail-closes before start when encryption
       // is unavailable; the flow test provisions PROFILE_ENCRYPTION_KEY.
       path.join("src", "app", "api", "users", "[uuid]", "trakt", "authorize", "route.ts"),
-      path.join("src", "__tests__", "trakt-oauth-flow.test.ts"),
+      path.join("src", "__tests__", "providers", "trakt-oauth-flow.test.ts"),
     ])
     const edgeRe = /(?:from\s*["']|import\s*\(\s*["'])([^"']*(?:trakt-auth|profile-crypto)[^"']*)["']/g
     const violations: string[] = []

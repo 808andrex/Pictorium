@@ -21,7 +21,7 @@ import fs from "node:fs"
 import path from "node:path"
 import sharp from "sharp"
 
-const ROOT = path.resolve(__dirname, "../..")
+const ROOT = path.resolve(__dirname, "../../..")
 const PAD = TOP_SHADOW_PAD
 const TIERS = ["4K", "FHD", "HD", "SD"] as const
 const FONTS = ["inter", "barlow-condensed", "oswald"] as const satisfies readonly BadgeFont[]

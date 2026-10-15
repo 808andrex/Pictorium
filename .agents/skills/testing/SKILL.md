@@ -22,7 +22,7 @@ npx vitest run --coverage
 - Tests cover store, API routes, React components, badge SVG, poster-fit and
   utilities. Read the current runner output for counts; do not hardcode totals.
 - `pretest` auto-regenerates RENDER_VERSION (and app version) before running.
-- To run one file: `npx vitest run src/__tests__/poster-render-deadline.test.ts`.
+- To run one file: `npx vitest run src/__tests__/storage-cache/poster-render-deadline.test.ts`.
 
 ## E2E (Playwright)
 

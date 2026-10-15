@@ -27,7 +27,7 @@ import { __resetTMDBSessionCache } from "@/lib/tmdb-session-cache"
 import { __resetPosterRenderLimiter, getPosterStats } from "@/lib/poster-runtime-cache"
 import { __resetMdblistBreaker } from "@/lib/ratings"
 import { __resetJWRankingsCache } from "@/lib/justwatch"
-import { __resetCircuitBreaker } from "@/lib/awards"
+import { __resetCircuitBreaker, isBreakerOpen } from "@/lib/awards"
 import { clearTvdbCache } from "@/lib/tvdb"
 
 vi.mock("undici", () => ({ Agent: class {}, request: vi.fn() }))
@@ -334,12 +334,26 @@ describe("provider chaos (slot ↔ timeout ↔ race ↔ breaker ↔ render)", ()
       expect(r.ms).toBeLessThan(2500)
     }
     // I record viaggiano sul retry in background: settle prima del check.
-    await new Promise((r) => setTimeout(r, 1500))
+    // Settle state-based, non sleep fissa: il retry dorme 500-1000ms di
+    // jitter DOPO che la race del poster ha gia risposto, quindi sotto il
+    // carico dell'intera suite una finestra fissa da 1500ms puo chiudersi
+    // prima dell'ultimo retry (baseline full-run: 9 vs 10) senza che il
+    // bound del poster o il breaker siano rotti. Si attende lo stato
+    // osservabile (10 fetch + breaker aperto, cosi anche il recordFailure
+    // della 5a e avvenuto prima della 6a request) entro una deadline
+    // esplicita; il toBe(10) sotto resta esatto, non indebolito.
+    const settleDeadline = Date.now() + 15000
+    while ((calls.wikidata < 10 || !isBreakerOpen()) && Date.now() < settleDeadline) {
+      await new Promise((r) => setTimeout(r, 50))
+    }
     // 5 × (attempt + retry) = 10 fetch: OGNI request ha tentato davvero.
     // Senza wdAbort il limiter awards (max 2) strangolava le request 3-5 con
     // gli zombie da 5s e il conteggio restava a 2 — 0 fetch osservato per
     // coda, non per breaker aperto (falso positivo).
     expect(calls.wikidata).toBe(10)
+    // Condizione asserita in modo esplicito, non solo implicita via 6a
+    // request: il loop sopra attende gia entrambi gli stati.
+    expect(isBreakerOpen()).toBe(true)
     const before = calls.wikidata
     const sixth = await getPoster(610406)
     expect(sixth.res.status).toBe(200)

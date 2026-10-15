@@ -5,7 +5,7 @@ import fs from "node:fs"
 import path from "node:path"
 import sharp from "sharp"
 
-const ROOT = path.resolve(__dirname, "../..")
+const ROOT = path.resolve(__dirname, "../../..")
 
 describe("av-specs lookup", () => {
   it("resolves specs for known blockbusters with 4K and formats", () => {

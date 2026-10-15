@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest"
-import { renderGenreBadge } from "../lib/svg-badge"
-import { buildGenreTextSvg } from "../lib/badge-svg-shared"
-import { BADGE_STYLES, isBadgeStyle } from "../lib/badge-styles"
-import { resolvePosterRenderConfig } from "../lib/poster-config"
+import { renderGenreBadge } from "../../lib/svg-badge"
+import { buildGenreTextSvg } from "../../lib/badge-svg-shared"
+import { BADGE_STYLES, isBadgeStyle } from "../../lib/badge-styles"
+import { resolvePosterRenderConfig } from "../../lib/poster-config"
 
 describe("BadgeStyle minimal (pipe separator)", () => {
   it("includes minimal in BADGE_STYLES and isBadgeStyle recognizes it", () => {

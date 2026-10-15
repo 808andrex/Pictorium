@@ -734,7 +734,7 @@ describe("poster card render (isolated shared compositor)", () => {
     expect(bb - rb).toBeGreaterThan(8)
   }, 120000)
 
-  it("stays a shared compositing stage only: no fetch, provider lookup, blur roundtrip, morphology kernel or new deps", () => {    const raw = readFileSync(join(__dirname, "..", "lib", "card-layout.ts"), "utf8")
+  it("stays a shared compositing stage only: no fetch, provider lookup, blur roundtrip, morphology kernel or new deps", () => {    const raw = readFileSync(join(__dirname, "../..", "lib", "card-layout.ts"), "utf8")
     const src = raw
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .replace(/(^|\s)\/\/.*$/gm, "$1")

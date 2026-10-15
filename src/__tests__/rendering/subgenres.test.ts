@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { getSubGenreLabel } from "../lib/subgenres"
+import { getSubGenreLabel } from "../../lib/subgenres"
 
 describe("subgenres detection", () => {
   it("labels every rule for Hebrew", () => {

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest"
 import sharp from "sharp"
-import { applyBlur } from "../lib/blur"
-import { STD_W, STD_H } from "../lib/image-utils"
+import { applyBlur } from "../../lib/blur"
+import { STD_W, STD_H } from "../../lib/image-utils"
 
 describe("applyBlur", () => {
   async function createTestImage(w = STD_W, h = STD_H, color = { r: 120, g: 150, b: 200 }): Promise<Buffer> {

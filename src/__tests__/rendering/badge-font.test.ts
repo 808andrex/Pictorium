@@ -3,7 +3,7 @@ import {
   BADGE_FONTS,
   DEFAULT_BADGE_FONT,
   isBadgeFont,
-} from "../lib/badge-styles"
+} from "../../lib/badge-styles"
 import {
   estimateTextWidth,
   fontFamilyFor,
@@ -11,20 +11,20 @@ import {
   buildGenreTextSvg,
   buildQualityBadgeSvg,
   buildHouseGenreSvg,
-} from "../lib/badge-svg-shared"
-import { renderGenreBadge, renderSVG } from "../lib/svg-badge"
+} from "../../lib/badge-svg-shared"
+import { renderGenreBadge, renderSVG } from "../../lib/svg-badge"
 import sharp from "sharp"
-import { resolvePosterRenderConfig } from "../lib/poster-config"
-import { normalizePosterCacheParams } from "../lib/poster-runtime-cache"
+import { resolvePosterRenderConfig } from "../../lib/poster-config"
+import { normalizePosterCacheParams } from "../../lib/poster-runtime-cache"
 import {
   buildPreviewUrl,
   buildDefaultsPreviewUrl,
-} from "../lib/poster-url"
-import { buildStremioPosterSearchParams } from "../lib/stremio-poster-params"
+} from "../../lib/poster-url"
+import { buildStremioPosterSearchParams } from "../../lib/stremio-poster-params"
 import {
   captureVisualPreset,
   visualPresetValuesSchema,
-} from "../lib/visual-presets"
+} from "../../lib/visual-presets"
 
 function resolve(bfont: string | null, extra?: {
   mappingFont?: string | null
