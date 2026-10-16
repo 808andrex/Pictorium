@@ -25,6 +25,10 @@ const testDataDir = path.join(__dirname, ".next-e2e", reuseApp ? "data" : `data-
 
 export default defineConfig({
   testDir: "./e2e",
+  // Evidence-safe reruns: PLAYWRIGHT_OUTPUT_DIR=test-results/<run-id> keeps a
+  // retry from overwriting the previous run's retain-on-failure traces,
+  // screenshots and videos (default preserves the historical single-dir layout).
+  outputDir: process.env.PLAYWRIGHT_OUTPUT_DIR || "test-results",
   timeout: isCi ? 90_000 : 60_000,
   expect: {
     timeout: isCi ? 15_000 : 10_000,

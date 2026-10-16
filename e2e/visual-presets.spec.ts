@@ -25,11 +25,17 @@ async function openSettings(page: Page) {
   })
   await page.goto("/")
   await expect(page.getByPlaceholder(/cerca/i)).toBeVisible()
-  const dialog = page.getByRole("dialog").filter({ visible: true })
-  await expect(async () => {
-    if (!await dialog.count()) await page.getByRole("button", { name: /Configura tutti i poster|Impostazioni/i }).filter({ visible: true }).click()
-    await expect(dialog).toBeVisible({ timeout: 1000 })
-  }).toPass()
+  // NOTE: the dialog is matched by accessible name ("Configura tutti i poster",
+  // like the sibling specs), never by bare role: a bare getByRole("dialog")
+  // also matches the Next.js dev error overlay (data-nextjs-dialog), so a
+  // chunk-load failure would false-pass the open step and explode later with
+  // misleading save/apply/delete errors instead of failing here honestly.
+  const dialog = page.getByRole("dialog", { name: /Configura tutti i poster/i }).filter({ visible: true })
+  // Single click, then wait for the named settings dialog: the visible
+  // client-only editor means handlers are attached, and a second click can
+  // race the opening modal and get blocked. Bounded wait (10s, no retry).
+  await page.getByRole("button", { name: /Configura tutti i poster|Impostazioni/i }).filter({ visible: true }).click()
+  await expect(dialog).toBeVisible({ timeout: 10_000 })
   // The save form lives on the Preset tab (dialog default): expand the
   // gallery + nested manage disclosures before asserting it.
   await ensureManageOpen(dialog)

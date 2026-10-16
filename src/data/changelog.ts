@@ -30,6 +30,20 @@ export interface ChangelogRelease {
  *  (which bumps on every commit and would leave the dot permanently on). */
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    version: "1.25.5",
+    date: "2026-10-16",
+    title: "Release 1.25.5",
+    items: [
+      { type: "fix", text: "Respect time limits when sharing TMDB requests" },
+      { type: "fix", text: "Keep shared ratings available when another request is cancelled" },
+      { type: "feature", text: "Adjust upper shadow height and add the Filmauro logo" },
+      { type: "perf", text: "Download smaller title logos" },
+      { type: "feature", text: "Reduce rating requests and keep posters fresh" },
+      { type: "fix", text: "round composite coordinates to integers for libvips/sharp" },
+      { type: "fix", text: "Restore Trakt account connections" },
+    ],
+  },
+  {
     version: "1.25.4",
     date: "2026-10-14",
     title: "Release 1.25.4",
