@@ -516,16 +516,18 @@ async function tmdbFetch(path: string, apiKey?: string, signal?: AbortSignal, ti
   const existing = inflight.get(cacheKey)
   // Il waiter gareggia col proprio signal invece di ereditare il deadline del
   // primo: senza, una fetch da 30s appende anche chi aveva 2.5s di tetto.
-  if (existing) return raceWithAbort(existing, signal)
+  // Il cap proprio (timeoutMs combinato col signal del chiamante) scatta solo
+  // sul waiter: l'owner, il transport e l'entry condivisa restano intatti.
+  if (existing) return raceWithAbort(existing, combineAbortSignals(signal, timeoutMs))
 
   // Actual fetch URL includes the api_key (kept separate from cacheKey)
   const fetchUrl = new URL(neutralUrl.toString())
   fetchUrl.searchParams.set("api_key", key)
 
   // Nota: l'inflight coalescing è condiviso tra richieste concorrenti sulla
-  // stessa URL — signal/timeout valgono solo per la PRIMA richiesta (quella
-  // che esegue il fetch). È corretto: il deadline del render è il bound, non
-  // il signal.
+  // stessa URL — il transport è unico (signal/timeout dell'owner). Ogni waiter
+  // applica comunque il proprio cap (signal + timeoutMs) solo sulla propria
+  // attesa: scade senza abortire l'owner né rimuovere l'entry condivisa.
   const promise = (async () => {
     tmdbStats.networkCalls++
     tmdbStats.lastCallTime = new Date().toISOString()
